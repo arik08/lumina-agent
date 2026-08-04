@@ -127,6 +127,7 @@ from ..providers import (
     ProviderMessage,
     ProviderRequest,
     ProviderRequestError,
+    RESPONSES_STATE_METADATA_KEY,
 )
 from ..providers.anthropic import AnthropicMessagesAdapter
 from ..providers.codex import CodexResponsesAdapter
@@ -218,6 +219,7 @@ from ..context import (
     CURRENT_RUN_CONTEXT_METADATA_KEY,
     compact_runtime_messages,
     prepare_context,
+    runtime_compaction_threshold,
 )
 from ..instructions import (
     CORE_AGENT_EXECUTION_CONTRACT,
@@ -2101,6 +2103,7 @@ class LocalRunExecutor:
             context_window=context_window,
         )
         tool_schemas = tool_surface.schemas
+        server_compaction_threshold = runtime_compaction_threshold(run, tool_schemas)
         deferred_tool_names = tool_surface.deferred_names
         provider_images = await asyncio.to_thread(
             self._provider_images,
@@ -2199,9 +2202,6 @@ class LocalRunExecutor:
         while True:
             if not await self._wait_until_runnable(run_id):
                 return
-            messages = await self._compact_runtime_context(
-                run_id, messages, tool_schemas
-            )
             violation, round_index = await self._begin_model_turn(run_id)
             if violation is not None:
                 await self._limit_run(run_id, violation)
@@ -2221,6 +2221,15 @@ class LocalRunExecutor:
                 provider_id,
                 wants_artifact=artifact_required,
                 first_turn=round_index == 0,
+            )
+            server_compaction_enabled = _supports_server_compaction(
+                provider, runtime_model_id
+            )
+            messages = await self._compact_runtime_context(
+                run_id,
+                messages,
+                tool_schemas,
+                defer_to_provider=server_compaction_enabled,
             )
             effective_effort = _effective_reasoning_effort(
                 requested_effort,
@@ -2244,8 +2253,13 @@ class LocalRunExecutor:
                     "prompt_cache_key": prompt_cache_key,
                     "prompt_cache_retention": "24h",
                     "codex_run_thread_id": run_id,
+                    **(
+                        {"compact_threshold_tokens": server_compaction_threshold}
+                        if server_compaction_enabled
+                        else {}
+                    ),
                 }
-                if prompt_cache_key
+                if prompt_cache_key or server_compaction_enabled
                 else {},
             )
             if provider_id == "codex" and prompt_cache_key and round_index == 0:
@@ -2278,6 +2292,7 @@ class LocalRunExecutor:
             first_provider_output_at: float | None = None
             first_visible_text_at: float | None = None
             turn_usage: dict[str, Any] | None = None
+            response_state_items: list[dict[str, Any]] = []
             memory_stream = _InlineMemoryStream() if memory_envelope_enabled else None
             continuation_deduper = _ContinuationDeduper(pending_continuation_reference)
             pending_continuation_reference = None
@@ -2535,6 +2550,14 @@ class LocalRunExecutor:
                                 )
                             if active_call_id == discarded_call_id:
                                 active_call_id = None
+                        elif event.type == "response_state":
+                            state_item = event.provider_metadata.get("item")
+                            if (
+                                isinstance(state_item, Mapping)
+                                and state_item.get("type")
+                                in {"reasoning", "compaction"}
+                            ):
+                                response_state_items.append(dict(state_item))
                         elif event.type == "usage" and event.usage:
                             await flush_pending_text()
                             turn_usage = _usage_payload(
@@ -2711,6 +2734,12 @@ class LocalRunExecutor:
             provider_retry_attempt = 0
             partial_response_recovery_attempt = 0
             provider_attempt_count = 0
+            if response_state_items and not interrupted_by_steer:
+                await asyncio.to_thread(
+                    self._store_responses_state,
+                    run_id,
+                    response_state_items,
+                )
 
             if progress_control_buffer:
                 await self._append_text(
@@ -2728,7 +2757,9 @@ class LocalRunExecutor:
                     await self._discard_partial_tool_calls(run_id, tool_calls)
                 if round_text:
                     messages.append(
-                        ProviderMessage(role="assistant", content="".join(round_text))
+                        _assistant_response_message(
+                            "".join(round_text), response_state_items=response_state_items
+                        )
                     )
                 await self._mark_turn_interrupted_by_steer(
                     run_id, assistant_message_id, "".join(round_text)
@@ -2751,7 +2782,9 @@ class LocalRunExecutor:
                 await self._discard_partial_tool_calls(run_id, tool_calls)
                 if round_text:
                     messages.append(
-                        ProviderMessage(role="assistant", content="".join(round_text))
+                        _assistant_response_message(
+                            "".join(round_text), response_state_items=response_state_items
+                        )
                     )
                 await self._mark_turn_interrupted_by_steer(
                     run_id, assistant_message_id, "".join(round_text)
@@ -2770,8 +2803,8 @@ class LocalRunExecutor:
                 if steer_messages:
                     if round_text:
                         messages.append(
-                            ProviderMessage(
-                                role="assistant", content="".join(round_text)
+                            _assistant_response_message(
+                                "".join(round_text), response_state_items=response_state_items
                             )
                         )
                     messages.extend(
@@ -2786,8 +2819,8 @@ class LocalRunExecutor:
                     empty_response_retry_attempt = 0
                     if output_continuation_count < _MAX_AUTO_CONTINUATIONS:
                         messages.append(
-                            ProviderMessage(
-                                role="assistant", content="".join(round_text)
+                            _assistant_response_message(
+                                "".join(round_text), response_state_items=response_state_items
                             )
                         )
                         messages.append(
@@ -2871,8 +2904,8 @@ class LocalRunExecutor:
                 if report_extension_required:
                     if round_text:
                         messages.append(
-                            ProviderMessage(
-                                role="assistant", content="".join(round_text)
+                            _assistant_response_message(
+                                "".join(round_text), response_state_items=response_state_items
                             )
                         )
                     messages.append(
@@ -2931,8 +2964,8 @@ class LocalRunExecutor:
                 ):
                     if round_text:
                         messages.append(
-                            ProviderMessage(
-                                role="assistant", content="".join(round_text)
+                            _assistant_response_message(
+                                "".join(round_text), response_state_items=response_state_items
                             )
                         )
                     messages.append(
@@ -3014,6 +3047,7 @@ class LocalRunExecutor:
                 kind="pending_tools",
                 assistant_content="".join(round_text) or None,
                 loop_state=tool_loop_state,
+                response_state_items=response_state_items,
             ):
                 return
             execution_calls = await self._prepare_tool_execution_plan(run_id, calls)
@@ -3042,8 +3076,7 @@ class LocalRunExecutor:
                 )
 
             messages.append(
-                ProviderMessage(
-                    role="assistant",
+                _assistant_response_message(
                     content="".join(round_text) or None,
                     tool_calls=tuple(_provider_tool_call(call) for call in calls),
                     provider_metadata={
@@ -3051,6 +3084,7 @@ class LocalRunExecutor:
                         for call in calls
                         if call["provider_metadata"]
                     },
+                    response_state_items=response_state_items,
                 )
             )
             resolved_calls, first_violation = await self._run_tool_calls(
@@ -3164,6 +3198,7 @@ class LocalRunExecutor:
                     "toolLoopFingerprint": last_tool_loop_fingerprint,
                     "toolLoopRepeatCount": tool_loop_repeat_count,
                 },
+                response_state_items=response_state_items,
             ):
                 return
             if loop_guard_triggered:
@@ -3200,6 +3235,7 @@ class LocalRunExecutor:
         assistant_content: str | None,
         provider_tool_contents: Sequence[str] = (),
         loop_state: Mapping[str, Any],
+        response_state_items: Sequence[Mapping[str, Any]] = (),
     ) -> bool:
         stored, notify = await self._run_database_mutation(
             run_id,
@@ -3210,6 +3246,7 @@ class LocalRunExecutor:
             assistant_content,
             provider_tool_contents,
             loop_state,
+            response_state_items,
         )
         if notify:
             await event_broker.notify(run_id)
@@ -3223,6 +3260,7 @@ class LocalRunExecutor:
         assistant_content: str | None,
         provider_tool_contents: Sequence[str],
         loop_state: Mapping[str, Any],
+        response_state_items: Sequence[Mapping[str, Any]],
     ) -> tuple[bool, bool]:
         if kind == "completed_tools" and len(provider_tool_contents) != len(calls):
             raise ValueError(
@@ -3308,6 +3346,9 @@ class LocalRunExecutor:
                                 ),
                                 "calls": previous_calls,
                                 "provider_tool_contents": previous_contents,
+                                "responses_state_items": previous_checkpoint.get(
+                                    "responses_state_items", []
+                                ),
                                 "post_batch_user_message_ids": (
                                     _checkpoint_post_batch_user_message_ids(
                                         previous_checkpoint
@@ -3339,6 +3380,9 @@ class LocalRunExecutor:
                 "assistant_content": assistant_content,
                 "calls": checkpoint_calls,
                 "loop_state": dict(loop_state),
+                "responses_state_items": _validated_response_state_items(
+                    response_state_items
+                ),
                 "completed_batches": completed_batches[-64:],
                 "captures_applied_steers": True,
                 "prefix_user_message_ids": prefix_user_message_ids,
@@ -3689,6 +3733,7 @@ class LocalRunExecutor:
         checkpoint_error: str | None = None
         checkpoint_kind = "approval"
         assistant_content: str | None = None
+        response_state_items: list[dict[str, Any]] = []
         calls: list[dict[str, Any]] = []
         completed_tool_contents: list[str] | None = None
         completed_batches: list[
@@ -3697,6 +3742,7 @@ class LocalRunExecutor:
                 list[dict[str, Any]],
                 list[str],
                 list[dict[str, str]],
+                list[dict[str, Any]],
             ]
         ] = []
         prefix_transcript: list[dict[str, str]] = []
@@ -3745,6 +3791,9 @@ class LocalRunExecutor:
                 raw_loop_state = checkpoint.get("loop_state")
                 if isinstance(raw_loop_state, Mapping):
                     checkpoint_loop_state = raw_loop_state
+                response_state_items = _validated_response_state_items(
+                    checkpoint.get("responses_state_items")
+                )
                 raw_calls = checkpoint.get("calls")
                 if not isinstance(raw_calls, list):
                     checkpoint_error = (
@@ -3868,13 +3917,16 @@ class LocalRunExecutor:
                                     ],
                                     list(raw_batch_contents),
                                     batch_post_transcript,
+                                    _validated_response_state_items(
+                                        raw_batch.get("responses_state_items")
+                                    ),
                                 )
                             )
         captured_steer_ids = [
             *_checkpoint_transcript_user_message_ids(prefix_transcript),
             *(
                 message_id
-                for _content, _calls, _results, transcript in completed_batches
+                for _content, _calls, _results, transcript, _state in completed_batches
                 for message_id in _checkpoint_transcript_user_message_ids(transcript)
             ),
             *_checkpoint_transcript_user_message_ids(post_batch_transcript),
@@ -3915,10 +3967,10 @@ class LocalRunExecutor:
             batch_calls,
             batch_tool_contents,
             batch_post_transcript,
+            batch_response_state,
         ) in completed_batches:
             messages.append(
-                ProviderMessage(
-                    role="assistant",
+                _assistant_response_message(
                     content=batch_content,
                     tool_calls=tuple(_provider_tool_call(call) for call in batch_calls),
                     provider_metadata={
@@ -3926,6 +3978,7 @@ class LocalRunExecutor:
                         for call in batch_calls
                         if call["provider_metadata"]
                     },
+                    response_state_items=batch_response_state,
                 )
             )
             for batch_index, batch_call in enumerate(batch_calls):
@@ -3944,8 +3997,7 @@ class LocalRunExecutor:
                 messages, batch_post_transcript, steer_content_by_id
             )
         messages.append(
-            ProviderMessage(
-                role="assistant",
+            _assistant_response_message(
                 content=assistant_content,
                 tool_calls=tuple(_provider_tool_call(call) for call in calls),
                 provider_metadata={
@@ -3953,6 +4005,7 @@ class LocalRunExecutor:
                     for call in calls
                     if call["provider_metadata"]
                 },
+                response_state_items=response_state_items,
             )
         )
         if checkpoint_kind not in {"completed_tools", "paused_tools"}:
@@ -4888,6 +4941,19 @@ class LocalRunExecutor:
                                 )
                             )
             history = list(db.scalars(history_query))
+            history_run_ids = {
+                message.run_id for message in history if message.run_id is not None
+            }
+            responses_state_by_run_id = {
+                historical_run.id: _validated_response_state_items(
+                    historical_run.snapshot_json.get("openai_responses_state")
+                )
+                for historical_run in db.scalars(
+                    select(Run).where(Run.id.in_(history_run_ids))
+                )
+                if historical_run.provider_id == run.provider_id
+                and historical_run.model_key == run.model_key
+            }
             pending_prefix_transcript = (
                 []
                 if isinstance(run.snapshot_json.get("tool_checkpoint"), Mapping)
@@ -5532,6 +5598,13 @@ class LocalRunExecutor:
                     provider_metadata=(
                         current_run_context_metadata
                         if message.run_id == run_id and message.role == "user"
+                        else {
+                            RESPONSES_STATE_METADATA_KEY: responses_state_by_run_id.get(
+                                message.run_id or "", []
+                            )
+                        }
+                        if message.role == "assistant"
+                        and responses_state_by_run_id.get(message.run_id or "")
                         else {}
                     ),
                 )
@@ -8158,7 +8231,10 @@ class LocalRunExecutor:
         *,
         force: bool = False,
         trigger: str = "auto",
+        defer_to_provider: bool = False,
     ) -> list[ProviderMessage]:
+        if defer_to_provider and not force:
+            return messages
         with SessionLocal() as db:
             run = db.get(Run, run_id)
             if run is None or run.status in TERMINAL_STATUSES:
@@ -8224,6 +8300,25 @@ class LocalRunExecutor:
             phase="compacted",
         )
         return list(prepared.messages)
+
+    def _store_responses_state(
+        self, run_id: str, state_items: Sequence[Mapping[str, Any]]
+    ) -> None:
+        validated = _validated_response_state_items(state_items)
+        if not validated:
+            return
+        with session_scope() as db:
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
+            if run is None or run.status in TERMINAL_STATUSES:
+                return
+            self._require_execution_owner(run)
+            merged = _merge_responses_state_items(
+                run.snapshot_json.get("openai_responses_state"), validated
+            )
+            run.snapshot_json = {
+                **run.snapshot_json,
+                "openai_responses_state": merged,
+            }
 
     async def _begin_model_turn(
         self, run_id: str
@@ -9830,6 +9925,56 @@ def _provider_tool_call(call: dict[str, Any]) -> dict[str, Any]:
             "arguments": call.get("provider_arguments", call["arguments"]),
         },
     }
+
+
+def _validated_response_state_items(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [
+        dict(item)
+        for item in value
+        if isinstance(item, Mapping) and item.get("type") in {"reasoning", "compaction"}
+    ]
+
+
+def _merge_responses_state_items(
+    existing: Any, new_items: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    merged = _validated_response_state_items(existing)
+    for item in _validated_response_state_items(new_items):
+        if item.get("type") == "compaction":
+            merged = [item]
+        else:
+            merged.append(item)
+    return merged
+
+
+def _assistant_response_message(
+    content: str | None,
+    *,
+    tool_calls: tuple[Mapping[str, Any], ...] = (),
+    provider_metadata: Mapping[str, Any] | None = None,
+    response_state_items: Sequence[Mapping[str, Any]] = (),
+) -> ProviderMessage:
+    metadata = dict(provider_metadata or {})
+    state_items = _validated_response_state_items(response_state_items)
+    if state_items:
+        metadata[RESPONSES_STATE_METADATA_KEY] = state_items
+    return ProviderMessage(
+        role="assistant",
+        content=content,
+        tool_calls=tool_calls,
+        provider_metadata=metadata,
+    )
+
+
+def _supports_server_compaction(provider: ProviderAdapter, model: str) -> bool:
+    if not model.casefold().startswith("gpt-5.6"):
+        return False
+    supports = getattr(provider, "supports_server_compaction", None)
+    if callable(supports):
+        return bool(supports(model))
+    return provider.provider_id in {"openai", "codex"}
 
 
 def _safe_provider_metadata(raw: Any) -> dict[str, str]:

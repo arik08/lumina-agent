@@ -7,6 +7,7 @@ from .service import (
     compact_runtime_messages,
     estimate_text_tokens,
     prepare_context,
+    runtime_compaction_threshold,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "compact_runtime_messages",
     "estimate_text_tokens",
     "prepare_context",
+    "runtime_compaction_threshold",
 ]

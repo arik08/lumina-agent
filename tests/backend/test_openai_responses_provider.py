@@ -14,6 +14,7 @@ from lumina.providers import (
     ProviderMessage,
     ProviderRequest,
     ProviderRequestError,
+    RESPONSES_STATE_METADATA_KEY,
 )
 from lumina.providers.openai import OpenAIResponsesAdapter, build_responses_payload
 from lumina.providers.catalog import initial_model_catalog
@@ -85,6 +86,83 @@ def test_responses_payload_uses_modern_cache_ttl_for_gpt_5_6() -> None:
 
     assert payload["prompt_cache_options"] == {"ttl": "30m"}
     assert "prompt_cache_retention" not in payload
+
+
+def test_gpt_5_6_payload_enables_reasoning_context_and_server_compaction() -> None:
+    payload = build_responses_payload(
+        ProviderRequest(
+            model="gpt-5.6-sol",
+            messages=(ProviderMessage(role="user", content="Continue"),),
+            effort="high",
+            metadata={"compact_threshold_tokens": 252_000},
+        )
+    )
+
+    assert payload["reasoning"] == {"effort": "high", "context": "all_turns"}
+    assert payload["include"] == ["reasoning.encrypted_content"]
+    assert payload["context_management"] == [
+        {"type": "compaction", "compact_threshold": 252_000}
+    ]
+
+
+def test_latest_compaction_prunes_prior_input_but_keeps_system_prefix() -> None:
+    compaction = {
+        "type": "compaction",
+        "id": "cmp_1",
+        "encrypted_content": "opaque-compaction-state",
+    }
+    payload = build_responses_payload(
+        ProviderRequest(
+            model="gpt-5.6-terra",
+            messages=(
+                ProviderMessage(role="system", content="Stable contract"),
+                ProviderMessage(role="user", content="Old user input"),
+                ProviderMessage(role="assistant", content="Old answer"),
+                ProviderMessage(
+                    role="assistant",
+                    provider_metadata={RESPONSES_STATE_METADATA_KEY: [compaction]},
+                ),
+                ProviderMessage(role="user", content="New user input"),
+            ),
+        )
+    )
+
+    assert payload["input"] == [
+        {"role": "system", "content": "Stable contract"},
+        compaction,
+        {"role": "user", "content": "New user input"},
+    ]
+
+
+def test_pre_5_6_model_does_not_replay_5_6_encrypted_state() -> None:
+    payload = build_responses_payload(
+        ProviderRequest(
+            model="gpt-5.5",
+            messages=(
+                ProviderMessage(role="user", content="Old input"),
+                ProviderMessage(
+                    role="assistant",
+                    content="Old answer",
+                    provider_metadata={
+                        RESPONSES_STATE_METADATA_KEY: [
+                            {
+                                "type": "compaction",
+                                "encrypted_content": "opaque-state",
+                            }
+                        ]
+                    },
+                ),
+                ProviderMessage(role="user", content="New input"),
+            ),
+        )
+    )
+
+    assert payload["input"] == [
+        {"role": "user", "content": "Old input"},
+        {"role": "assistant", "content": "Old answer"},
+        {"role": "user", "content": "New input"},
+    ]
+    assert "context_management" not in payload
 
 
 def test_responses_payload_marks_only_stable_system_prefix_for_gpt_5_6() -> None:
@@ -422,6 +500,62 @@ async def test_openai_responses_streams_function_call_delta_and_done() -> None:
     assert events[0].tool_name == "lookup_asset"
     assert events[3].arguments_json == '{"asset":"BF-01"}'
     assert events[-1].stop_reason == "tool_calls"
+
+
+@pytest.mark.asyncio
+async def test_openai_responses_emits_encrypted_reasoning_and_compaction_state() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            content=_sse(
+                {
+                    "type": "response.output_item.done",
+                    "output_index": 0,
+                    "item": {
+                        "id": "rs_1",
+                        "type": "reasoning",
+                        "encrypted_content": "opaque-reasoning",
+                    },
+                },
+                {
+                    "type": "response.output_item.done",
+                    "output_index": 1,
+                    "item": {
+                        "id": "cmp_1",
+                        "type": "compaction",
+                        "encrypted_content": "opaque-compaction",
+                    },
+                },
+                {
+                    "type": "response.completed",
+                    "response": {"status": "completed", "output": []},
+                },
+            ),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = OpenAIResponsesAdapter(
+            api_key="test-openai-key",
+            base_url="https://api.openai.test/v1",
+            client=client,
+        )
+        events = [
+            event
+            async for event in adapter.stream(
+                ProviderRequest(
+                    model="gpt-5.6-sol",
+                    messages=(ProviderMessage(role="user", content="Continue"),),
+                )
+            )
+        ]
+
+    state_events = [event for event in events if event.type == "response_state"]
+    assert [event.provider_metadata["item"]["type"] for event in state_events] == [
+        "reasoning",
+        "compaction",
+    ]
+    assert events[-1].type == "completed"
 
 
 @pytest.mark.asyncio

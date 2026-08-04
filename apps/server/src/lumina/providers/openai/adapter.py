@@ -18,6 +18,7 @@ from ..types import (
     ProviderEvent,
     ProviderMessage,
     ProviderRequest,
+    RESPONSES_STATE_METADATA_KEY,
 )
 
 
@@ -28,6 +29,17 @@ _RETRYABLE_ERROR_CODES = {
     "temporarily_unavailable",
     "timeout",
 }
+
+
+def _responses_state_items(message: ProviderMessage) -> list[dict[str, Any]]:
+    raw_items = message.provider_metadata.get(RESPONSES_STATE_METADATA_KEY)
+    if not isinstance(raw_items, (list, tuple)):
+        return []
+    return [
+        dict(item)
+        for item in raw_items
+        if isinstance(item, Mapping) and item.get("type") in {"reasoning", "compaction"}
+    ]
 
 
 def _message_items(message: ProviderMessage) -> list[dict[str, Any]]:
@@ -77,6 +89,24 @@ def _message_items(message: ProviderMessage) -> list[dict[str, Any]]:
             }
         )
     return items
+
+
+def _responses_input_items(
+    messages: tuple[ProviderMessage, ...], *, include_state: bool
+) -> list[dict[str, Any]]:
+    input_items: list[dict[str, Any]] = []
+    retained_system_items: list[dict[str, Any]] = []
+    for message in messages:
+        message_items = _message_items(message)
+        if message.role == "system":
+            retained_system_items.extend(dict(item) for item in message_items)
+        for state_item in _responses_state_items(message) if include_state else ():
+            if state_item.get("type") == "compaction":
+                input_items = [*retained_system_items, state_item]
+            else:
+                input_items.append(state_item)
+        input_items.extend(message_items)
+    return input_items
 
 
 def _responses_tool(raw_tool: Mapping[str, Any]) -> dict[str, Any]:
@@ -136,9 +166,8 @@ def _mark_stable_system_cache_breakpoint(
 
 
 def build_responses_payload(request: ProviderRequest) -> dict[str, Any]:
-    input_items = [
-        item for message in request.messages for item in _message_items(message)
-    ]
+    is_gpt_5_6 = request.model.casefold().startswith("gpt-5.6")
+    input_items = _responses_input_items(request.messages, include_state=is_gpt_5_6)
     payload: dict[str, Any] = {
         "model": request.model,
         "input": input_items,
@@ -149,6 +178,18 @@ def build_responses_payload(request: ProviderRequest) -> dict[str, Any]:
         payload["tools"] = [_responses_tool(tool) for tool in request.tools]
     if request.effort is not None:
         payload["reasoning"] = {"effort": request.effort}
+    if is_gpt_5_6:
+        payload.setdefault("reasoning", {})["context"] = "all_turns"
+        payload["include"] = ["reasoning.encrypted_content"]
+        compact_threshold = request.metadata.get("compact_threshold_tokens")
+        if (
+            isinstance(compact_threshold, int)
+            and not isinstance(compact_threshold, bool)
+            and compact_threshold > 0
+        ):
+            payload["context_management"] = [
+                {"type": "compaction", "compact_threshold": compact_threshold}
+            ]
     if request.response_format is not None:
         payload["text"] = _responses_text_format(request.response_format)
     if request.max_output_tokens is not None:
@@ -310,6 +351,15 @@ class OpenAIResponsesAdapter:
 
                     if event_type == "response.output_item.done":
                         item = event.get("item")
+                        if (
+                            isinstance(item, Mapping)
+                            and item.get("type") in {"reasoning", "compaction"}
+                        ):
+                            yield ProviderEvent(
+                                type="response_state",
+                                provider_metadata={"item": dict(item)},
+                            )
+                            continue
                         if (
                             isinstance(item, Mapping)
                             and item.get("type") == "function_call"

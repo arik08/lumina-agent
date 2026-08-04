@@ -11,9 +11,12 @@ ProviderEventType = Literal[
     "tool_call_delta",
     "tool_call_completed",
     "tool_call_discarded",
+    "response_state",
     "usage",
     "completed",
 ]
+
+RESPONSES_STATE_METADATA_KEY = "openai_responses_state"
 
 
 @dataclass(frozen=True, slots=True)

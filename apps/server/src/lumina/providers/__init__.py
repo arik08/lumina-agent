@@ -15,6 +15,7 @@ from .types import (
     ProviderMessage,
     ProviderRequest,
     ProviderUsage,
+    RESPONSES_STATE_METADATA_KEY,
 )
 
 __all__ = [
@@ -33,6 +34,7 @@ __all__ = [
     "ProviderRequest",
     "ProviderRequestError",
     "ProviderUsage",
+    "RESPONSES_STATE_METADATA_KEY",
     "initial_model_catalog",
     "validate_catalog",
 ]

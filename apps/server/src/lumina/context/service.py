@@ -951,6 +951,15 @@ def _compaction_threshold(run: Run, effective_budget: int) -> int:
     return max(1, int(effective_budget * ratio))
 
 
+def runtime_compaction_threshold(
+    run: Run, tool_schemas: Sequence[Mapping[str, Any]]
+) -> int:
+    """Return the same threshold used by Lumina's local runtime compactor."""
+
+    _context_window, effective_budget = _context_budget(run, tool_schemas)
+    return _compaction_threshold(run, effective_budget)
+
+
 def _padded_estimate(run: Run, estimated_tokens: int) -> int:
     if run.provider_id == "pgpt":
         execution = run.snapshot_json.get("execution", {})

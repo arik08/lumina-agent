@@ -1078,6 +1078,93 @@ async def test_pgpt_adapter_uses_streaming_cache_payload_and_normalizes_response
 
 
 @pytest.mark.asyncio
+async def test_pgpt_gpt_5_6_prefers_responses_with_server_compaction() -> None:
+    paths: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        payload = json.loads(request.content)
+        assert payload["reasoning"]["context"] == "all_turns"
+        assert payload["context_management"] == [
+            {"type": "compaction", "compact_threshold": 1_000}
+        ]
+        assert payload["include"] == ["reasoning.encrypted_content"]
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            content=_sse(
+                {"type": "response.output_text.delta", "delta": "OK"},
+                {
+                    "type": "response.completed",
+                    "response": {"status": "completed", "output": []},
+                },
+            ),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = PgptAdapter(
+            profile=PgptProfile(base_url="https://pgpt.test/v1"),
+            credentials=PgptCredentials(
+                api_key="pgpt-key", employee_no="employee-no", company_code="30"
+            ),
+            client=client,
+        )
+        events = [
+            event
+            async for event in adapter.stream(
+                ProviderRequest(
+                    model="gpt-5.6-sol",
+                    messages=(ProviderMessage(role="user", content="Hello"),),
+                    metadata={"compact_threshold_tokens": 1_000},
+                )
+            )
+        ]
+
+    assert paths == ["/v1/responses"]
+    assert [event.text for event in events if event.type == "text_delta"] == ["OK"]
+
+
+@pytest.mark.asyncio
+async def test_pgpt_gpt_5_6_falls_back_only_when_responses_endpoint_is_missing() -> None:
+    paths: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path.endswith("/responses"):
+            return httpx.Response(404, json={"error": {"message": "not found"}})
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            content=_openai_sse(
+                {"choices": [{"delta": {"content": "OK"}, "finish_reason": "stop"}]}
+            ),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = PgptAdapter(
+            profile=PgptProfile(base_url="https://pgpt.test/v1"),
+            credentials=PgptCredentials(
+                api_key="pgpt-key", employee_no="employee-no", company_code="30"
+            ),
+            client=client,
+        )
+        request = ProviderRequest(
+            model="gpt-5.6-sol",
+            messages=(ProviderMessage(role="user", content="Hello"),),
+        )
+        first_events = [event async for event in adapter.stream(request)]
+        second_events = [event async for event in adapter.stream(request)]
+
+    assert paths == [
+        "/v1/responses",
+        "/v1/chat/completions",
+        "/v1/chat/completions",
+    ]
+    assert first_events[-1].type == second_events[-1].type == "completed"
+    assert adapter.supports_server_compaction("gpt-5.6-sol") is False
+
+
+@pytest.mark.asyncio
 async def test_pgpt_adapter_strips_unsupported_conditional_tool_schema_only_on_wire() -> (
     None
 ):

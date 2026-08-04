@@ -378,6 +378,7 @@ class CodexResponsesAdapter:
                     "tool_call_started",
                     "tool_call_delta",
                     "tool_call_completed",
+                    "response_state",
                 }:
                     output_started = True
                 yield event
@@ -423,6 +424,7 @@ class CodexResponsesAdapter:
                         "text_delta",
                         "tool_call_started",
                         "tool_call_delta",
+                        "response_state",
                     }:
                         emitted_output = True
                     if event.type == "usage" and event.usage is not None:
