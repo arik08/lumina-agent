@@ -128,27 +128,57 @@ function Set-LuminaQaIsolationEnvironment {
             "Process"
         )
         $changed = $true
+        $databaseUrl = "sqlite:///$databaseUrlPath"
     }
-    if ([string]::IsNullOrWhiteSpace(
-        [Environment]::GetEnvironmentVariable("LUMINA_FILES_DIR", "Process")
-    )) {
+    $effectiveDatabaseUrl = if (-not [string]::IsNullOrWhiteSpace($databaseUrl)) {
+        $databaseUrl
+    }
+    else {
+        $luminaDatabaseUrl
+    }
+    [Environment]::SetEnvironmentVariable(
+        "LUMINA_LAUNCHER_DATABASE_URL",
+        $effectiveDatabaseUrl,
+        "Process"
+    )
+
+    $filesDirectory = [Environment]::GetEnvironmentVariable(
+        "LUMINA_FILES_DIR",
+        "Process"
+    )
+    if ([string]::IsNullOrWhiteSpace($filesDirectory)) {
+        $filesDirectory = Join-Path $qaRoot "files"
         [Environment]::SetEnvironmentVariable(
             "LUMINA_FILES_DIR",
-            (Join-Path $qaRoot "files"),
+            $filesDirectory,
             "Process"
         )
         $changed = $true
     }
-    if ([string]::IsNullOrWhiteSpace(
-        [Environment]::GetEnvironmentVariable("LUMINA_ARTIFACTS_DIR", "Process")
-    )) {
+    [Environment]::SetEnvironmentVariable(
+        "LUMINA_LAUNCHER_FILES_DIR",
+        $filesDirectory,
+        "Process"
+    )
+
+    $artifactsDirectory = [Environment]::GetEnvironmentVariable(
+        "LUMINA_ARTIFACTS_DIR",
+        "Process"
+    )
+    if ([string]::IsNullOrWhiteSpace($artifactsDirectory)) {
+        $artifactsDirectory = Join-Path $qaRoot "artifacts"
         [Environment]::SetEnvironmentVariable(
             "LUMINA_ARTIFACTS_DIR",
-            (Join-Path $qaRoot "artifacts"),
+            $artifactsDirectory,
             "Process"
         )
         $changed = $true
     }
+    [Environment]::SetEnvironmentVariable(
+        "LUMINA_LAUNCHER_ARTIFACTS_DIR",
+        $artifactsDirectory,
+        "Process"
+    )
     if ($changed) {
         Write-Host "[Lumina] Isolated QA runtime: data/qa-runtime/$runtimeKey"
     }

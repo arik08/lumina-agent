@@ -57,6 +57,39 @@ def test_empty_dotenv_api_key_falls_back_to_process_environment(
     assert settings.openai_api_key.get_secret_value() == "process-key"
 
 
+def test_launcher_storage_overrides_dotenv_without_changing_api_key_precedence(
+    monkeypatch, tmp_path: Path
+) -> None:
+    dotenv_database = f"sqlite:///{(tmp_path / 'dotenv.db').as_posix()}"
+    launcher_database = f"sqlite:///{(tmp_path / 'launcher.db').as_posix()}"
+    launcher_files = tmp_path / "launcher-files"
+    launcher_artifacts = tmp_path / "launcher-artifacts"
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            (
+                f"DATABASE_URL={dotenv_database}",
+                f"LUMINA_FILES_DIR={tmp_path / 'dotenv-files'}",
+                f"LUMINA_ARTIFACTS_DIR={tmp_path / 'dotenv-artifacts'}",
+                "OPENAI_API_KEY=dotenv-key",
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LUMINA_LAUNCHER_DATABASE_URL", launcher_database)
+    monkeypatch.setenv("LUMINA_LAUNCHER_FILES_DIR", str(launcher_files))
+    monkeypatch.setenv("LUMINA_LAUNCHER_ARTIFACTS_DIR", str(launcher_artifacts))
+    monkeypatch.setenv("OPENAI_API_KEY", "process-key")
+
+    settings = Settings(_env_file=env_file, data_dir=tmp_path)
+
+    assert settings.database_url == launcher_database
+    assert settings.files_dir == launcher_files.resolve()
+    assert settings.artifacts_dir == launcher_artifacts.resolve()
+    assert settings.openai_api_key is not None
+    assert settings.openai_api_key.get_secret_value() == "dotenv-key"
+
+
 def test_codex_cache_prewarm_is_opt_in(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("LUMINA_CODEX_CACHE_PREWARM_ENABLED", raising=False)
     assert (

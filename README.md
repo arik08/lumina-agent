@@ -201,7 +201,7 @@ devtools\stop_lumina.bat
 
 ```text
 아이디: admin@posco.com
-비밀번호: 1
+비밀번호: 1111
 ```
 
 이 계정은 로컬 개발용입니다. 운영 배포 전에 Bootstrap 비밀번호를 변경하고, 일반 사용자에게 관리자 계정을 공유하지 마십시오.

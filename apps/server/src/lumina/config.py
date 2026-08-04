@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -50,6 +51,18 @@ class DotenvFirstSettings(BaseSettings):
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         del cls, settings_cls
 
+        def launcher_storage_settings() -> dict[str, Any]:
+            values: dict[str, Any] = {}
+            for field_name, environment_name in (
+                ("DATABASE_URL", "LUMINA_LAUNCHER_DATABASE_URL"),
+                ("files_dir", "LUMINA_LAUNCHER_FILES_DIR"),
+                ("artifacts_dir", "LUMINA_LAUNCHER_ARTIFACTS_DIR"),
+            ):
+                value = os.environ.get(environment_name)
+                if value is not None and value.strip():
+                    values[field_name] = value
+            return values
+
         def non_empty_dotenv_settings() -> dict[str, Any]:
             return {
                 key: value
@@ -59,6 +72,7 @@ class DotenvFirstSettings(BaseSettings):
 
         return (
             init_settings,
+            cast(PydanticBaseSettingsSource, launcher_storage_settings),
             cast(PydanticBaseSettingsSource, non_empty_dotenv_settings),
             env_settings,
             file_secret_settings,

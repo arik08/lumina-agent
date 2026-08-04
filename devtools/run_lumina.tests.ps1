@@ -355,7 +355,10 @@ $qaEnvironmentNames = @(
     "DATABASE_URL",
     "LUMINA_DATABASE_URL",
     "LUMINA_FILES_DIR",
-    "LUMINA_ARTIFACTS_DIR"
+    "LUMINA_ARTIFACTS_DIR",
+    "LUMINA_LAUNCHER_DATABASE_URL",
+    "LUMINA_LAUNCHER_FILES_DIR",
+    "LUMINA_LAUNCHER_ARTIFACTS_DIR"
 )
 $originalQaEnvironment = @{}
 foreach ($name in $qaEnvironmentNames) {
@@ -379,7 +382,10 @@ try {
         "DATABASE_URL",
         "LUMINA_DATABASE_URL",
         "LUMINA_FILES_DIR",
-        "LUMINA_ARTIFACTS_DIR"
+        "LUMINA_ARTIFACTS_DIR",
+        "LUMINA_LAUNCHER_DATABASE_URL",
+        "LUMINA_LAUNCHER_FILES_DIR",
+        "LUMINA_LAUNCHER_ARTIFACTS_DIR"
     )) {
         [Environment]::SetEnvironmentVariable($name, $null, "Process")
     }
@@ -394,7 +400,10 @@ try {
     if (
         $env:DATABASE_URL -ne "sqlite:///$expectedDatabasePath" -or
         $env:LUMINA_FILES_DIR -ne (Join-Path $expectedQaRoot "files") -or
-        $env:LUMINA_ARTIFACTS_DIR -ne (Join-Path $expectedQaRoot "artifacts")
+        $env:LUMINA_ARTIFACTS_DIR -ne (Join-Path $expectedQaRoot "artifacts") -or
+        $env:LUMINA_LAUNCHER_DATABASE_URL -ne "sqlite:///$expectedDatabasePath" -or
+        $env:LUMINA_LAUNCHER_FILES_DIR -ne (Join-Path $expectedQaRoot "files") -or
+        $env:LUMINA_LAUNCHER_ARTIFACTS_DIR -ne (Join-Path $expectedQaRoot "artifacts")
     ) {
         throw "Process-level QA ports did not receive isolated runtime storage."
     }
@@ -411,7 +420,10 @@ try {
         -BackendPort 47253 `
         -RepositoryRoot $qaIsolationRoot `
         -RuntimeFileSuffix ".47252-47253"
-    if ($env:DATABASE_URL -ne $explicitDatabaseUrl) {
+    if (
+        $env:DATABASE_URL -ne $explicitDatabaseUrl -or
+        $env:LUMINA_LAUNCHER_DATABASE_URL -ne $explicitDatabaseUrl
+    ) {
         throw "An explicit QA DATABASE_URL was overwritten by the launcher."
     }
 
