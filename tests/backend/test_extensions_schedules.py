@@ -12,7 +12,7 @@ from threading import Event
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from lumina.api.errors import ApiProblem, install_error_handlers
 from lumina.api.routes import auth, extensions, projects, schedules
@@ -21,7 +21,11 @@ from lumina.auth import bootstrap_database, create_user
 from lumina.config import Settings, get_settings
 from lumina.db import SessionLocal, configure_database, create_schema
 from lumina.extensions import repository_catalog
-from lumina.extensions.service import save_draft_version, update_draft
+from lumina.extensions.service import (
+    resolve_skill_snapshot,
+    save_draft_version,
+    update_draft,
+)
 from lumina.mcp.service import install_definition, resolve_mcp_snapshot
 from lumina.models import (
     Artifact,
@@ -213,6 +217,7 @@ def test_marketplace_refresh_syncs_new_repository_skill(
     app, _settings = _test_app(tmp_path)
     with TestClient(app) as client:
         csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
         assert client.get("/api/extensions").json() == []
 
         skill_root = skills_root / "explorer-added"
@@ -236,6 +241,33 @@ def test_marketplace_refresh_syncs_new_repository_skill(
             ("explorer-added", "카탈로그에 표시할 한국어 설명")
         ]
 
+        with SessionLocal() as db:
+            admin = db.scalar(select(User).where(User.role == "admin"))
+            assert admin is not None
+            extension = db.scalar(
+                select(Extension).where(Extension.slug == "explorer-added")
+            )
+            assert extension is not None
+            installations = list(
+                db.scalars(
+                    select(ExtensionInstallation).where(
+                        ExtensionInstallation.extension_id == extension.id,
+                        ExtensionInstallation.removed_at.is_(None),
+                    )
+                )
+            )
+            assert len(installations) == 1
+            assert installations[0].scope_type == "organization"
+            assert installations[0].scope_id == admin.organization_id
+            assert installations[0].enabled is True
+            assert installations[0].version_id == extension.latest_published_version_id
+            assert [
+                item["slug"]
+                for item in resolve_skill_snapshot(
+                    db, user=admin, project_id=project_id
+                )
+            ] == ["explorer-added"]
+
         repeated = client.post(
             "/api/extensions/repository-sync",
             headers={"X-CSRF-Token": csrf},
@@ -244,6 +276,47 @@ def test_marketplace_refresh_syncs_new_repository_skill(
         assert repeated.json()["skillsChanged"] == 0
         assert repeated.json()["mcpChanged"] == 0
         assert repeated.json()["revision"] == synced.json()["revision"]
+
+        with SessionLocal() as db:
+            extension = db.scalar(
+                select(Extension).where(Extension.slug == "explorer-added")
+            )
+            assert extension is not None
+            assert db.scalar(
+                select(func.count(ExtensionInstallation.id)).where(
+                    ExtensionInstallation.extension_id == extension.id,
+                    ExtensionInstallation.removed_at.is_(None),
+                )
+            ) == 1
+
+        (skill_root / "SKILL.md").write_text(
+            "---\nname: explorer-added\ndescription: English runtime trigger description.\n---\n\n"
+            "# Explorer Added\n\nUpdated instructions.\n",
+            encoding="utf-8",
+        )
+        updated = client.post(
+            "/api/extensions/repository-sync",
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["skillsChanged"] == 1
+
+        with SessionLocal() as db:
+            extension = db.scalar(
+                select(Extension).where(Extension.slug == "explorer-added")
+            )
+            assert extension is not None
+            latest = db.get(ExtensionVersion, extension.latest_published_version_id)
+            assert latest is not None
+            assert latest.version_number == 2
+            installation = db.scalar(
+                select(ExtensionInstallation).where(
+                    ExtensionInstallation.extension_id == extension.id,
+                    ExtensionInstallation.removed_at.is_(None),
+                )
+            )
+            assert installation is not None
+            assert installation.version_id == latest.id
 
 
 def test_repository_mcp_wrapper_is_classified_and_attached_to_mcp_snapshot(

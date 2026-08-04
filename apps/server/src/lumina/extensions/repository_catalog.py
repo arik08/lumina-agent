@@ -24,6 +24,7 @@ from ..mcp.service import (
 from ..models import (
     Extension,
     ExtensionDraft,
+    ExtensionInstallation,
     ExtensionVersion,
     McpConfigurationRevision,
     McpDefinition,
@@ -34,7 +35,7 @@ from ..models import (
 )
 from .agent_skill_spec import AgentSkillSpecError, parse_agent_skill
 from .package_content import encode_binary_package_content
-from .service import normalize_package, package_digest
+from .service import install_version, normalize_package, package_digest
 
 
 _IGNORED_PARTS = {
@@ -175,30 +176,62 @@ def sync_repository_skills(
         extension.kind = "mcp" if mcp_slug is not None else "skill"
         extension.visibility = "organization"
         extension.publisher_user_id = admin.id
-        if (
+        version_changed = not (
             latest is not None
             and latest.package_digest == digest
             and all(
                 latest.manifest_json.get(key) == value
                 for key, value in manifest.items()
             )
-        ):
-            continue
-        version = ExtensionVersion(
-            extension_id=extension.id,
-            version_number=(latest.version_number + 1 if latest else 1),
-            parent_version_id=latest.id if latest else None,
-            package_json=package,
-            package_digest=digest,
-            manifest_json=manifest,
-            status="published",
-            created_by_user_id=admin.id,
-            published_at=utc_now(),
         )
-        db.add(version)
-        db.flush()
+        if version_changed:
+            version = ExtensionVersion(
+                extension_id=extension.id,
+                version_number=(latest.version_number + 1 if latest else 1),
+                parent_version_id=latest.id if latest else None,
+                package_json=package,
+                package_digest=digest,
+                manifest_json=manifest,
+                status="published",
+                created_by_user_id=admin.id,
+                published_at=utc_now(),
+            )
+            db.add(version)
+            db.flush()
+        else:
+            assert latest is not None
+            version = latest
         extension.latest_published_version_id = version.id
-        changed += 1
+
+        activation_changed = False
+        if mcp_slug is None:
+            installation = db.scalar(
+                select(ExtensionInstallation).where(
+                    ExtensionInstallation.extension_id == extension.id,
+                    ExtensionInstallation.scope_type == "organization",
+                    ExtensionInstallation.scope_id == admin.organization_id,
+                    ExtensionInstallation.removed_at.is_(None),
+                )
+            )
+            activation_changed = (
+                installation is None
+                or installation.version_id != version.id
+                or not installation.enabled
+            )
+            if activation_changed:
+                install_version(
+                    db,
+                    user=admin,
+                    version_id=version.id,
+                    scope_type="organization",
+                    scope_id=admin.organization_id,
+                    enabled=True,
+                    settings=(
+                        dict(installation.settings_json) if installation is not None else {}
+                    ),
+                )
+        if version_changed or activation_changed:
+            changed += 1
     db.flush()
     return changed
 

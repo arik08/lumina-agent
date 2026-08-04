@@ -2241,6 +2241,8 @@ DELETE /api/skills/{id}/ownerships/{ownership_id}
 
 대화 중 `create_skill` Workspace Tool은 package를 Project workspace의 canonical 경로인 `extensions/skills/<slug>/`에 영속 저장하고 같은 transaction에서 Draft service와 연결하여 다음 Run에 활성 revision을 적용합니다. `.skills/`와 `skills/`는 Lumina Skill 생성 경로로 사용하지 않으며 `run_python`의 임시 실행 디렉터리도 영속 저장소로 간주하지 않습니다. 별도 `/skill-drafts/from-conversation` HTTP route를 현재 구현으로 가정하지 않습니다.
 
+관리자가 repository의 실제 `extensions/skills/<slug>/`에 표준 Skill package를 복사하는 운영 경로는 Project workspace 경로와 구분합니다. Repository watcher는 임의의 유효한 package를 Published Skill로 동기화하고 조직 범위에 자동 활성화하며, package 변경 시 활성 설치를 새 immutable version으로 이동시켜 다음 Run snapshot부터 적용합니다.
+
 다음 endpoint는 Skill Evolution 단계의 Target입니다.
 
 ```text
