@@ -427,7 +427,15 @@ def test_create_skill_tool_persists_package_in_extensions_workspace(
                                 "---\n\n"
                                 "# Say Hello\n\n"
                                 "Respond with exactly `안녕하세요!`.\n"
-                            )
+                            ),
+                            "agents/openai.yaml": (
+                                "interface:\n"
+                                '  display_name: "Say Hello"\n'
+                                '  short_description: "정확한 한국어 인사를 반환합니다"\n'
+                                '  default_prompt: "Use $say-hello to greet in Korean."\n'
+                                "policy:\n"
+                                "  allow_implicit_invocation: true\n"
+                            ),
                         },
                     },
                     call_id="create-say-hello-skill",
@@ -467,14 +475,24 @@ def test_create_skill_tool_persists_package_in_extensions_workspace(
         assert execution["result"]["packageRoot"] == "extensions/skills/say-hello"
 
         with SessionLocal() as db:
-            assert db.scalar(
-                select(ProjectFile.logical_path).where(
-                    ProjectFile.project_id == project_id
+            assert set(
+                db.scalars(
+                    select(ProjectFile.logical_path).where(
+                        ProjectFile.project_id == project_id
+                    )
                 )
-            ) == "extensions/skills/say-hello/SKILL.md"
+            ) == {
+                "extensions/skills/say-hello/SKILL.md",
+                "extensions/skills/say-hello/agents/openai.yaml",
+            }
             extension = db.scalar(select(Extension).where(Extension.slug == "say-hello"))
             assert extension is not None
             assert extension.project_id == project_id
+            draft = db.scalar(
+                select(ExtensionDraft).where(ExtensionDraft.extension_id == extension.id)
+            )
+            assert draft is not None
+            assert draft.package_json["agents/openai.yaml"].startswith("interface:\n")
 
 
 def test_write_file_result_is_exposed_as_document_artifact(

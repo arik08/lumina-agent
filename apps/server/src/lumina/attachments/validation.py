@@ -17,6 +17,8 @@ MIME_BY_EXTENSION = {
     ".csv": "text/csv",
     ".tsv": "text/tab-separated-values",
     ".py": "text/x-python",
+    ".yaml": "text/yaml",
+    ".yml": "text/yaml",
     ".png": "image/png",
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
@@ -45,7 +47,16 @@ def sniff_mime(content: bytes, extension: str) -> str:
         return "image/webp"
     if extension in _OPENXML_REQUIRED_MEMBER:
         return _sniff_openxml_mime(content, extension)
-    if extension in {".txt", ".html", ".md", ".csv", ".tsv", ".py"}:
+    if extension in {
+        ".txt",
+        ".html",
+        ".md",
+        ".csv",
+        ".tsv",
+        ".py",
+        ".yaml",
+        ".yml",
+    }:
         try:
             decoded = content.decode("utf-8")
         except UnicodeDecodeError:
