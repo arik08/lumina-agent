@@ -1719,7 +1719,11 @@ export const AssistantTurn = memo(function AssistantTurn({
   const researchVerification = finalMessage?.metadata?.researchVerification;
   const artifacts = snapshot?.artifacts ?? turnSet.artifacts;
   const assistantText = finalMessage?.text || liveAssistantDraft?.text || "";
-  const sanitizedAssistantText = sanitizeAssistantResponse(assistantText, artifacts.length > 0);
+  const sanitizedAssistantText = sanitizeAssistantResponse(
+    assistantText,
+    artifacts.length > 0,
+    sources.map((source) => source.sourceId),
+  );
   const sourceTargets = citationTargets(sanitizedAssistantText, sources, citations);
   const citedSourceCount = sourceTargets.filter((target) => target.cited).length;
   const reviewedSourceCount = sourceTargets.filter((target) => !target.cited && target.source.evidenceKind === "fetched_content").length;

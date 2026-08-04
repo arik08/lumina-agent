@@ -9,7 +9,7 @@ const sharedViewerSource = await readFile(new URL("../src/components/SharedSnaps
 test("assistant responses hide internal artifact UUID metadata everywhere users can read or copy them", () => {
   assert.ok(sanitizerSource.includes("Artifact(?: ID)?"));
   assert.ok(sanitizerSource.includes("[0-9a-f]{12}`?[ \\t]*\\r?\\n?/gim"));
-  assert.match(appSource, /const sanitizedAssistantText = sanitizeAssistantResponse\(assistantText, artifacts\.length > 0\)/);
+  assert.match(appSource, /const sanitizedAssistantText = sanitizeAssistantResponse\([\s\S]*assistantText,[\s\S]*artifacts\.length > 0,[\s\S]*sources\.map\(\(source\) => source\.sourceId\),[\s\S]*\)/);
   assert.match(appSource, /copyText\(sanitizedAssistantText\)/);
   assert.match(sharedViewerSource, /sanitizeAssistantResponse\(message\.text, snapshot\.artifacts\.length > 0\)/);
 });
@@ -33,4 +33,10 @@ test("artifact metadata matcher handles the response formats produced by provide
     "Artifact는 생성된 문서를 뜻합니다.\n".replace(metadataLine, ""),
     "Artifact는 생성된 문서를 뜻합니다.\n",
   );
+});
+
+test("assistant response sanitizer converts provider-native citations without exposing private-use characters", () => {
+  assert.ok(sanitizerSource.includes("providerCitationToken"));
+  assert.ok(sanitizerSource.includes("[source:${sourceId}]"));
+  assert.ok(sanitizerSource.includes("\\uE200-\\uF8FF"));
 });

@@ -1,4 +1,4 @@
-from lumina.citations import resolve_inline_citations
+from lumina.citations import normalize_provider_citation_tokens, resolve_inline_citations
 
 
 def _sources() -> list[dict[str, str]]:
@@ -37,6 +37,32 @@ def test_resolves_source_id_marker_without_fabricating_unknown_source() -> None:
     assert len(payload["citations"]) == 1
     assert payload["citations"][0]["sourceId"] == "source-c"
     assert payload["sources"][2]["citationStatus"] == "cited"
+
+
+def test_normalizes_provider_native_citation_tokens_before_resolution() -> None:
+    text = (
+        "첫 주장. \ue200cite\ue202source-c\ue202missing\ue201 "
+        "둘째 주장. \ue200cite\ue202source-a\ue201"
+    )
+
+    normalized = normalize_provider_citation_tokens(text, _sources())
+    payload = resolve_inline_citations(normalized, _sources())
+    raw_payload = resolve_inline_citations(text, _sources())
+
+    assert normalized == (
+        "첫 주장. [source:source-c] 둘째 주장. [source:source-a]"
+    )
+    assert [item["sourceId"] for item in payload["citations"]] == [
+        "source-c",
+        "source-a",
+    ]
+    assert [item["sourceId"] for item in raw_payload["citations"]] == [
+        "source-c",
+        "source-a",
+    ]
+    assert "\ue200" not in normalized
+    assert "\ue201" not in normalized
+    assert "\ue202" not in normalized
 
 
 def test_resolves_knowledge_source_id_with_namespace() -> None:
