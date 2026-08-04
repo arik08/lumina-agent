@@ -384,14 +384,7 @@ class CodexResponsesAdapter:
                 yield event
             return
         except ProviderRequestError as exc:
-            if output_started or exc.status_code not in {
-                400,
-                401,
-                403,
-                404,
-                405,
-                422,
-            }:
+            if output_started or exc.status_code not in {404, 405}:
                 raise
 
         async for event in self._stream_app_server(request):
@@ -799,13 +792,14 @@ def _codex_responses_headers(token: str, request: ProviderRequest) -> dict[str, 
     }
     session_id = _codex_cache_session_id(request)
     if session_id is not None:
-        headers["session_id"] = session_id
+        headers["session-id"] = session_id
     return headers
 
 
 def _codex_responses_payload(
     request: ProviderRequest, payload: dict[str, Any]
 ) -> dict[str, Any]:
+    _strip_prompt_cache_breakpoints(payload)
     transformed_input: list[dict[str, Any]] = []
     for item in payload.get("input", []):
         if not isinstance(item, Mapping):
@@ -852,6 +846,16 @@ def _codex_responses_payload(
     payload.pop("max_output_tokens", None)
     payload.pop("temperature", None)
     return payload
+
+
+def _strip_prompt_cache_breakpoints(value: Any) -> None:
+    if isinstance(value, dict):
+        value.pop("prompt_cache_breakpoint", None)
+        for nested in value.values():
+            _strip_prompt_cache_breakpoints(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            _strip_prompt_cache_breakpoints(nested)
 
 
 def _effort(value: str | None) -> ReasoningEffort | None:

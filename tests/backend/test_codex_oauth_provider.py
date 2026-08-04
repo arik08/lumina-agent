@@ -102,7 +102,7 @@ async def test_codex_direct_routes_same_prefix_across_new_run_sessions(
     fake_client = SimpleNamespace()
 
     async def ready_client():
-        return fake_client, frozenset({"gpt-5.5"}), "."
+        return fake_client, frozenset({"gpt-5.6-luna"}), "."
 
     monkeypatch.setattr(adapter, "_ready_client", ready_client)
     cache_key = "lumina:user:v2:shared-static-prefix"
@@ -111,7 +111,7 @@ async def test_codex_direct_routes_same_prefix_across_new_run_sessions(
             event
             async for event in adapter.stream(
                 ProviderRequest(
-                    model="gpt-5.5",
+                    model="gpt-5.6-luna",
                     messages=(
                         ProviderMessage(role="system", content="stable system"),
                         ProviderMessage(role="user", content=task),
@@ -131,13 +131,15 @@ async def test_codex_direct_routes_same_prefix_across_new_run_sessions(
         assert events[-2].usage.raw["billing"] == "subscription_usage"
 
     assert len(captured) == 2
-    assert captured[0][0]["session_id"] == captured[1][0]["session_id"]
+    assert captured[0][0]["session-id"] == captured[1][0]["session-id"]
+    assert "session_id" not in captured[0][0]
     assert captured[0][0]["chatgpt-account-id"] == "acct-test"
     assert captured[0][1]["prompt_cache_key"] == cache_key
     assert captured[1][1]["prompt_cache_key"] == cache_key
     assert "max_output_tokens" not in captured[0][1]
     assert "temperature" not in captured[0][1]
     assert "prompt_cache_retention" not in captured[0][1]
+    assert "prompt_cache_options" not in captured[0][1]
     assert captured[0][1]["input"][0] == {
         "role": "developer",
         "content": [{"type": "input_text", "text": "stable system"}],
@@ -250,6 +252,45 @@ async def test_codex_oauth_falls_back_to_app_server_before_direct_output(
         ("text_delta", "fallback"),
         ("completed", None),
     ]
+
+
+@pytest.mark.asyncio
+async def test_codex_oauth_preserves_direct_bad_request_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = CodexResponsesAdapter()
+    fallback_called = False
+
+    async def failing_direct_stream(_request: ProviderRequest):
+        raise ProviderRequestError(
+            "Direct Responses rejected the request",
+            retryable=False,
+            stage="request",
+            status_code=400,
+        )
+        yield
+
+    async def unexpected_app_server_stream(_request: ProviderRequest):
+        nonlocal fallback_called
+        fallback_called = True
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+    monkeypatch.setattr(adapter, "_stream_direct", failing_direct_stream)
+    monkeypatch.setattr(adapter, "_stream_app_server", unexpected_app_server_stream)
+
+    with pytest.raises(ProviderRequestError, match="rejected the request"):
+        _events = [
+            event
+            async for event in adapter.stream(
+                ProviderRequest(
+                    model="gpt-5.6-luna",
+                    messages=(ProviderMessage(role="user", content="hello"),),
+                    metadata={"prompt_cache_key": "lumina:user:v3:stable"},
+                )
+            )
+        ]
+
+    assert fallback_called is False
 
 
 @pytest.mark.asyncio
