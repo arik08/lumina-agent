@@ -41,8 +41,9 @@ test("file workspace keeps refresh at the far right of the header", async () => 
 });
 
 test("file repository is an explorer and viewer with recursive folder upload", async () => {
-  const [view, htmlPreview, resizer, styles] = await Promise.all([
+  const [view, projectPreview, htmlPreview, resizer, styles] = await Promise.all([
     read("../src/components/ProjectFilesView.tsx"),
+    read("../src/components/ProjectFilePreview.tsx"),
     read("../src/components/ArtifactHtmlPreview.tsx"),
     read("../src/components/ResizableSplitPane.tsx"),
     read("../src/styles.css"),
@@ -53,25 +54,25 @@ test("file repository is an explorer and viewer with recursive folder upload", a
   assert.match(view, /webkitdirectory/);
   assert.match(view, /file-workspace-explorer/);
   assert.match(view, /file-workspace-viewer/);
-  assert.match(view, /renderFilePreview/);
-  assert.match(view, /looksLikeStandaloneHtml/);
-  assert.match(view, /import \{ ArtifactHtmlPreview \} from "\.\/ArtifactHtmlPreview"/);
-  assert.match(view, /injectArtifactPreviewBridge\(text\)/);
-  assert.match(view, /<ArtifactHtmlPreview[\s\S]*?frameRef=\{htmlPreviewFrameRef\}[\s\S]*?source=\{preview\.source\}[\s\S]*?previewUrl=\{null\}/);
-  assert.match(view, /new URL\(bridgePath, window\.location\.origin\)\.href/);
-  assert.match(view, /setPreview\(\{ status: "ready", kind, source: text \}\)/);
-  assert.match(view, /kind: "text", text: text\.slice\(0, limit\)/);
-  assert.match(view, /import \{ MarkdownResponse \} from "\.\/ConversationTurn"/);
-  assert.match(view, /isMarkdownFile\(detail\)[\s\S]*?<MarkdownResponse text=\{preview\.text\} \/>/);
-  assert.match(view, /if \(kind === "text"\) \{[\s\S]*?looksLikeStandaloneHtml\(text\)[\s\S]*?kind: "html", source: injectArtifactPreviewBridge\(text\)/);
-  assert.match(view, /extension === "md" \|\| extension === "markdown" \|\| detail\.mimeType/);
-  assert.match(view, /isMarkdownFile\(detail\) && !markdownSource/);
+  assert.match(view, /ProjectFilePreviewContent/);
+  assert.match(view, /useProjectFilePreview\(projectId, detail\)/);
+  assert.match(projectPreview, /looksLikeStandaloneHtml/);
+  assert.match(projectPreview, /import \{ ArtifactHtmlPreview \} from "\.\/ArtifactHtmlPreview"/);
+  assert.match(projectPreview, /injectArtifactPreviewBridge\(text\)/);
+  assert.match(projectPreview, /<ArtifactHtmlPreview[\s\S]*?frameRef=\{frameRef\}[\s\S]*?source=\{preview\.source\}[\s\S]*?previewUrl=\{null\}/);
+  assert.match(projectPreview, /new URL\(bridgePath, window\.location\.origin\)\.href/);
+  assert.match(projectPreview, /kind: "text", text: text\.slice\(0, limit\)/);
+  assert.match(projectPreview, /import \{ MarkdownResponse \} from "\.\/ConversationTurn"/);
+  assert.match(projectPreview, /isMarkdownFile\(detail\)[\s\S]*?<MarkdownResponse text=\{preview\.text\} \/>/);
+  assert.match(projectPreview, /looksLikeStandaloneHtml\(text\)[\s\S]*?kind: "html", source: injectArtifactPreviewBridge\(text\)/);
+  assert.match(projectPreview, /extension === "md" \|\| extension === "markdown" \|\| detail\.mimeType/);
+  assert.match(projectPreview, /isMarkdownFile\(detail\) && !markdownSource/);
   assert.match(view, /aria-label=\{markdownSource \? "렌더링 보기" : "원문 보기"\}/);
   assert.match(view, /aria-pressed=\{markdownSource\}/);
   assert.match(view, /markdownSource \? <Eye size=\{14\} \/> : <Code2 size=\{14\} \/>/);
   assert.match(view, /setMarkdownSource\(false\);[\s\S]*?\}, \[selectedId\]\);/);
   assert.match(styles, /\.file-viewer-actions \.file-preview-mode-toggle\.is-active\s*\{[^}]*border-color:\s*var\(--cobalt\);[^}]*background:\s*var\(--cobalt-pale\);/s);
-  assert.match(view, /className="file-preview-markdown conversation-response-typography"/);
+  assert.match(projectPreview, /className="file-preview-markdown conversation-response-typography"/);
   assert.match(styles, /\.conversation-response-typography\s*\{[^}]*font-size:\s*var\(--conversation-font-size\);[^}]*line-height:\s*1\.68;/s);
   assert.match(htmlPreview, /sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads/);
   assert.doesNotMatch(htmlPreview, /allow-same-origin/);
@@ -128,8 +129,9 @@ test("HTML project files can open their standalone preview in a new window", asy
   ]);
 
   assert.match(view, /import \{ ApiError, projectFilePreviewUrl \} from "\.\.\/api"/);
-  assert.match(view, /detail\.mimeType === "text\/html"[\s\S]*?href=\{projectFilePreviewUrl\(projectId, detail\.id\)\}[\s\S]*?target="_blank"[\s\S]*?rel="noopener noreferrer"[\s\S]*?새 창에서 열기/);
+  assert.match(view, /projectId \? \([\s\S]*?href=\{projectFilePreviewUrl\(projectId, detail\.id\)\}[\s\S]*?target="_blank"[\s\S]*?rel="noopener noreferrer"[\s\S]*?새 창에서 열기/);
   assert.match(api, /export function projectFilePreviewUrl\(projectId: string, fileId: string\)/);
+  assert.match(api, /\/project-files\/\$\{encodeURIComponent\(projectId\)\}\/\$\{encodeURIComponent\(fileId\)\}\/preview/);
   assert.match(styles, /\.file-viewer-actions :is\(button, a\)\s*\{[^}]*text-decoration:\s*none;/s);
 });
 

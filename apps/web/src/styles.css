@@ -1520,6 +1520,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .file-preview-surface > video { display: block; width: min(900px, calc(100% - 40px)); max-height: calc(100% - 40px); margin: 20px auto; }
 .file-preview-surface > audio { display: block; width: min(520px, calc(100% - 40px)); margin: 40px auto; }
 .file-preview-truncated { position: sticky; bottom: 0; padding: 6px 10px; border-top: 1px solid var(--line); background: var(--surface-soft); color: var(--muted); font-size: 10.5px; text-align: center; }
+.project-file-preview-route { width: 100%; height: 100vh; overflow: hidden; background: var(--canvas); color: var(--ink); }
+.project-file-preview-route > .feature-state, .project-file-preview-route > .feature-error { margin: 20px; }
 .folder-file-list { min-height: 0; flex: 1; overflow: auto; padding: 0 16px 24px; }
 .folder-file-list > button { display: grid; width: 100%; min-height: 47px; grid-template-columns: 20px minmax(0, 1fr) 18px; align-items: center; gap: 7px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
 .folder-file-list > button:hover { background: var(--surface-soft); }

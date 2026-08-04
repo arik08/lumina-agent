@@ -510,11 +510,17 @@ def preview_project_file(
 ) -> Response:
     project_file = get_project_file(db, user, project_id, file_id)
     selected = get_project_file_version(db, project_file)
-    if selected.mime_type != "text/html":
+    previewable = (
+        selected.mime_type.startswith(("text/", "image/", "video/", "audio/"))
+        or selected.mime_type == "application/pdf"
+        or "json" in selected.mime_type
+        or "xml" in selected.mime_type
+    )
+    if not previewable:
         raise ApiProblem(
             415,
             "project_file_preview_unsupported",
-            "HTML Project 파일만 새 창 미리보기를 지원합니다.",
+            "이 Project 파일 형식은 브라우저 미리보기를 지원하지 않습니다.",
         )
     try:
         content = _storage(settings).read_bytes(
@@ -527,18 +533,23 @@ def preview_project_file(
             "Project 파일 원본을 읽을 수 없습니다.",
         ) from exc
     standalone_content = prepare_standalone_html_download(content, selected.mime_type)
+    response_mime_type = "text/html" if selected.mime_type == "text/html" else selected.mime_type
+    headers = {
+        "Content-Disposition": "inline",
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
+    }
+    if selected.mime_type == "text/html":
+        headers["Content-Security-Policy"] = (
+            "sandbox allow-scripts allow-forms allow-modals "
+            "allow-downloads allow-popups"
+        )
+    elif selected.mime_type == "image/svg+xml":
+        headers["Content-Security-Policy"] = "sandbox"
     return Response(
         content=standalone_content,
-        media_type="text/html",
-        headers={
-            "Content-Disposition": "inline",
-            "Cache-Control": "private, no-store",
-            "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": (
-                "sandbox allow-scripts allow-forms allow-modals "
-                "allow-downloads allow-popups"
-            ),
-        },
+        media_type=response_mime_type,
+        headers=headers,
     )
 
 

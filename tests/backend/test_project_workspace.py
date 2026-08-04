@@ -163,6 +163,36 @@ def test_project_file_html_preview_opens_inline_with_sandbox(
         assert "cdn.jsdelivr.net/npm/mermaid" not in stored_html.read_text("utf-8")
 
 
+def test_project_file_text_and_image_previews_open_inline(tmp_path: Path) -> None:
+    settings = _settings(tmp_path, "other-project-file-previews.db")
+    with TestClient(create_app(settings)) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        markdown = _upload(
+            client,
+            headers,
+            project_id,
+            logical_path="reports/result.md",
+            content="# 결과\n\n본문",
+        )
+        image = client.post(
+            f"/api/projects/{project_id}/files",
+            headers=headers,
+            data={"logicalPath": "images/pixel.png", "changeReason": "테스트"},
+            files={"file": ("pixel.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+        )
+
+        for created, mime_type in ((markdown, "text/markdown"), (image, "image/png")):
+            assert created.status_code == 201, created.text
+            preview = client.get(
+                f"/api/projects/{project_id}/files/{created.json()['id']}/preview"
+            )
+            assert preview.status_code == 200
+            assert preview.headers["content-disposition"] == "inline"
+            assert preview.headers["content-type"].startswith(mime_type)
+            assert "content-security-policy" not in preview.headers
+
+
 def test_project_file_api_keyset_pages_without_duplicates(tmp_path: Path) -> None:
     settings = _settings(tmp_path, "project-file-pages.db")
     with TestClient(create_app(settings)) as client:

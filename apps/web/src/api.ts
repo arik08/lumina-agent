@@ -159,10 +159,10 @@ export function artifactStandalonePreviewUrl(artifactId: string, version: number
 }
 
 export function projectFilePreviewUrl(projectId: string, fileId: string) {
-  return buildUrl(
-    apiBase,
-    `/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(fileId)}/preview`,
-  );
+  return new URL(
+    `/project-files/${encodeURIComponent(projectId)}/${encodeURIComponent(fileId)}/preview`,
+    window.location.origin,
+  ).toString();
 }
 
 export function attachmentContentUrl(attachmentId: string) {

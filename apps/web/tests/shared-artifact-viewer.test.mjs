@@ -25,7 +25,7 @@ test("shared Artifact links open the selected immutable version in a direct view
   assert.match(viewer, /className="shared-artifact-frame"[^>]*sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads"[^>]*srcDoc=\{sharedArtifactSource\}/);
   assert.doesNotMatch(stylesheet, /\.shared-artifact-viewer\.is-fullscreen/);
   assert.match(stylesheet, /\.shared-artifact-body\s*\{[^}]*scrollbar-width:\s*thin/s);
-  assert.match(frontendHost, /const sharedRoute = sharedRouteFromLocation\(\);\s*if \(sharedRoute\) \{\s*return <SharedSnapshotViewer \{\.\.\.sharedRoute\} \/>;\s*\}\s*const Frontend/);
+  assert.match(frontendHost, /const sharedRoute = sharedRouteFromLocation\(\);\s*if \(sharedRoute\) \{\s*return <SharedSnapshotViewer \{\.\.\.sharedRoute\} \/>;\s*\}[\s\S]*?const Frontend/);
   assert.match(frontendHost, /artifactVersion: artifactId && Number\.isInteger\(parsedVersion\) && parsedVersion > 0/);
   assert.match(viewer, /<h1>공유 대화를 불러오지 못했습니다<\/h1>/);
   assert.match(viewer, /setLoadRevision\(\(revision\) => revision \+ 1\)/);

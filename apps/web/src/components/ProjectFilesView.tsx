@@ -24,16 +24,15 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { type CSSProperties, type DragEvent, type MouseEvent, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type DragEvent, type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ApiError, projectFilePreviewUrl } from "../api";
 import { projectFilesApi } from "../feature-api";
 
 const api = { projectFiles: projectFilesApi };
-import type { ArtifactDownload, ProjectFileDetail, ProjectFileSummary, ProjectFolderSummary } from "../api-types";
+import type { ProjectFileDetail, ProjectFileSummary, ProjectFolderSummary } from "../api-types";
 import { useCachedViewState } from "../view-data-cache";
-import { ArtifactHtmlPreview } from "./ArtifactHtmlPreview";
-import { MarkdownResponse } from "./ConversationTurn";
+import { isMarkdownFile, ProjectFilePreviewContent, saveProjectFileDownload, useProjectFilePreview } from "./ProjectFilePreview";
 import { ResizableSplitPane } from "./ResizableSplitPane";
 
 interface ProjectFilesViewProps {
@@ -87,20 +86,8 @@ type TreeEditor =
   | { mode: "create"; parentPath: string; value: string }
   | { mode: "rename"; node: FileTreeNode; value: string };
 
-type PreviewState =
-  | { status: "idle" }
-  | { status: "loading" }
-  | { status: "ready"; kind: "text"; text: string; truncated: boolean }
-  | { status: "ready"; kind: "html"; source: string }
-  | { status: "ready"; kind: "image" | "pdf" | "video" | "audio"; url: string }
-  | { status: "unsupported"; mimeType: string }
-  | { status: "error"; message: string };
-
 const treeCollator = new Intl.Collator("ko-KR", { numeric: true, sensitivity: "base" });
 const treeDragMime = "application/x-lumina-file-tree";
-const textExtensions = new Set([
-  "css", "csv", "html", "htm", "ini", "js", "json", "jsx", "log", "md", "py", "sql", "svg", "toml", "ts", "tsx", "txt", "xml", "yaml", "yml",
-]);
 
 function formatBytes(value: number) {
   if (value < 1024) return `${value} B`;
@@ -118,17 +105,6 @@ function errorMessage(error: unknown) {
 
 function normalizeUploadPath(value: string) {
   return value.replaceAll("\\", "/").replace(/^\/+/, "");
-}
-
-function saveDownload(download: ArtifactDownload) {
-  const url = URL.createObjectURL(download.blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = download.fileName;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function buildFileTree(files: ProjectFileSummary[], folders: ProjectFolderSummary[]) {
@@ -250,74 +226,9 @@ async function collectDroppedFiles(dataTransfer: DataTransfer) {
   return Array.from(dataTransfer.files).map((file) => ({ file, logicalPath: file.name }));
 }
 
-function classifyPreview(detail: ProjectFileDetail, blob: Blob) {
-  const mimeType = (blob.type || detail.mimeType).toLocaleLowerCase("en-US");
-  const extension = detail.displayName.split(".").at(-1)?.toLocaleLowerCase("en-US") ?? "";
-  if (mimeType.startsWith("image/")) return "image";
-  if (mimeType === "application/pdf") return "pdf";
-  if (mimeType === "text/html" || extension === "html" || extension === "htm") return "html";
-  if (mimeType.startsWith("video/")) return "video";
-  if (mimeType.startsWith("audio/")) return "audio";
-  if (mimeType.startsWith("text/") || textExtensions.has(extension) || mimeType.includes("json") || mimeType.includes("xml")) return "text";
-  return "unsupported";
-}
-
-function looksLikeStandaloneHtml(value: string) {
-  const normalized = value.trimStart().toLocaleLowerCase("en-US");
-  return ["<!doctype html", "<html", "<head", "<body"].every((marker) => normalized.includes(marker));
-}
-
-function injectArtifactPreviewBridge(value: string) {
-  const bridgePath = "/artifact-preview-bridge.js";
-  if (value.includes(bridgePath)) return value;
-  const bridge = `<script src="${new URL(bridgePath, window.location.origin).href}"></script>`;
-  return /<\/body\s*>/i.test(value)
-    ? value.replace(/<\/body\s*>/i, `${bridge}</body>`)
-    : `${value}${bridge}`;
-}
-
-function isMarkdownFile(detail: ProjectFileDetail) {
-  const extension = detail.displayName.split(".").at(-1)?.toLocaleLowerCase("en-US");
-  return extension === "md" || extension === "markdown" || detail.mimeType.toLocaleLowerCase("en-US") === "text/markdown";
-}
-
-function renderFilePreview(
-  preview: PreviewState,
-  detail: ProjectFileDetail,
-  markdownSource: boolean,
-  htmlPreviewFrameRef: RefObject<HTMLIFrameElement | null>,
-): ReactNode {
-  if (preview.status === "loading" || preview.status === "idle") {
-    return <div className="feature-state"><LoaderCircle className="is-running" size={15} /> Preview 준비 중</div>;
-  }
-  if (preview.status === "error") {
-    return <div className="file-preview-message"><strong>Preview를 열지 못했습니다.</strong><span>{preview.message}</span></div>;
-  }
-  if (preview.status === "unsupported") {
-    return <div className="file-preview-message"><FileText size={28} /><strong>브라우저 Preview를 지원하지 않는 형식입니다.</strong><span>{preview.mimeType || "알 수 없는 파일 형식"} · 다운로드해서 확인해 주세요.</span></div>;
-  }
-  if (preview.kind === "text") {
-    return <>{isMarkdownFile(detail) && !markdownSource
-      ? <div className="file-preview-markdown conversation-response-typography"><MarkdownResponse text={preview.text} /></div>
-      : <pre>{preview.text}</pre>}
-    {preview.truncated && <div className="file-preview-truncated">Preview는 앞부분만 표시합니다.</div>}</>;
-  }
-  if (preview.kind === "image") return <img src={preview.url} alt={`${detail.displayName} Preview`} loading="lazy" decoding="async" />;
-  if (preview.kind === "pdf") return <iframe src={preview.url} title={`${detail.displayName} PDF Preview`} />;
-  if (preview.kind === "html") return <ArtifactHtmlPreview
-    frameRef={htmlPreviewFrameRef}
-    source={preview.source}
-    previewUrl={null}
-    title={`${detail.displayName} HTML Preview`}
-  />;
-  if (preview.kind === "video") return <video src={preview.url} controls />;
-  return <audio src={preview.url} controls />;
-}
-
 export function ProjectFilesView({ projectId, requestedFileId = null, onOpenNavigation }: ProjectFilesViewProps) {
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
-  const htmlPreviewFrameRef = useRef<HTMLIFrameElement>(null);
   const draggedNodeRef = useRef<FileTreeNode | null>(null);
   const loadingMoreRef = useRef(false);
   const loadMoreControllerRef = useRef<AbortController | null>(null);
@@ -344,10 +255,10 @@ export function ProjectFilesView({ projectId, requestedFileId = null, onOpenNavi
   const [bulkDeleteArmed, setBulkDeleteArmed] = useState(false);
   const [deleteConfirming, setDeleteConfirming] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
-  const [preview, setPreview] = useState<PreviewState>({ status: "idle" });
   const [markdownSource, setMarkdownSource] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const { frameRef: htmlPreviewFrameRef, preview } = useProjectFilePreview(projectId, detail);
 
   const tree = useMemo(() => buildFileTree(files, folders), [files, folders]);
   const folderPaths = useMemo(() => collectFolderPaths(tree), [tree]);
@@ -504,54 +415,6 @@ export function ProjectFilesView({ projectId, requestedFileId = null, onOpenNavi
       });
     return () => controller.abort();
   }, [projectId, selectedId, refreshKey]);
-
-  useEffect(() => {
-    if (!projectId || !detail) {
-      setPreview({ status: "idle" });
-      return;
-    }
-    const controller = new AbortController();
-    let objectUrl: string | null = null;
-    setPreview({ status: "loading" });
-    api.projectFiles.download(projectId, detail.id, undefined, controller.signal)
-      .then(async (download) => {
-        const kind = classifyPreview(detail, download.blob);
-        if (kind === "html") {
-          let text = await download.blob.text();
-          const limit = 240_000;
-          if (!looksLikeStandaloneHtml(text)) {
-            setPreview({ status: "ready", kind: "text", text: text.slice(0, limit), truncated: text.length > limit });
-            return;
-          }
-          text = injectArtifactPreviewBridge(text);
-          setPreview({ status: "ready", kind, source: text });
-          return;
-        }
-        if (kind === "text") {
-          const text = await download.blob.text();
-          if (looksLikeStandaloneHtml(text)) {
-            setPreview({ status: "ready", kind: "html", source: injectArtifactPreviewBridge(text) });
-            return;
-          }
-          const limit = 240_000;
-          setPreview({ status: "ready", kind: "text", text: text.slice(0, limit), truncated: text.length > limit });
-          return;
-        }
-        if (kind === "unsupported") {
-          setPreview({ status: "unsupported", mimeType: download.blob.type || detail.mimeType });
-          return;
-        }
-        objectUrl = URL.createObjectURL(download.blob);
-        setPreview({ status: "ready", kind, url: objectUrl });
-      })
-      .catch((caught) => {
-        if (!controller.signal.aborted) setPreview({ status: "error", message: errorMessage(caught) });
-      });
-    return () => {
-      controller.abort();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [detail, projectId]);
 
   const uploadFiles = async (candidates: UploadCandidate[]) => {
     if (!projectId || candidates.length === 0 || busy) return;
@@ -770,7 +633,7 @@ export function ProjectFilesView({ projectId, requestedFileId = null, onOpenNavi
     if (!projectId || !detail) return;
     setBusy(true);
     try {
-      saveDownload(await api.projectFiles.download(projectId, detail.id));
+      saveProjectFileDownload(await api.projectFiles.download(projectId, detail.id));
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -999,7 +862,7 @@ export function ProjectFilesView({ projectId, requestedFileId = null, onOpenNavi
                         onClick={() => setMarkdownSource((current) => !current)}
                       >{markdownSource ? <Eye size={14} /> : <Code2 size={14} />}</button>
                     ) : null}
-                    {projectId && detail.mimeType === "text/html" ? (
+                    {projectId ? (
                       <a
                         href={projectFilePreviewUrl(projectId, detail.id)}
                         target="_blank"
@@ -1011,7 +874,7 @@ export function ProjectFilesView({ projectId, requestedFileId = null, onOpenNavi
                   </div>
                 </header>
                 <div className="file-preview-surface thin-scrollbar">
-                  {renderFilePreview(preview, detail, markdownSource, htmlPreviewFrameRef)}
+                  <ProjectFilePreviewContent preview={preview} detail={detail} markdownSource={markdownSource} frameRef={htmlPreviewFrameRef} />
                 </div>
               </div>
             )}
