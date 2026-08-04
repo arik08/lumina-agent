@@ -1,5 +1,5 @@
-import { AlertTriangle, ArrowLeft, Braces, Check, ChevronDown, ChevronRight, Code2, Download, Eye, FileCode2, FileJson, FileText, Folder, FolderOpen, History, Info, LoaderCircle, Maximize2, Menu, Minimize2, Network, Package, Pencil, Power, RefreshCw, Save, Search, ServerCog, Settings2, Sparkles, Store, Trash2, Undo2, Wrench, X } from "lucide-react";
-import { type DragEvent, type KeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, ArrowLeft, Braces, Check, ChevronDown, ChevronRight, Code2, Download, Eye, FileCode2, FileJson, FileText, Folder, FolderOpen, FolderPlus, History, Info, LoaderCircle, Maximize2, Menu, Minimize2, Network, Package, Pencil, Power, RefreshCw, Save, Search, ServerCog, Settings2, Sparkles, Store, Trash2, Undo2, Wrench, X } from "lucide-react";
+import { type DragEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -34,6 +34,13 @@ interface SkillFileNode {
   children: SkillFileNode[];
 }
 
+interface SkillTreeContextMenu {
+  x: number;
+  y: number;
+  node: SkillFileNode | null;
+  themeDark: boolean;
+}
+
 function containScrollAtBoundary(event: WheelEvent) {
   const element = event.currentTarget as HTMLElement;
   const atTop = element.scrollTop <= 0;
@@ -61,6 +68,7 @@ function buildSkillFileTree(paths: string[]): SkillFileNode[] {
     });
   }
   const sort = (nodes: SkillFileNode[]): SkillFileNode[] => nodes
+    .filter((node) => node.kind !== "file" || node.name !== ".gitkeep")
     .sort((left, right) => left.kind === right.kind ? left.name.localeCompare(right.name) : left.kind === "folder" ? -1 : 1)
     .map((node) => ({ ...node, children: sort(node.children) }));
   return sort(root);
@@ -195,6 +203,9 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
   const [editableTagInput, setEditableTagInput] = useState("");
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [creatingFolder, setCreatingFolder] = useState<{ parentPath: string; value: string } | null>(null);
+  const [skillTreeContextMenu, setSkillTreeContextMenu] = useState<SkillTreeContextMenu | null>(null);
+  const [contextDeletePath, setContextDeletePath] = useState<string | null>(null);
   const [draggedPath, setDraggedPath] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -204,6 +215,23 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
   const [projectScopeBusy, setProjectScopeBusy] = useState(false);
   const [projectScopePosition, setProjectScopePosition] = useState({ top: 0, right: 0 });
   useDismissablePopover(projectScopeOpen, projectScopeButtonRef, projectScopeMenuRef, setProjectScopeOpen);
+
+  useEffect(() => {
+    if (!skillTreeContextMenu) return;
+    const close = () => {
+      setSkillTreeContextMenu(null);
+      setContextDeletePath(null);
+    };
+    const handleKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", handleKey);
+    };
+  }, [skillTreeContextMenu]);
 
   useEffect(() => {
     const element = skillContentRef.current;
@@ -702,6 +730,8 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
       await refresh(selected.id);
       setEditMode(false);
       setRenamingPath(null);
+      setCreatingFolder(null);
+      setSkillTreeContextMenu(null);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Skill 변경 사항을 저장하지 못했습니다.");
     } finally {
@@ -753,6 +783,93 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
     if (event.key === "Escape") setRenamingPath(null);
   };
 
+  const openSkillTreeContextMenu = (event: ReactMouseEvent<HTMLElement>, node: SkillFileNode | null) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setContextDeletePath(null);
+    if (!selected?.canEdit) {
+      setSkillTreeContextMenu(null);
+      return;
+    }
+    setSkillTreeContextMenu({
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 190)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 150)),
+      node,
+      themeDark: Boolean(event.currentTarget.closest(".theme-dark")),
+    });
+    if (!editMode) void beginPackageEdit();
+  };
+
+  const beginCreatePackageFolder = (parentPath: string) => {
+    setSkillTreeContextMenu(null);
+    setContextDeletePath(null);
+    setCreatingFolder({ parentPath, value: "새 폴더" });
+    if (parentPath) setExpandedFolders((current) => new Set(current).add(parentPath));
+  };
+
+  const commitCreatePackageFolder = () => {
+    if (!creatingFolder) return;
+    const name = creatingFolder.value.trim();
+    if (!name || name === "." || name === ".." || /[\\/]/.test(name)) {
+      setError("이름에는 / 또는 \\를 사용할 수 없습니다.");
+      return;
+    }
+    const folderPath = creatingFolder.parentPath ? `${creatingFolder.parentPath}/${name}` : name;
+    if (Object.keys(editableFiles).some((path) => path === folderPath || path.startsWith(`${folderPath}/`))) {
+      setError("같은 위치에 동일한 이름의 파일 또는 폴더가 있습니다.");
+      return;
+    }
+    setEditableFiles((current) => ({ ...current, [`${folderPath}/.gitkeep`]: "" }));
+    setExpandedFolders((current) => new Set(current).add(folderPath));
+    setCreatingFolder(null);
+    setError(null);
+  };
+
+  const beginPackageRename = (node: SkillFileNode) => {
+    setSkillTreeContextMenu(null);
+    setContextDeletePath(null);
+    setRenamingPath(node.path);
+    setRenameValue(node.name);
+  };
+
+  const removePackagePath = (node: SkillFileNode) => {
+    if (node.path === "SKILL.md") return;
+    if (contextDeletePath !== node.path) {
+      setContextDeletePath(node.path);
+      return;
+    }
+    const removedPaths = Object.keys(editableFiles).filter((path) => path === node.path || path.startsWith(`${node.path}/`));
+    const remainingPaths = Object.keys(editableFiles).filter((path) => !removedPaths.includes(path));
+    setEditableFiles((current) => {
+      const next = { ...current };
+      removedPaths.forEach((path) => delete next[path]);
+      return next;
+    });
+    setActiveFile((current) => removedPaths.includes(current) ? (remainingPaths.includes("SKILL.md") ? "SKILL.md" : remainingPaths[0] ?? "SKILL.md") : current);
+    setExpandedFolders((current) => new Set([...current].filter((path) => path !== node.path && !path.startsWith(`${node.path}/`))));
+    setSkillTreeContextMenu(null);
+    setContextDeletePath(null);
+  };
+
+  const renderNewPackageFolderEditor = (parentPath: string) => creatingFolder?.parentPath === parentPath ? (
+    <div className="skill-tree-entry skill-tree-folder skill-tree-folder-editor" role="treeitem">
+      <ChevronRight className="skill-tree-chevron" size={12} />
+      <Folder className="skill-tree-folder-icon" size={14} />
+      <input
+        autoFocus
+        aria-label="새 폴더 이름"
+        value={creatingFolder.value}
+        onFocus={(event) => event.currentTarget.select()}
+        onChange={(event) => setCreatingFolder({ ...creatingFolder, value: event.currentTarget.value })}
+        onBlur={() => setCreatingFolder(null)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") commitCreatePackageFolder();
+          if (event.key === "Escape") setCreatingFolder(null);
+        }}
+      />
+    </div>
+  ) : null;
+
   const moveDraggedPath = (folderPath: string) => {
     if (!draggedPath) return;
     const name = draggedPath.split("/").at(-1) ?? draggedPath;
@@ -775,15 +892,15 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
     if (node.kind === "folder") {
       const expanded = expandedFolders.has(node.path);
       return <div className="skill-tree-node" key={node.path}>
-        <div className={`skill-tree-entry skill-tree-folder ${dropTarget === node.path ? "is-drop-target" : ""}`} role="treeitem" aria-expanded={expanded} draggable={editMode} onDragStart={(event) => handleDragStart(event, node.path)} onDragOver={(event) => { if (!editMode) return; event.preventDefault(); setDropTarget(node.path); }} onDragLeave={() => setDropTarget(null)} onDrop={(event) => { event.preventDefault(); moveDraggedPath(node.path); }} onClick={() => setExpandedFolders((current) => {
+        <div className={`skill-tree-entry skill-tree-folder ${dropTarget === node.path ? "is-drop-target" : ""}`} role="treeitem" aria-expanded={expanded} draggable={editMode} onContextMenu={(event) => openSkillTreeContextMenu(event, node)} onDragStart={(event) => handleDragStart(event, node.path)} onDragOver={(event) => { if (!editMode) return; event.preventDefault(); setDropTarget(node.path); }} onDragLeave={() => setDropTarget(null)} onDrop={(event) => { event.preventDefault(); moveDraggedPath(node.path); }} onClick={() => setExpandedFolders((current) => {
           const next = new Set(current);
           if (expanded) next.delete(node.path); else next.add(node.path);
           return next;
         })}>{expanded ? <ChevronDown className="skill-tree-chevron" size={12} /> : <ChevronRight className="skill-tree-chevron" size={12} />}{expanded ? <FolderOpen className="skill-tree-folder-icon" size={14} /> : <Folder className="skill-tree-folder-icon" size={14} />}{renamingPath === node.path ? <input autoFocus value={renameValue} onClick={(event) => event.stopPropagation()} onChange={(event) => setRenameValue(event.currentTarget.value)} onBlur={() => commitRename(node)} onKeyDown={(event) => handleRenameKey(event, node)} /> : <span>{node.name}</span>}{editMode && renamingPath !== node.path && <button className="skill-tree-rename tooltip-control" type="button" aria-label={`${node.name} 이름 변경`} data-tooltip="이름 변경" onClick={(event) => { event.stopPropagation(); setRenamingPath(node.path); setRenameValue(node.name); }}><Pencil size={11} /></button>}</div>
-        {expanded && <div className="skill-tree-children">{renderFileTree(node.children)}</div>}
+        {expanded && <div className="skill-tree-children">{renderNewPackageFolderEditor(node.path)}{renderFileTree(node.children)}</div>}
       </div>;
     }
-    return <div className={`skill-tree-entry skill-tree-file ${node.path === activeFile ? "is-selected" : ""}`} role="treeitem" draggable={editMode && node.path !== "SKILL.md"} key={node.path} onDragStart={(event) => handleDragStart(event, node.path)} onClick={() => setActiveFile(node.path)}>{skillFileIcon(node.path)}{renamingPath === node.path ? <input autoFocus value={renameValue} onClick={(event) => event.stopPropagation()} onChange={(event) => setRenameValue(event.currentTarget.value)} onBlur={() => commitRename(node)} onKeyDown={(event) => handleRenameKey(event, node)} /> : <span>{node.name}</span>}{editMode && node.path !== "SKILL.md" && renamingPath !== node.path && <button className="skill-tree-rename tooltip-control" type="button" aria-label={`${node.name} 이름 변경`} data-tooltip="이름 변경" onClick={(event) => { event.stopPropagation(); setRenamingPath(node.path); setRenameValue(node.name); }}><Pencil size={11} /></button>}</div>;
+    return <div className={`skill-tree-entry skill-tree-file ${node.path === activeFile ? "is-selected" : ""}`} role="treeitem" draggable={editMode && node.path !== "SKILL.md"} key={node.path} onContextMenu={(event) => openSkillTreeContextMenu(event, node)} onDragStart={(event) => handleDragStart(event, node.path)} onClick={() => setActiveFile(node.path)}>{skillFileIcon(node.path)}{renamingPath === node.path ? <input autoFocus value={renameValue} onClick={(event) => event.stopPropagation()} onChange={(event) => setRenameValue(event.currentTarget.value)} onBlur={() => commitRename(node)} onKeyDown={(event) => handleRenameKey(event, node)} /> : <span>{node.name}</span>}{editMode && node.path !== "SKILL.md" && renamingPath !== node.path && <button className="skill-tree-rename tooltip-control" type="button" aria-label={`${node.name} 이름 변경`} data-tooltip="이름 변경" onClick={(event) => { event.stopPropagation(); setRenamingPath(node.path); setRenameValue(node.name); }}><Pencil size={11} /></button>}</div>;
   });
 
   const renderPackageBrowser = () => (
@@ -795,9 +912,9 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
       minimumWidth={170}
       maximumRatio={0.48}
     >
-      <aside className="skill-file-explorer" aria-label="Skill 파일">
+      <aside className="skill-file-explorer" aria-label="Skill 파일" onContextMenu={(event) => openSkillTreeContextMenu(event, null)}>
         <header className={dropTarget === "" ? "is-drop-target" : ""} onDragOver={(event) => { if (!editMode) return; event.preventDefault(); setDropTarget(""); }} onDrop={(event) => { event.preventDefault(); moveDraggedPath(""); }}><FolderOpen size={14} /> 패키지 파일{editMode && <small>드래그하여 이동</small>}</header>
-        <div className="skill-tree" role="tree">{renderFileTree(fileTree)}</div>
+        <div className="skill-tree" role="tree">{renderNewPackageFolderEditor("")}{renderFileTree(fileTree)}</div>
       </aside>
       <section>
         <header>
@@ -829,7 +946,7 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
               <div>{skillView === "trash" && <strong>{trashRetentionLabel(selected.purgesAt)}</strong>}<span>Owner {selected.ownerships.filter((item) => item.role === "owner").map((item) => item.displayName).join(", ") || "미지정"}</span>{editMode && <input className="marketplace-change-summary" aria-label="Skill 변경 요약" placeholder="이번 변경 요약" value={editableChangeSummary} maxLength={500} onChange={(event) => setEditableChangeSummary(event.currentTarget.value)} />}</div>
               <div className="marketplace-package-actions">
                 {skillView === "trash" ? <button className="lumina-primary-action" type="button" disabled={busy} onClick={() => void restoreSelectedSkill()}>{busy ? <LoaderCircle className="is-running" size={14} /> : <Undo2 size={14} />} 복원</button> : <>
-                  {editMode ? <><button type="button" disabled={busy} onClick={() => { setEditMode(false); setRenamingPath(null); }}><X size={14} /> 취소</button><button className="lumina-primary-action" type="button" disabled={busy || (selected.canEdit && !editableName.trim())} onClick={() => void savePackageEdit()}><Save size={14} /> 초안 저장</button></> : selected.canCreateDraft && <button type="button" disabled={busy} onClick={() => void beginPackageEdit()}><Pencil size={14} /> {selected.canEdit ? "편집" : "내 버전으로 수정"}</button>}
+                  {editMode ? <><button type="button" disabled={busy} onClick={() => { setEditMode(false); setRenamingPath(null); setCreatingFolder(null); setSkillTreeContextMenu(null); }}><X size={14} /> 취소</button><button className="lumina-primary-action" type="button" disabled={busy || (selected.canEdit && !editableName.trim())} onClick={() => void savePackageEdit()}><Save size={14} /> 초안 저장</button></> : selected.canCreateDraft && <button type="button" disabled={busy} onClick={() => void beginPackageEdit()}><Pencil size={14} /> {selected.canEdit ? "편집" : "내 버전으로 수정"}</button>}
                   {!editMode && selected.draft?.dirty && <button type="button" disabled={busy} onClick={() => void saveVersion()}><Check size={14} /> {nextSavedSkillDisplayVersion(selected)}로 저장</button>}
                   {!editMode && selected.versions.length > 0 && <button type="button" aria-pressed={versionHistoryOpen} disabled={busy} onClick={() => setVersionHistoryOpen((current) => !current)}><History size={14} /> {versionHistoryOpen ? "패키지 보기" : "버전 이력"}</button>}
                   {!editMode && installation && <div className="marketplace-project-selector" onClick={(event) => event.stopPropagation()}>
@@ -864,6 +981,7 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
   );
 
   return (
+    <>
     <div className="feature-view marketplace-view">
       <header className="feature-header"><div><button className="feature-mobile-menu" type="button" aria-label="사이드바 열기" onClick={onOpenNavigation}><Menu size={17} /></button><Store size={17} /><h1>마켓스토어</h1><div className="feature-kind-tabs" role="tablist" aria-label="Marketplace 유형"><button type="button" role="tab" aria-selected={marketKind === "skill"} onClick={() => setMarketKind("skill")}><Sparkles size={14} /> Skill</button><button type="button" role="tab" aria-selected={marketKind === "mcp"} onClick={() => setMarketKind("mcp")}><Wrench size={14} /> MCP</button><button type="button" role="tab" aria-selected={marketKind === "a2a"} onClick={() => setMarketKind("a2a")}><Network size={14} /> A2A</button></div><span>탐색·설치·관리</span></div><div>{marketKind !== "a2a" && <button type="button" aria-label="새로 고침" onClick={() => void refreshRepository()}><RefreshCw size={15} /></button>}</div></header>
       {marketKind === "skill" && <div className="marketplace-toolbar">
@@ -920,5 +1038,38 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
         {renderSkillDetail()}
       </ResizableSplitPane>}
     </div>
+    {skillTreeContextMenu ? createPortal(
+      <div
+        className={`file-tree-context-menu${skillTreeContextMenu.themeDark ? " theme-dark" : ""}`}
+        role="menu"
+        aria-label="패키지 파일 탐색기 메뉴"
+        style={{ left: skillTreeContextMenu.x, top: skillTreeContextMenu.y }}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        {skillTreeContextMenu.node?.kind !== "file" ? (
+          <button type="button" role="menuitem" disabled={busy || !editMode} onClick={() => beginCreatePackageFolder(skillTreeContextMenu.node?.path ?? "")}>
+            <FolderPlus size={14} /> 새 폴더
+          </button>
+        ) : null}
+        {skillTreeContextMenu.node && skillTreeContextMenu.node.path !== "SKILL.md" ? (
+          <>
+            <button type="button" role="menuitem" disabled={busy || !editMode} onClick={() => beginPackageRename(skillTreeContextMenu.node!)}>
+              <Pencil size={14} /> 이름 변경
+            </button>
+            <button
+              className={contextDeletePath === skillTreeContextMenu.node.path ? "is-confirming" : "is-danger"}
+              type="button"
+              role="menuitem"
+              disabled={busy || !editMode}
+              onClick={() => removePackagePath(skillTreeContextMenu.node!)}
+            >
+              <Trash2 size={14} /> {contextDeletePath === skillTreeContextMenu.node.path ? "한 번 더 눌러 삭제" : "삭제"}
+            </button>
+          </>
+        ) : null}
+      </div>,
+      document.body,
+    ) : null}
+    </>
   );
 }
