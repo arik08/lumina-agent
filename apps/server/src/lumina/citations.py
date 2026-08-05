@@ -107,8 +107,8 @@ def resolve_inline_citations(
             match.group("body")
         ):
             source_id = source_match.group("source")
-            source = source_by_id.get(source_id)
-            if source is None:
+            provider_source = source_by_id.get(source_id)
+            if provider_source is None:
                 continue
             occurrences.append(
                 (
@@ -116,7 +116,7 @@ def resolve_inline_citations(
                     match.end(),
                     match.group(0),
                     source_id,
-                    int(source["citationOrdinal"]),
+                    int(provider_source["citationOrdinal"]),
                 )
             )
 

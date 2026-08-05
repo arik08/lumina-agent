@@ -468,6 +468,205 @@
               "api_code"
             ]
           }
+        },
+        {
+          "name": "bill_detail",
+          "description": "의안 1건의 모든 정보를 한 번에 조회합니다. 상세, 심사, 이력, 제안자, 회의정보를 통합 반환.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "bill_id": {
+                "description": "의안 ID (필수)",
+                "type": "string"
+              },
+              "fields": {
+                "description": "조회 항목 (기본: 전체). detail, review, history, proposers, meetings, lifecycle",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "detail",
+                    "review",
+                    "history",
+                    "proposers",
+                    "meetings",
+                    "lifecycle"
+                  ]
+                }
+              },
+              "age": {
+                "description": "대수 (예: 22)",
+                "type": "number"
+              },
+              "page_size": {
+                "description": "페이지 크기 (기본: 100, 최대: 100)",
+                "type": "number"
+              }
+            },
+            "required": [
+              "bill_id"
+            ]
+          }
+        },
+        {
+          "name": "committee_detail",
+          "description": "위원회 상세정보를 조회합니다. 위원회 현황, 위원 명단을 통합 반환.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "committee_name": {
+                "description": "위원회명 (생략 시 전체 목록)",
+                "type": "string"
+              },
+              "include_members": {
+                "description": "위원 명단 포함 여부 (committee_name 지정 시 기본: true)",
+                "type": "boolean"
+              },
+              "include_resources": {
+                "description": "위원회 부가정보 포함 여부",
+                "type": "boolean"
+              },
+              "age": {
+                "description": "대수 (예: 22)",
+                "type": "number"
+              },
+              "page_size": {
+                "description": "페이지 크기 (기본: 100, 최대: 100)",
+                "type": "number"
+              }
+            }
+          }
+        },
+        {
+          "name": "petition_detail",
+          "description": "국민동의청원을 검색하고 상세 조회합니다. 청원ID로 상세, status로 계류/처리 구분.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "petition_id": {
+                "description": "청원 ID (상세 조회 모드)",
+                "type": "string"
+              },
+              "mode": {
+                "description": "모드: search(검색/상세, 기본), stats(청원 통계)",
+                "type": "string",
+                "enum": [
+                  "search",
+                  "stats"
+                ]
+              },
+              "status": {
+                "description": "처리상태 필터 (기본: pending). pending=계류, processed=처리완료, all=전체",
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "processed",
+                  "all"
+                ]
+              },
+              "keyword": {
+                "description": "청원명 검색 키워드",
+                "type": "string"
+              },
+              "age": {
+                "description": "대수 (예: 22)",
+                "type": "number"
+              },
+              "page_size": {
+                "description": "페이지 크기 (기본: 20, 최대: 100)",
+                "type": "number"
+              }
+            }
+          }
+        },
+        {
+          "name": "research_data",
+          "description": "국회 연구자료를 통합 검색합니다. 국회도서관, 입법조사처, 예산정책처, 국회발간물, 국회미래연구원 자료를 한 번에.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "keyword": {
+                "description": "검색 키워드 (필수)",
+                "type": "string"
+              },
+              "source": {
+                "description": "검색 대상 (기본: all). library=도서관, research=입법조사처, budget=예산정책처, publications=국회발간물, future=국회미래연구원, all_integrated=4개 기관 통합API",
+                "type": "string",
+                "enum": [
+                  "library",
+                  "research",
+                  "budget",
+                  "publications",
+                  "future",
+                  "all_integrated",
+                  "all"
+                ]
+              },
+              "page_size": {
+                "description": "페이지 크기 (기본: 20, 최대: 100)",
+                "type": "number"
+              }
+            },
+            "required": [
+              "keyword"
+            ]
+          }
+        },
+        {
+          "name": "get_nabo",
+          "description": "국회예산정책처(NABO) 보고서/정기간행물/채용정보를 검색합니다. type으로 대상을 선택하고, 검색어로 필터링할 수 있습니다.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "type": {
+                "description": "검색 대상: report(보고서), periodical(정기간행물), recruitments(채용정보)",
+                "type": "string",
+                "enum": [
+                  "report",
+                  "periodical",
+                  "recruitments"
+                ],
+                "default": "report"
+              },
+              "keyword": {
+                "description": "검색어 (scSw 파라미터)",
+                "type": "string"
+              },
+              "page": {
+                "description": "페이지 번호 (기본: 1)",
+                "type": "number",
+                "default": 1
+              },
+              "page_size": {
+                "description": "페이지 크기 (기본: 20, 최대: 100)",
+                "type": "number",
+                "default": 20
+              },
+              "sc_sort": {
+                "description": "정렬 기준: pubDt(게시일), subj(제목)",
+                "type": "string",
+                "enum": [
+                  "pubDt",
+                  "subj"
+                ],
+                "default": "pubDt"
+              },
+              "sc_order": {
+                "description": "정렬 방향: asc(오름차순), desc(내림차순)",
+                "type": "string",
+                "enum": [
+                  "asc",
+                  "desc"
+                ],
+                "default": "desc"
+              }
+            }
+          }
         }
       ],
       "cwd": "."

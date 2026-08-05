@@ -28,7 +28,7 @@ test("LLM instructions require context-specific Mermaid classes in saved source"
 
 test("Mermaid renderer preserves authored semantic colors while enforcing readable node labels", () => {
   assert.match(rendererSource, /repairMermaidClassNames\(source\.trim\(\)\)/);
-  assert.match(rendererSource, /ensureMermaidNodeTextContrast\(renderedSvg\)/);
+  assert.match(rendererSource, /ensureMermaidNodeTextContrast\(renderedSvg, Boolean\(/);
   assert.doesNotMatch(rendererSource, /inferMermaidNodeTone|decorateMermaidSvg|luminaTone/);
   assert.doesNotMatch(rendererStyles, /data-lumina-tone|--mermaid-node-fill|--mermaid-node-stroke/);
 });

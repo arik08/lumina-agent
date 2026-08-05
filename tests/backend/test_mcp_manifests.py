@@ -77,3 +77,25 @@ def test_korea_weather_keeps_its_required_secret_binding() -> None:
     }
 
     assert required_by_server["korea-weather"] == ["KOREA_WEATHER_API_KEY"]
+
+
+def test_national_assembly_full_profile_pins_every_runtime_tool() -> None:
+    manifest = json.loads(
+        (MCP_ROOT / "national-assembly.json").read_text(encoding="utf-8")
+    )
+    server = manifest["mcpServers"]["national-assembly"]
+
+    assert server["env"]["MCP_PROFILE"] == "full"
+    assert {tool["name"] for tool in server["tools"]} == {
+        "assembly_member",
+        "assembly_bill",
+        "assembly_session",
+        "assembly_org",
+        "discover_apis",
+        "query_assembly",
+        "bill_detail",
+        "committee_detail",
+        "petition_detail",
+        "research_data",
+        "get_nabo",
+    }
