@@ -2205,6 +2205,8 @@ export interface ScheduledRun {
   status: string;
   attempt: number;
   runId: UUID | null;
+  conversationId: UUID | null;
+  conversationAvailable: boolean;
   inputSnapshot: Record<string, unknown>;
   outputArtifactIds: UUID[];
   error: { code: string; message: string } | null;

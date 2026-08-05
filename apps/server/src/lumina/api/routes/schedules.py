@@ -234,7 +234,7 @@ async def post_scheduled_task_run_now(
     db.commit()
     if created and scheduled_run.run_id:
         local_run_executor.enqueue(scheduled_run.run_id)
-    return scheduled_run_payload(scheduled_run)
+    return scheduled_run_payload(db, scheduled_run)
 
 
 @router.get("/{task_id}/runs")
@@ -246,4 +246,4 @@ def get_scheduled_task_runs(
 ) -> list[dict[str, Any]]:
     runs = list_scheduled_runs(db, user=user, task_id=task_id, limit=limit)
     db.commit()
-    return [scheduled_run_payload(item) for item in runs]
+    return [scheduled_run_payload(db, item) for item in runs]

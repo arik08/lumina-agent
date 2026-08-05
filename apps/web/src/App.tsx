@@ -1581,6 +1581,9 @@ function App() {
         ),
       );
     }
+    if (adminMeasuredInputTokenLimit !== null) {
+      return Math.max(256, Math.min(adminMeasuredInputTokenLimit, parsedAdminContextWindow));
+    }
     const reservedOutput = adminOutputTokens > 0
       ? adminOutputTokens
       : Math.max(512, Math.min(4_096, Math.floor(parsedAdminContextWindow / 8)));
@@ -3275,6 +3278,13 @@ function App() {
     setNotificationBusyId(null);
   };
 
+  const openScheduledConversation = useCallback(async (conversationId: string) => {
+    const conversation = await api.conversations.get(conversationId);
+    workspace.openConversation(conversation);
+    setMainView("chat");
+    await workspace.loadConversation(conversation.id, true);
+  }, [workspace.loadConversation, workspace.openConversation]);
+
   const openAnnouncementInHelp = (announcementId: string | null) => {
     const unreadAnnouncement = announcements.find((item) => item.id === announcementId && !item.readAt);
     if (unreadAnnouncement) {
@@ -4332,7 +4342,7 @@ function App() {
           />}
           {mainView === "knowledge" && <KnowledgeView />}
           {mainView === "help" && <HelpCenterView canManage={isAdmin} initialAnnouncementId={helpAnnouncementId} onOpenNavigation={() => setSidebarOpen(true)} />}
-          {mainView === "schedules" && <SchedulesView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} projects={workspace.projects} execution={workspace.settings?.execution ?? null} executionOptions={candidateModelOptions} onOpenNavigation={() => setSidebarOpen(true)} onProjectChange={workspace.setActiveProjectId} onConversationsChanged={workspace.refreshConversations} />}
+          {mainView === "schedules" && <SchedulesView key={workspace.activeProjectId ?? "none"} projectId={workspace.activeProjectId} projects={workspace.projects} execution={workspace.settings?.execution ?? null} executionOptions={candidateModelOptions} onOpenNavigation={() => setSidebarOpen(true)} onProjectChange={workspace.setActiveProjectId} onConversationsChanged={workspace.refreshConversations} onOpenConversation={openScheduledConversation} />}
           {mainView === "memory" && <MemoryView key={activeProject?.id ?? "none"} project={activeProject} completedRunId={completedProjectLearningRunId} canReviewProjectLearning={canReviewProjectLearning} onOpenNavigation={() => setSidebarOpen(true)} />}
           </ViewDataCacheProvider>
           {mainView === "admin" && isAdmin && <AdminView onOpenNavigation={() => setSidebarOpen(true)} onToast={showToast} onUserUpdated={() => void workspace.refreshAuthSession()} />}
@@ -4479,7 +4489,7 @@ function App() {
                             ? adminHasCodexCostBoundary
                               ? `실제 전체 한도는 ${parsedAdminContextWindow.toLocaleString()} 토큰이며, 비용 절약 모드는 장문 비용이 증가하는 ${adminBaseInputContext?.toLocaleString() ?? "272,000"} 토큰에서 압축합니다.`
                               : "표준 모드의 가격 경계에서 20K 여유를 둔 입력 예산입니다."
-                            : "전체 컨텍스트에서 출력 예약을 뺀 값과 모델 입력 상한 중 작은 값에서 안전 여유를 뺀 시스템 입력 예산입니다. Tool 적용 전 기준이며 실제 Run에서는 Tool schema 토큰을 추가 차감합니다."}
+                            : "Provider가 별도 입력 상한을 명시하면 그 값을 직접 사용합니다. 별도 상한이 없을 때만 전체 컨텍스트에서 출력 예약과 안전 여유를 뺍니다. Tool schema는 실제 입력 사용량에 포함됩니다."}
                         </small>
                       </span>
                       <output aria-live="polite">{adminBaseInputContext === null ? "계산할 수 없음" : `${adminBaseInputContext.toLocaleString()} 토큰`}</output>

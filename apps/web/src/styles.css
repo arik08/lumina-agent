@@ -904,8 +904,15 @@ button:disabled { cursor: default; opacity: 0.5; }
 .schedule-summary strong { color: var(--ink); font-size: 13px; }
 .schedule-history { margin-top: 23px; }
 .schedule-history h3 { display: flex; align-items: center; gap: 6px; margin: 0; padding-bottom: 8px; border-bottom: 1px solid var(--line); font-size: 13px; }
-.schedule-run-row { display: grid; min-height: 40px; grid-template-columns: 88px minmax(0, 1fr) auto; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11.5px; }
+.schedule-run-row { display: grid; width: 100%; min-height: 40px; grid-template-columns: 88px minmax(0, 1fr) auto 94px; align-items: center; gap: 10px; padding: 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; text-align: left; }
+button.schedule-run-row { cursor: pointer; }
+button.schedule-run-row:hover { background: var(--surface-soft); }
+button.schedule-run-row:focus-visible { outline: 2px solid var(--cobalt); outline-offset: -2px; }
+button.schedule-run-row:disabled { cursor: wait; opacity: 1; }
+.schedule-run-row.is-unavailable { color: var(--faint); }
 .schedule-run-row small { font-size: 10.5px; }
+.schedule-run-destination { display: inline-flex; align-items: center; justify-content: flex-end; gap: 5px; color: var(--cobalt); font-size: 13px; font-weight: 600; }
+.schedule-run-row.is-unavailable .schedule-run-destination { color: var(--faint); font-weight: 500; }
 .run-state { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
 .run-state.state-completed { color: var(--success); }
 .run-state.state-failed { color: var(--danger); }
@@ -3656,8 +3663,9 @@ button:disabled { cursor: default; opacity: 0.5; }
   .skill-editor > textarea { min-height: 260px; }
   .artifact-library-open { grid-template-columns: 30px minmax(0, 1fr); }
   .artifact-library-open time { display: none; }
-  .schedule-run-row { grid-template-columns: 76px minmax(0, 1fr); }
+  .schedule-run-row { grid-template-columns: 76px minmax(0, 1fr) auto; }
   .schedule-run-row small { display: none; }
+  .schedule-run-destination { grid-column: 3; }
   .schedule-form-row, .schedule-execution-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .memory-settings { display: grid; gap: 7px; padding: 9px 10px; }
   .memory-mode-control { justify-content: flex-start; }

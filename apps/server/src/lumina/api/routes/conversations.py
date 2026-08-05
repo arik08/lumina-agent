@@ -326,6 +326,15 @@ def post_conversation(
     return _summary(db, conversation)
 
 
+@router.get("/{conversation_id}")
+def get_conversation(
+    conversation_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return _summary(db, require_conversation(db, user, conversation_id))
+
+
 def _parse_revision(if_match: str | None) -> int | None:
     if if_match is None:
         return None

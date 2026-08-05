@@ -69,6 +69,27 @@ test("running a scheduled task refreshes the sidebar conversation list immediate
   assert.match(workspace, /return\s*\{[\s\S]*?refreshConversations,/);
 });
 
+test("schedule history opens live sessions and labels deleted sessions", async () => {
+  const [view, app, api, types, styles] = await Promise.all([
+    read("../src/components/SchedulesView.tsx"),
+    read("../src/App.tsx"),
+    read("../src/api.ts"),
+    read("../src/api-types.ts"),
+    read("../src/styles.css"),
+  ]);
+
+  assert.match(types, /conversationId: UUID \| null;[\s\S]*?conversationAvailable: boolean;/);
+  assert.match(api, /getConversation\(conversationId: string[\s\S]*?\/conversations\/\$\{encodeURIComponent\(conversationId\)\}/);
+  assert.match(app, /api\.conversations\.get\(conversationId\)[\s\S]*?workspace\.openConversation\(conversation\)[\s\S]*?setMainView\("chat"\)/);
+  assert.match(app, /<SchedulesView[\s\S]*?onOpenConversation=\{openScheduledConversation\}/);
+  assert.match(view, /run\.conversationAvailable && run\.conversationId[\s\S]*?<button className="schedule-run-row"/);
+  assert.match(view, /세션 열기/);
+  assert.match(view, /세션 삭제됨/);
+  assert.match(view, /caught instanceof ApiError && caught\.status === 404[\s\S]*?conversationAvailable: false/);
+  assert.match(styles, /button\.schedule-run-row:hover/);
+  assert.match(styles, /button\.schedule-run-row:focus-visible/);
+});
+
 test("new schedules choose an independent execution from admin-enabled models", async () => {
   const [view, app] = await Promise.all([
     read("../src/components/SchedulesView.tsx"),

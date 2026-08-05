@@ -5,6 +5,7 @@ import {
   History,
   LoaderCircle,
   Menu,
+  MessageSquare,
   Pause,
   Pencil,
   Play,
@@ -39,6 +40,7 @@ interface SchedulesViewProps {
   onOpenNavigation: () => void;
   onProjectChange: (projectId: string) => void;
   onConversationsChanged: () => Promise<unknown>;
+  onOpenConversation: (conversationId: string) => Promise<unknown>;
 }
 
 const kindLabels: Record<ScheduleKind, string> = {
@@ -96,7 +98,7 @@ function runStatusLabel(status: string) {
   return status;
 }
 
-export function SchedulesView({ projectId, projects, execution, executionOptions, onOpenNavigation, onProjectChange, onConversationsChanged }: SchedulesViewProps) {
+export function SchedulesView({ projectId, projects, execution, executionOptions, onOpenNavigation, onProjectChange, onConversationsChanged, onOpenConversation }: SchedulesViewProps) {
   const [tasks, setTasks, hasCachedTasks] = useCachedViewState<ScheduledTask[]>(`schedules:${projectId ?? "none"}`, []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [runs, setRuns] = useState<ScheduledRun[]>([]);
@@ -108,6 +110,7 @@ export function SchedulesView({ projectId, projects, execution, executionOptions
   const [editOpen, setEditOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleteErrorId, setDeleteErrorId] = useState<string | null>(null);
+  const [openingConversationId, setOpeningConversationId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [instructions, setInstructions] = useState("");
   const [kind, setKind] = useState<ScheduleKind>("daily");
@@ -385,6 +388,25 @@ export function SchedulesView({ projectId, projects, execution, executionOptions
     }
   };
 
+  const openRunConversation = async (run: ScheduledRun) => {
+    if (!run.conversationId || !run.conversationAvailable || openingConversationId) return;
+    setOpeningConversationId(run.conversationId);
+    setError(null);
+    try {
+      await onOpenConversation(run.conversationId);
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 404) {
+        setRuns((current) => current.map((item) => item.id === run.id
+          ? { ...item, conversationAvailable: false }
+          : item));
+      } else {
+        setError(caught instanceof ApiError ? caught.message : "세션을 열지 못했습니다.");
+      }
+    } finally {
+      setOpeningConversationId(null);
+    }
+  };
+
   return (
     <div className="feature-view">
       <header className="feature-header">
@@ -468,13 +490,19 @@ export function SchedulesView({ projectId, projects, execution, executionOptions
               </div>
               <section className="schedule-history">
                 <h3><History size={15} /> 실행 이력</h3>
-                {historyLoading ? <div className="feature-state"><LoaderCircle className="is-running" size={15} /> 이력을 불러오는 중</div> : runs.length === 0 ? <div className="feature-state">실행 이력이 없습니다.</div> : runs.map((run) => (
-                  <div className="schedule-run-row" key={run.id}>
+                {historyLoading ? <div className="feature-state"><LoaderCircle className="is-running" size={15} /> 이력을 불러오는 중</div> : runs.length === 0 ? <div className="feature-state">실행 이력이 없습니다.</div> : runs.map((run) => {
+                  const rowContent = <>
                     <span className={`run-state state-${run.status}`}>{run.status === "completed" ? <CheckCircle2 size={14} /> : run.status === "running" || run.status === "queued" ? <LoaderCircle className={run.status === "running" ? "is-running" : ""} size={14} /> : <Clock3 size={14} />}{runStatusLabel(run.status)}</span>
                     <span>{run.triggerType === "manual" ? "수동" : "예약"} · {new Date(run.scheduledFor).toLocaleString("ko-KR")}</span>
                     <small>{run.finishedAt ? `완료 ${new Date(run.finishedAt).toLocaleTimeString("ko-KR")}` : `시도 ${run.attempt}`}</small>
-                  </div>
-                ))}
+                    <span className="schedule-run-destination">{run.conversationAvailable && run.conversationId ? openingConversationId === run.conversationId ? <><LoaderCircle className="is-running" size={13} /> 여는 중</> : <><MessageSquare size={13} /> 세션 열기</> : <><Trash2 size={13} /> 세션 삭제됨</>}</span>
+                  </>;
+                  return run.conversationAvailable && run.conversationId ? (
+                    <button className="schedule-run-row" type="button" key={run.id} aria-label={`${new Date(run.scheduledFor).toLocaleString("ko-KR")} 실행 세션 열기`} disabled={openingConversationId !== null} onClick={() => void openRunConversation(run)}>{rowContent}</button>
+                  ) : (
+                    <div className="schedule-run-row is-unavailable" key={run.id} aria-label="연결된 세션이 삭제된 실행 이력">{rowContent}</div>
+                  );
+                })}
               </section>
             </>
           )}

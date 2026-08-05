@@ -1050,7 +1050,19 @@ def scheduled_task_payload(task: ScheduledTask) -> dict[str, Any]:
     }
 
 
-def scheduled_run_payload(scheduled_run: ScheduledRun) -> dict[str, Any]:
+def scheduled_run_payload(db: Session, scheduled_run: ScheduledRun) -> dict[str, Any]:
+    conversation_id = scheduled_run.input_snapshot_json.get("conversation_id")
+    conversation = (
+        db.get(Conversation, conversation_id)
+        if isinstance(conversation_id, str)
+        else None
+    )
+    conversation_available = (
+        conversation is not None
+        and conversation.deleted_at is None
+        and conversation.project_id
+        == scheduled_run.input_snapshot_json.get("project_id")
+    )
     if scheduled_run.status == "completed":
         delivery_status = "available"
     elif scheduled_run.status == "cancelled":
@@ -1071,6 +1083,8 @@ def scheduled_run_payload(scheduled_run: ScheduledRun) -> dict[str, Any]:
         "status": scheduled_run.status,
         "attempt": scheduled_run.attempt,
         "runId": scheduled_run.run_id,
+        "conversationId": conversation_id if isinstance(conversation_id, str) else None,
+        "conversationAvailable": conversation_available,
         "inputSnapshot": scheduled_run.input_snapshot_json,
         "outputArtifactIds": scheduled_run.output_artifact_ids_json,
         "delivery": {

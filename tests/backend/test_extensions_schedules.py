@@ -1760,6 +1760,8 @@ def test_schedule_run_now_enable_disable_and_due_dispatch(tmp_path: Path) -> Non
         assert scheduled_run["runId"] is not None
         assert scheduled_run["inputSnapshot"]["scheduled_task_id"] == task_id
         assert scheduled_run["inputSnapshot"]["project_id"] == project_id
+        assert scheduled_run["conversationId"] == scheduled_run["inputSnapshot"]["conversation_id"]
+        assert scheduled_run["conversationAvailable"] is True
         second = client.post(
             f"/api/scheduled-tasks/{task_id}/run-now", headers=run_now_headers
         )
@@ -1770,6 +1772,19 @@ def test_schedule_run_now_enable_disable_and_due_dispatch(tmp_path: Path) -> Non
         assert history.status_code == 200
         assert len(history.json()) == 1
         assert history.json()[0]["runId"] == scheduled_run["runId"]
+        assert history.json()[0]["conversationAvailable"] is True
+
+        with SessionLocal() as db:
+            conversation = db.get(Conversation, scheduled_run["conversationId"])
+            assert conversation is not None
+            conversation.deleted_at = utc_now()
+            conversation.status = "deleted"
+            db.commit()
+
+        deleted_history = client.get(f"/api/scheduled-tasks/{task_id}/runs")
+        assert deleted_history.status_code == 200
+        assert deleted_history.json()[0]["conversationId"] == scheduled_run["conversationId"]
+        assert deleted_history.json()[0]["conversationAvailable"] is False
 
     fixed_now = datetime(2026, 7, 11, 0, 0, tzinfo=UTC)
     with SessionLocal() as db:
@@ -2227,7 +2242,7 @@ def test_scheduled_timeout_retries_once_and_duplicate_ticks_do_not_dispatch_twic
         assert scheduled_row.status == "failed"
         assert scheduled_row.attempt == 2
         assert scheduled_row.error_code == "provider_request"
-        assert scheduled_run_payload(scheduled_row)["delivery"]["status"] == "failed"
+        assert scheduled_run_payload(db, scheduled_row)["delivery"]["status"] == "failed"
         assert len(list(db.scalars(select(Run)))) == 2
 
 

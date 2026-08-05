@@ -782,6 +782,10 @@ export async function listConversations(query: ListConversationsQuery = {}, sign
   });
 }
 
+export async function getConversation(conversationId: string, signal?: AbortSignal) {
+  return request<ConversationListItem>(`/conversations/${encodeURIComponent(conversationId)}`, { signal });
+}
+
 export async function searchConversationContent(
   query: string,
   projectId?: string,
@@ -2651,6 +2655,7 @@ export const api = {
   },
   conversations: {
     list: listConversations,
+    get: getConversation,
     searchContent: searchConversationContent,
     create: createConversation,
     update: updateConversation,
