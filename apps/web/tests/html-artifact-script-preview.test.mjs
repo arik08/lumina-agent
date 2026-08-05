@@ -155,3 +155,10 @@ test("visual Artifact report drafting starts inside create_report", () => {
   assert.match(visualArtifactSkillSource, /stream the complete document directly through `html_source`/);
   assert.match(visualArtifactSkillSource, /Do not compose the full report in reasoning or chat text first/);
 });
+
+test("visual Artifact executable HTML uses versioned write_file revisions", () => {
+  assert.match(visualArtifactSkillSource, /For executable HTML apps, demos, simulations, and games, use `write_file`/);
+  assert.match(visualArtifactSkillSource, /use `write_file` with the exact `destination_artifact_id` and `destination_base_version`/);
+  assert.match(visualArtifactSkillSource, /Use `extend_report` only when a preceding `create_report` or `extend_report` result explicitly returned `status: needs_expansion`/);
+  assert.match(visualArtifactSkillSource, /Do not claim a creation or revision succeeded unless the write tool result confirms an Artifact ID and new version/);
+});

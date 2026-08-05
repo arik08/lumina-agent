@@ -291,6 +291,7 @@ _TOOL_LOOP_MAX_REPEAT_COUNT = 3
 _ARTIFACT_EMPTY_RESPONSE_FALLBACK = (
     "요청하신 파일을 생성했습니다. 생성된 Artifact에서 결과를 확인하실 수 있습니다."
 )
+_MAX_ARTIFACT_COMPLETION_REMINDERS = 2
 _MAX_ARTIFACT_LENGTH_RETRIES = 2
 _ARTIFACT_PROGRESS_INTERVAL_SECONDS = 0.1
 _ARTIFACT_PROGRESS_CHECKPOINT_INTERVAL_SECONDS = 1.0
@@ -2190,7 +2191,7 @@ class LocalRunExecutor:
             if not resumed:
                 return
         artifact_created = False
-        artifact_completion_reminded = False
+        artifact_completion_reminder_count = 0
         artifact_drafting_turn = False
         artifact_drafting_started = False
         reactive_context_recovery_attempted = False
@@ -2216,6 +2217,9 @@ class LocalRunExecutor:
                 checkpoint_loop_state.get("artifactRequired", artifact_required)
             )
             artifact_created = bool(checkpoint_loop_state.get("artifactCreated", False))
+            artifact_completion_reminder_count = _nonnegative_int(
+                checkpoint_loop_state.get("artifactCompletionReminderCount")
+            )
             artifact_drafting_turn = bool(
                 checkpoint_loop_state.get("artifactDraftingTurn", False)
             )
@@ -3020,11 +3024,21 @@ class LocalRunExecutor:
                     )
                     artifact_drafting_turn = True
                     continue
-                if (
-                    artifact_required
-                    and not artifact_created
-                    and not artifact_completion_reminded
-                ):
+                if artifact_required and not artifact_created:
+                    if (
+                        artifact_completion_reminder_count
+                        >= _MAX_ARTIFACT_COMPLETION_REMINDERS
+                    ):
+                        await self._fail_run(
+                            run_id,
+                            "artifact_delivery_not_completed",
+                            (
+                                "요청한 파일을 생성하거나 기존 Artifact의 새 버전으로 "
+                                "저장하지 못했습니다. 실제 저장 결과 없이 완료로 처리하지 "
+                                "않았습니다."
+                            ),
+                        )
+                        return
                     if round_text:
                         messages.append(
                             _assistant_response_message(
@@ -3063,7 +3077,7 @@ class LocalRunExecutor:
                             {"role": "user", "content": artifact_reminder},
                         ),
                     )
-                    artifact_completion_reminded = True
+                    artifact_completion_reminder_count += 1
                     artifact_drafting_turn = True
                     continue
                 await self._enter_final_plan(run_id)
@@ -3100,6 +3114,9 @@ class LocalRunExecutor:
             tool_loop_state = {
                 "artifactRequired": artifact_required,
                 "artifactCreated": artifact_created,
+                "artifactCompletionReminderCount": (
+                    artifact_completion_reminder_count
+                ),
                 "artifactDraftingTurn": artifact_drafting_turn,
                 "retiredWebTools": sorted(retired_web_tools),
                 "toolLoopFingerprint": last_tool_loop_fingerprint,
@@ -3263,6 +3280,9 @@ class LocalRunExecutor:
                 loop_state={
                     "artifactRequired": artifact_required,
                     "artifactCreated": artifact_created,
+                    "artifactCompletionReminderCount": (
+                        artifact_completion_reminder_count
+                    ),
                     "artifactDraftingTurn": artifact_drafting_turn,
                     "retiredWebTools": sorted(retired_web_tools),
                     "toolLoopFingerprint": last_tool_loop_fingerprint,

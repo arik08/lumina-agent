@@ -1095,6 +1095,7 @@ def test_report_progress_waits_for_artifact_tool_output(
     )
     provider_started = Event()
     release_provider = Event()
+    provider_turn = 0
 
     class WaitingReportProvider(MockProvider):
         async def stream(self, request):
@@ -1105,7 +1106,30 @@ def test_report_progress_waits_for_artifact_tool_output(
                 yield event
 
     def provider(*_args, **_kwargs):
-        return WaitingReportProvider(
+        nonlocal provider_turn
+        provider_turn += 1
+        if provider_turn == 1:
+            return WaitingReportProvider(
+                text_chunks=("HTML 보고서를 구성하겠습니다.",),
+            )
+        if provider_turn == 2:
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="create_report",
+                    arguments={
+                        "format": "html",
+                        "title": "대기 피드백 점검 결과",
+                        "html_source": (
+                            "<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
+                            "<title>대기 피드백 점검 결과</title></head><body><main>"
+                            "<h1>대기 피드백 점검 결과</h1><p>점검을 완료했습니다.</p>"
+                            "</main></body></html>"
+                        ),
+                    },
+                    call_id="call_report_after_wait",
+                )
+            )
+        return MockProvider(
             text_chunks=("HTML 보고서를 생성했습니다.",),
         )
 
@@ -1145,7 +1169,10 @@ def test_report_progress_waits_for_artifact_tool_output(
 
         terminal = _wait_for_terminal(client, started.json()["run"]["runId"])
         assert terminal["status"] == "completed"
-        assert terminal["toolExecutions"] == []
+        assert provider_turn == 3
+        assert [tool["toolName"] for tool in terminal["toolExecutions"]] == [
+            "create_report"
+        ]
 
 
 def test_streamed_write_file_name_extracts_only_the_target_name() -> None:
@@ -1897,6 +1924,19 @@ def test_visual_artifact_follow_up_cannot_finish_without_a_new_version(
         if provider_turn == 5:
             return MockProvider(
                 tool_call=MockToolCall(
+                    name="extend_report",
+                    arguments={
+                        "content": "<script>window.panOnRightClick=true;</script>",
+                        "target_id": "simulator",
+                    },
+                    call_id="call_wrong_pan_extension",
+                )
+            )
+        if provider_turn == 6:
+            return MockProvider(text_chunks=("우클릭 Pan 기능을 추가했습니다.",))
+        if provider_turn == 7:
+            return MockProvider(
+                tool_call=MockToolCall(
                     name="write_file",
                     arguments={
                         "path": "solar-system.html",
@@ -1966,12 +2006,14 @@ def test_visual_artifact_follow_up_cannot_finish_without_a_new_version(
         )
 
     assert follow_up_snapshot["status"] == "completed"
-    assert provider_turn == 6
-    assert wants_artifact_values[2:5] == [False, True, True]
+    assert provider_turn == 8
+    assert wants_artifact_values[2:8] == [False, True, True, True, True, True]
     assert [
         tool["toolName"] for tool in follow_up_snapshot["toolExecutions"]
-    ] == ["write_file"]
-    assert follow_up_snapshot["toolExecutions"][0]["artifactId"] == artifact_id
+    ] == ["extend_report", "write_file"]
+    assert follow_up_snapshot["toolExecutions"][0]["status"] == "failed"
+    assert "no saved short report" in follow_up_snapshot["toolExecutions"][0]["error"]
+    assert follow_up_snapshot["toolExecutions"][1]["artifactId"] == artifact_id
     assert follow_up_snapshot["artifacts"][0]["currentVersion"] == 2
 
 
