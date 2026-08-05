@@ -248,6 +248,38 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         assert codex_gpt_54["contextPolicyLocked"] is True
         assert codex_gpt_54["maxInputTokens"] is None
         assert codex_gpt_54["defaultMaxInputTokens"] is None
+        codex_gpt_56 = next(
+            model for model in codex_models.json() if model["modelKey"] == "gpt-5.6-sol"
+        )
+        assert codex_gpt_56["defaultContextWindow"] == 1_050_000
+        assert codex_gpt_56["defaultContextUsageRatio"] == 1.0
+        assert codex_gpt_56["contextCapacityMode"] == "standard"
+        assert codex_gpt_56["maximumContextWindow"] == 1_050_000
+        assert codex_gpt_56["maximumContextUsageRatio"] == 0.85
+        assert codex_gpt_56["standardContextReserveTokens"] == 778_000
+
+        codex_gpt_56_maximum = client.patch(
+            "/api/admin/providers/codex/models/gpt-5.6-sol",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "capabilities": {
+                    **codex_gpt_56["capabilities"],
+                    "context_capacity_mode": "maximum",
+                    "context_window": 1_050_000,
+                    "max_input_tokens": None,
+                    "context_compaction_threshold": 0.85,
+                    "standard_context_compaction_reserve_tokens": 778_000,
+                }
+            },
+        )
+        assert codex_gpt_56_maximum.status_code == 200, codex_gpt_56_maximum.text
+        assert codex_gpt_56_maximum.json()["contextCapacityMode"] == "maximum"
+        assert (
+            codex_gpt_56_maximum.json()["capabilities"][
+                "context_compaction_threshold"
+            ]
+            == 0.85
+        )
         public_codex_models = client.get("/api/providers/codex/models")
         assert public_codex_models.status_code == 200
         public_codex_gpt_54 = next(

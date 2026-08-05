@@ -3582,6 +3582,10 @@ button:disabled { cursor: default; opacity: 0.5; }
 }
 
 @media (max-width: 720px) {
+  .settings-row { grid-template-columns: minmax(0, 1fr); align-items: start; gap: 8px; }
+  .settings-row > :last-child { max-width: 100%; justify-self: end; }
+  .settings-inline-control { width: 100%; flex-wrap: wrap; justify-content: flex-end; }
+  .settings-context-capacity-row .settings-select { width: 100%; }
   .clarification-mode-options, .clarification-options { grid-template-columns: minmax(0, 1fr); }
   .clarification-card { border-radius: 10px; }
   .starter-prompts { grid-template-columns: repeat(2, minmax(0, 1fr)); }

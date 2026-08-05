@@ -236,15 +236,25 @@ def _model_capabilities_snapshot(model: ProviderModel) -> dict[str, Any]:
         "context_compaction_threshold",
         capabilities.get("contextCompactionThreshold"),
     )
-    if catalog_entry.context_compaction_threshold is not None and (
+    catalog_compaction_threshold = catalog_entry.context_compaction_threshold
+    capacity_mode = capabilities.get(
+        "context_capacity_mode", capabilities.get("contextCapacityMode")
+    )
+    if (
+        capacity_mode == "maximum"
+        and catalog_entry.capabilities.maximum_context_compaction_threshold
+        is not None
+    ):
+        catalog_compaction_threshold = (
+            catalog_entry.capabilities.maximum_context_compaction_threshold
+        )
+    if catalog_compaction_threshold is not None and (
         model.provider_id == "codex"
         or not isinstance(stored_compaction_threshold, (int, float))
         or isinstance(stored_compaction_threshold, bool)
         or not 0 < stored_compaction_threshold <= 1
     ):
-        capabilities["context_compaction_threshold"] = (
-            catalog_entry.context_compaction_threshold
-        )
+        capabilities["context_compaction_threshold"] = catalog_compaction_threshold
     capabilities.pop("contextCompactionThreshold", None)
     configured_max = capabilities.get(
         "configured_max_output_tokens",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from pathlib import Path
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -23,7 +24,7 @@ from lumina.models import (
     User,
     UserSetting,
 )
-from lumina.runs.service import resolve_execution
+from lumina.runs.service import _model_capabilities_snapshot, resolve_execution
 
 
 def _settings(tmp_path, environment: str) -> Settings:
@@ -285,3 +286,25 @@ def _assert_execution_selection(db_session: Session, tmp_path: Path) -> None:
         settings=_settings(tmp_path, "test"),
     )
     assert development["provider_id"] == "mock"
+
+
+def test_codex_gpt56_snapshot_preserves_selected_context_mode_threshold() -> None:
+    standard = SimpleNamespace(
+        provider_id="codex",
+        model_key="gpt-5.6-sol",
+        capabilities_json={
+            "context_capacity_mode": "standard",
+            "context_compaction_threshold": 0.5,
+        },
+    )
+    maximum = SimpleNamespace(
+        provider_id="codex",
+        model_key="gpt-5.6-sol",
+        capabilities_json={
+            "context_capacity_mode": "maximum",
+            "context_compaction_threshold": 0.5,
+        },
+    )
+
+    assert _model_capabilities_snapshot(standard)["context_compaction_threshold"] == 1.0
+    assert _model_capabilities_snapshot(maximum)["context_compaction_threshold"] == 0.85

@@ -27,6 +27,9 @@ test("admin model settings expose the configured and hard output token limits", 
   assert.match(app, /Math\.min\(\s*parsedAdminContextWindow - reservedOutput,\s*adminMeasuredInputTokenLimit \?\? parsedAdminContextWindow/);
   assert.match(app, /자동 압축 시작 비율/);
   assert.match(app, /기본 자동 압축 시작점/);
+  assert.match(app, /비용 절약/);
+  assert.match(app, /비용 증가 경계/);
+  assert.match(app, /최대 컨텍스트/);
   assert.match(app, /최초 사용자 실행 기본값/);
   assert.match(app, /컨텍스트 관리/);
   assert.match(app, /개인 실행 선택 이력이 없을 때만 사용/);

@@ -1554,6 +1554,18 @@ function App() {
   )
     ? selectedAdminSettingsModel.standardContextReserveTokens
     : null;
+  const adminHasCodexCostBoundary = (
+    selectedAdminSettingsModel?.providerId === "codex"
+    && typeof selectedAdminSettingsModel.standardContextReserveTokens === "number"
+    && selectedAdminSettingsModel.defaultContextWindow === selectedAdminSettingsModel.maximumContextWindow
+  );
+  const adminCodexCostBoundary = adminHasCodexCostBoundary
+    ? Math.max(
+      1,
+      (selectedAdminSettingsModel?.defaultContextWindow ?? 0)
+        - (selectedAdminSettingsModel?.standardContextReserveTokens ?? 0),
+    )
+    : null;
   const adminBaseInputContext = (() => {
     if (!Number.isSafeInteger(parsedAdminContextWindow) || parsedAdminContextWindow < 1) return null;
     if (
@@ -4367,11 +4379,13 @@ function App() {
                     <div className="settings-row"><span><strong>Provider</strong><small>컨텍스트 실행 정책을 확인할 Provider입니다.</small></span><SelectMenu className="settings-select" align="end" value={adminSettingsProviderId} options={accountProviders.map((provider) => ({ value: provider.id, label: provider.displayName }))} ariaLabel="컨텍스트 관리 Provider" disabled={adminSettingsBusy} onChange={setAdminSettingsProviderId} /></div>
                     <div className="settings-row"><span><strong>Model</strong><small>설정값은 선택한 Model에만 적용됩니다.</small></span><SelectMenu className="settings-select" align="end" value={adminSettingsModelKey} options={adminSettingsModels.map((model) => ({ value: model.modelKey, label: model.displayName }))} ariaLabel="컨텍스트 관리 Model" disabled={adminSettingsBusy} onChange={setAdminSettingsModelKey} /></div>
                     {selectedAdminSettingsModel?.maximumContextWindow && (
-                      <div className="settings-row">
+                      <div className="settings-row settings-context-capacity-row">
                         <span>
                           <strong>컨텍스트 용량 모드</strong>
                           <small>
-                            표준 모드는 272K 가격 경계 앞에 약 20K만 남기고 압축합니다. 최대 모드는 긴 원문이 꼭 필요한 작업에만 사용하세요.
+                            {adminHasCodexCostBoundary
+                              ? "비용 절약 모드는 272K 장문 비용 경계에서 압축합니다. 최대 컨텍스트 모드는 전체 한도의 85%까지 유지합니다."
+                              : "표준 모드는 272K 가격 경계 앞에 약 20K만 남기고 압축합니다. 최대 모드는 긴 원문이 꼭 필요한 작업에만 사용하세요."}
                           </small>
                         </span>
                         <SelectMenu
@@ -4379,8 +4393,12 @@ function App() {
                           align="end"
                           value={selectedAdminSettingsModel.contextCapacityMode ?? "standard"}
                           options={[
-                            { value: "standard", label: `표준 · ${(selectedAdminSettingsModel.defaultContextWindow ?? 272_000).toLocaleString()} 토큰 (기본)` },
-                            { value: "maximum", label: `최대 · ${selectedAdminSettingsModel.maximumContextWindow.toLocaleString()} 토큰 (고비용)` },
+                            { value: "standard", label: adminCodexCostBoundary !== null
+                              ? `비용 절약 · ${adminCodexCostBoundary.toLocaleString()} 토큰에서 압축 (기본)`
+                              : `표준 · ${(selectedAdminSettingsModel.defaultContextWindow ?? 272_000).toLocaleString()} 토큰 (기본)` },
+                            { value: "maximum", label: adminHasCodexCostBoundary
+                              ? `최대 컨텍스트 · ${selectedAdminSettingsModel.maximumContextWindow.toLocaleString()} 토큰 활용`
+                              : `최대 · ${selectedAdminSettingsModel.maximumContextWindow.toLocaleString()} 토큰 (고비용)` },
                           ]}
                           ariaLabel="컨텍스트 용량 모드"
                           disabled={adminSettingsBusy}
@@ -4458,7 +4476,9 @@ function App() {
                         <strong>기본 최대 입력 컨텍스트</strong>
                         <small>
                           {adminStandardContextReserveTokens !== null
-                            ? "표준 모드의 가격 경계에서 20K 여유를 둔 입력 예산입니다."
+                            ? adminHasCodexCostBoundary
+                              ? `실제 전체 한도는 ${parsedAdminContextWindow.toLocaleString()} 토큰이며, 비용 절약 모드는 장문 비용이 증가하는 ${adminBaseInputContext?.toLocaleString() ?? "272,000"} 토큰에서 압축합니다.`
+                              : "표준 모드의 가격 경계에서 20K 여유를 둔 입력 예산입니다."
                             : "전체 컨텍스트에서 출력 예약을 뺀 값과 모델 입력 상한 중 작은 값에서 안전 여유를 뺀 시스템 입력 예산입니다. Tool 적용 전 기준이며 실제 Run에서는 Tool schema 토큰을 추가 차감합니다."}
                         </small>
                       </span>
@@ -4466,20 +4486,22 @@ function App() {
                     </div>
                     <div className="settings-row">
                       <span>
-                        <strong>{adminStandardContextReserveTokens !== null ? "자동 압축 여유" : "자동 압축 시작 비율"}</strong>
+                        <strong>{adminStandardContextReserveTokens !== null ? (adminHasCodexCostBoundary ? "비용 증가 경계" : "자동 압축 여유") : "자동 압축 시작 비율"}</strong>
                         <small>
                           {adminStandardContextReserveTokens !== null
-                            ? "272K를 전부 채우기 직전에 압축할 수 있도록 약 20K를 남깁니다."
+                            ? adminHasCodexCostBoundary
+                              ? "이 경계를 넘으면 장문 컨텍스트 요금이 증가하므로 기본 모드에서는 여기서 자동 압축합니다."
+                              : "272K를 전부 채우기 직전에 압축할 수 있도록 약 20K를 남깁니다."
                             : "위 최대 입력 컨텍스트의 몇 %에서 선제 압축할지 정합니다."}
-                          {selectedAdminSettingsModel?.contextPolicyLocked
-                            ? ` Codex 서비스 정책은 ${Math.round(adminDefaultContextUsageRatio * 100)}%로 고정됩니다.`
+                          {adminStandardContextReserveTokens === null && selectedAdminSettingsModel?.contextPolicyLocked
+                            ? ` Codex 서비스 정책은 ${adminContextUsagePercent}%로 고정됩니다.`
                             : selectedAdminSettingsModel?.maximumContextWindow && adminStandardContextReserveTokens === null
                               ? " 용량 모드에 맞는 안전 여유가 자동 적용됩니다."
                               : null}
                         </small>
                       </span>
                       {adminStandardContextReserveTokens !== null
-                        ? <output>{adminStandardContextReserveTokens.toLocaleString()} 토큰</output>
+                        ? <output>{(adminHasCodexCostBoundary ? adminBaseInputContext : adminStandardContextReserveTokens)?.toLocaleString()} 토큰</output>
                         : (
                           <div className="settings-inline-control settings-percent-control">
                             <span className="settings-suffixed-input"><input aria-label="자동 압축 시작 비율" type="text" inputMode="numeric" value={adminContextUsagePercent} disabled={adminSettingsBusy || !selectedAdminSettingsModel || selectedAdminSettingsModel.contextPolicyLocked || adminContextCapacityManaged} onChange={(event) => setAdminContextUsagePercent(event.currentTarget.value.replace(/\D/g, "").slice(0, 3))} /><span aria-hidden="true">%</span></span>
@@ -4493,7 +4515,9 @@ function App() {
                         <strong>기본 자동 압축 시작점</strong>
                         <small>
                           {adminStandardContextReserveTokens !== null
-                            ? "표준 모드에서 대화·지침·Tool schema를 합친 추정 입력이 이 값에 도달하면 압축합니다."
+                            ? adminHasCodexCostBoundary
+                              ? "비용 절약 모드에서 대화·지침·Tool schema를 합친 추정 입력이 이 값에 도달하면 압축합니다. 최대 컨텍스트 모드에서는 실제 전체 한도의 85%까지 유지합니다."
+                              : "표준 모드에서 대화·지침·Tool schema를 합친 추정 입력이 이 값에 도달하면 압축합니다."
                             : "Tool 적용 전 최대 입력 컨텍스트에 위 비율을 적용한 소프트 임계값입니다. 실제 Run에서는 Tool schema만큼 더 낮아집니다."}
                         </small>
                       </span>

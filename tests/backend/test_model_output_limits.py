@@ -94,6 +94,54 @@ def test_context_policy_falls_back_to_catalog_metadata() -> None:
     )
 
 
+def test_codex_gpt56_standard_mode_compacts_at_long_context_cost_boundary() -> None:
+    run = SimpleNamespace(
+        snapshot_json={
+            "execution": {
+                "capabilities": {
+                    "context_window": 1_050_000,
+                    "context_capacity_mode": "standard",
+                    "context_compaction_threshold": 1.0,
+                    "standard_context_compaction_reserve_tokens": 778_000,
+                }
+            }
+        },
+        provider_id="codex",
+        model_key="gpt-5.6-sol",
+        runtime_model_id="gpt-5.6-sol",
+    )
+
+    context_window, effective_input_budget = _context_budget(run, ())
+
+    assert context_window == 1_050_000
+    assert effective_input_budget == 272_000
+    assert _compaction_threshold(run, effective_input_budget) == 272_000
+
+
+def test_codex_gpt56_maximum_mode_compacts_at_eighty_five_percent() -> None:
+    run = SimpleNamespace(
+        snapshot_json={
+            "execution": {
+                "capabilities": {
+                    "context_window": 1_050_000,
+                    "context_capacity_mode": "maximum",
+                    "context_compaction_threshold": 0.85,
+                    "standard_context_compaction_reserve_tokens": 778_000,
+                }
+            }
+        },
+        provider_id="codex",
+        model_key="gpt-5.6-sol",
+        runtime_model_id="gpt-5.6-sol",
+    )
+
+    context_window, effective_input_budget = _context_budget(run, ())
+
+    assert context_window == 1_050_000
+    assert effective_input_budget == 1_041_808
+    assert _compaction_threshold(run, effective_input_budget) == 885_536
+
+
 def test_context_budget_honors_measured_input_limit() -> None:
     run = SimpleNamespace(
         snapshot_json={

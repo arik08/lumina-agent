@@ -15,6 +15,11 @@ DEFAULT_CONTEXT_COMPACTION_THRESHOLD = 0.75
 STANDARD_CONTEXT_WINDOW = 272_000
 STANDARD_CONTEXT_COMPACTION_THRESHOLD = 1.0
 STANDARD_CONTEXT_COMPACTION_RESERVE_TOKENS = 20_000
+CODEX_LONG_CONTEXT_WINDOW = 1_050_000
+CODEX_LONG_CONTEXT_COST_BOUNDARY = 272_000
+CODEX_STANDARD_CONTEXT_RESERVE_TOKENS = (
+    CODEX_LONG_CONTEXT_WINDOW - CODEX_LONG_CONTEXT_COST_BOUNDARY
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,9 +233,15 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             tools=True,
             structured_output=True,
             reasoning_effort=True,
-            context_window=272_000,
+            context_window=CODEX_LONG_CONTEXT_WINDOW,
+            context_capacity_mode="standard",
+            maximum_context_window=CODEX_LONG_CONTEXT_WINDOW,
+            maximum_context_compaction_threshold=0.85,
+            standard_context_compaction_reserve_tokens=(
+                CODEX_STANDARD_CONTEXT_RESERVE_TOKENS
+            ),
         ),
-        context_compaction_threshold=0.85,
+        context_compaction_threshold=1.0,
         token_pricing=ModelTokenPricing(
             input=5.0,
             cached_input=0.5,
@@ -242,8 +253,8 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             long_context_cache_write_input=12.5,
             long_context_output=45.0,
         ),
-        catalog_revision="2026-08-05.1-codex-oauth-5.6",
-        verified_at=date(2026, 8, 5),
+        catalog_revision="2026-08-06.1-codex-5.6-context-modes",
+        verified_at=date(2026, 8, 6),
     ),
     ModelCatalogSeed(
         provider_id="codex",
@@ -257,9 +268,15 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             tools=True,
             structured_output=True,
             reasoning_effort=True,
-            context_window=272_000,
+            context_window=CODEX_LONG_CONTEXT_WINDOW,
+            context_capacity_mode="standard",
+            maximum_context_window=CODEX_LONG_CONTEXT_WINDOW,
+            maximum_context_compaction_threshold=0.85,
+            standard_context_compaction_reserve_tokens=(
+                CODEX_STANDARD_CONTEXT_RESERVE_TOKENS
+            ),
         ),
-        context_compaction_threshold=0.85,
+        context_compaction_threshold=1.0,
         token_pricing=ModelTokenPricing(
             input=2.5,
             cached_input=0.25,
@@ -271,8 +288,8 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             long_context_cache_write_input=6.25,
             long_context_output=22.5,
         ),
-        catalog_revision="2026-08-05.1-codex-oauth-5.6",
-        verified_at=date(2026, 8, 5),
+        catalog_revision="2026-08-06.1-codex-5.6-context-modes",
+        verified_at=date(2026, 8, 6),
     ),
     ModelCatalogSeed(
         provider_id="codex",
@@ -286,9 +303,15 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             tools=True,
             structured_output=True,
             reasoning_effort=True,
-            context_window=272_000,
+            context_window=CODEX_LONG_CONTEXT_WINDOW,
+            context_capacity_mode="standard",
+            maximum_context_window=CODEX_LONG_CONTEXT_WINDOW,
+            maximum_context_compaction_threshold=0.85,
+            standard_context_compaction_reserve_tokens=(
+                CODEX_STANDARD_CONTEXT_RESERVE_TOKENS
+            ),
         ),
-        context_compaction_threshold=0.85,
+        context_compaction_threshold=1.0,
         token_pricing=ModelTokenPricing(
             input=1.0,
             cached_input=0.1,
@@ -300,8 +323,8 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             long_context_cache_write_input=2.5,
             long_context_output=9.0,
         ),
-        catalog_revision="2026-08-05.1-codex-oauth-5.6",
-        verified_at=date(2026, 8, 5),
+        catalog_revision="2026-08-06.1-codex-5.6-context-modes",
+        verified_at=date(2026, 8, 6),
     ),
     ModelCatalogSeed(
         provider_id="codex",
@@ -621,9 +644,9 @@ def validate_catalog(items: Iterable[ModelCatalogSeed]) -> None:
         if capacity_mode is not None and capacity_mode not in {"standard", "maximum"}:
             raise ValueError(f"Unknown context capacity mode: {key!r}")
         if maximum_context_window is not None:
-            if context_window is None or maximum_context_window <= context_window:
+            if context_window is None or maximum_context_window < context_window:
                 raise ValueError(
-                    f"Maximum context window must exceed the standard window: {key!r}"
+                    f"Maximum context window must not be smaller than the standard window: {key!r}"
                 )
             if capacity_mode != "standard":
                 raise ValueError(

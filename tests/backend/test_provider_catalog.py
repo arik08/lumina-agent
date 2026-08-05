@@ -132,9 +132,15 @@ def test_codex_runtime_profiles_are_derived_from_reviewed_openai_models() -> Non
 
     assert codex_profile is not None
     assert openai_profile is not None
-    assert codex_profile.context_window == 272_000
-    assert codex_profile.context_compaction_threshold == 0.85
+    assert codex_profile.context_window == 1_050_000
+    assert codex_profile.context_compaction_threshold == 1.0
     assert codex_profile.token_pricing == openai_profile.token_pricing
+
+    for model in initial_model_catalog("codex")[:3]:
+        assert model.capabilities.context_capacity_mode == "standard"
+        assert model.capabilities.maximum_context_window == 1_050_000
+        assert model.capabilities.maximum_context_compaction_threshold == 0.85
+        assert model.capabilities.standard_context_compaction_reserve_tokens == 778_000
 
 
 def test_runtime_model_ids_are_declared_only_in_the_catalog() -> None:

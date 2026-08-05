@@ -275,7 +275,11 @@ def _validate_capabilities(
                 "context_capacity_profile_mismatch",
                 "컨텍스트 상한과 자동 압축 시작점은 선택한 용량 모드의 정책값을 사용해야 합니다.",
             )
-    if catalog_entry is not None and catalog_entry.provider_id == "codex":
+    if (
+        catalog_entry is not None
+        and catalog_entry.provider_id == "codex"
+        and maximum_context_window is None
+    ):
         catalog_context_window = catalog_entry.capabilities.context_window
         catalog_threshold = catalog_entry.context_compaction_threshold
         if (
