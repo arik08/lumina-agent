@@ -25,7 +25,7 @@ from lumina.providers import (
     ProviderRequest,
     ProviderUsage,
 )
-from lumina.providers.catalog import initial_model_catalog
+from lumina.providers.catalog import initial_model_catalog, model_operational_profile
 from lumina.runs.service import _usage_snapshot
 from lumina.runs.state import TERMINAL_STATUSES
 
@@ -114,6 +114,8 @@ def test_usage_snapshot_backfills_cost_breakdown_for_existing_runs() -> None:
 @pytest.mark.parametrize(
     ("provider_id", "model", "expected_cost"),
     [
+        ("pgpt", "gpt-5.6-terra", 1.4),
+        ("pgpt", "gpt-5.6-luna", 0.14),
         ("codex", "gpt-5.5", 3.5),
         ("codex", "gpt-5.4", 1.75),
         ("openai", "gpt-5.6-sol", 3.5),
@@ -138,6 +140,33 @@ def test_usage_payload_estimates_every_public_catalog_model(
     assert payload["cost_usd"] == pytest.approx(expected_cost)
 
 
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("gpt-5.6-terra", (2.0, 0.2, 2.5, 12.0, 4.0, 0.4, 5.0, 18.0)),
+        ("gpt-5.6-luna", (0.2, 0.02, 0.25, 1.2, 0.4, 0.04, 0.5, 1.8)),
+    ],
+)
+def test_pgpt_gpt_5_6_pricing_matches_public_rate_card(
+    model: str, expected: tuple[float, ...]
+) -> None:
+    profile = model_operational_profile("pgpt", model)
+    assert profile is not None
+    pricing = profile.token_pricing
+    assert pricing is not None
+    assert (
+        pricing.input,
+        pricing.cached_input,
+        pricing.cache_write_input,
+        pricing.output,
+        pricing.long_context_input,
+        pricing.long_context_cached_input,
+        pricing.long_context_cache_write_input,
+        pricing.long_context_output,
+    ) == expected
+    assert pricing.version == "public-list-2026-08-06"
+
+
 @pytest.mark.parametrize("provider_id", ["pgpt", "openai_compatible"])
 def test_usage_payload_does_not_guess_private_provider_pricing(
     provider_id: str,
@@ -157,7 +186,11 @@ def test_public_catalog_models_define_token_pricing_in_the_catalog() -> None:
         for item in initial_model_catalog()
         if item.provider_id != "pgpt"
     )
-    assert all(item.token_pricing is None for item in initial_model_catalog("pgpt"))
+    assert {
+        item.model_key
+        for item in initial_model_catalog("pgpt")
+        if item.token_pricing is not None
+    } == {"gpt-5.6-terra", "gpt-5.6-luna"}
 
 
 def _settings(tmp_path: Path, name: str, **overrides: Any) -> Settings:
