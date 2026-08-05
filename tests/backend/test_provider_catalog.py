@@ -97,7 +97,7 @@ def test_initial_model_catalog_matches_detailed_design_section_12_3() -> None:
     assert pgpt.capabilities.maximum_input_tokens == 911_900
     assert pgpt.context_compaction_threshold == 1.0
     assert pgpt.capabilities.maximum_context_compaction_threshold == 0.75
-    assert pgpt.capabilities.standard_context_compaction_reserve_tokens == 20_000
+    assert pgpt.capabilities.standard_context_compaction_reserve_tokens == 40_800
     assert pgpt.capabilities.max_output_tokens == 128_000
     assert pgpt.default_max_output_tokens == 42_000
     assert pgpt.output_token_step == 1_000
@@ -143,7 +143,7 @@ def test_codex_runtime_profiles_are_derived_from_reviewed_openai_models() -> Non
         assert model.capabilities.maximum_context_window == 1_050_000
         assert model.capabilities.maximum_input_tokens == 922_000
         assert model.capabilities.maximum_context_compaction_threshold == 0.85
-        assert model.capabilities.standard_context_compaction_reserve_tokens == 778_000
+        assert model.capabilities.standard_context_compaction_reserve_tokens == 818_800
 
 
 @pytest.mark.parametrize(

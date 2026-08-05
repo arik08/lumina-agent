@@ -265,7 +265,7 @@ def _assert_execution_selection(db_session: Session, tmp_path: Path) -> None:
     assert fallback["capabilities"]["context_capacity_mode"] == "standard"
     assert (
         fallback["capabilities"]["standard_context_compaction_reserve_tokens"]
-        == 20_000
+        == 40_800
     )
     assert fallback["capabilities"]["max_output_tokens"] == 128_000
     assert fallback["capabilities"]["configured_max_output_tokens"] == 42_000

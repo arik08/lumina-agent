@@ -1559,7 +1559,7 @@ function App() {
     && typeof selectedAdminSettingsModel.standardContextReserveTokens === "number"
     && selectedAdminSettingsModel.defaultContextWindow === selectedAdminSettingsModel.maximumContextWindow
   );
-  const adminCodexCostBoundary = adminHasCodexCostBoundary
+  const adminStandardCompactionStart = typeof selectedAdminSettingsModel?.standardContextReserveTokens === "number"
     ? Math.max(
       1,
       (selectedAdminSettingsModel?.defaultContextWindow ?? 0)
@@ -4396,8 +4396,8 @@ function App() {
                           <strong>컨텍스트 용량 모드</strong>
                           <small>
                             {adminHasCodexCostBoundary
-                              ? "비용 절약 모드는 272K 장문 비용 경계에서 압축합니다. 최대 컨텍스트 모드는 전체 한도의 85%까지 유지합니다."
-                              : "표준 모드는 272K 가격 경계 앞에 약 20K만 남기고 압축합니다. 최대 모드는 긴 원문이 꼭 필요한 작업에만 사용하세요."}
+                              ? "비용 절약 모드는 272K 장문 요금 경계의 85%인 231,200 토큰에서 압축합니다. 최대 컨텍스트 모드는 전체 한도의 85%까지 유지합니다."
+                              : "표준 모드는 272K 장문 요금 경계의 85%인 231,200 토큰에서 압축합니다. 최대 모드는 긴 원문이 꼭 필요한 작업에만 사용하세요."}
                           </small>
                         </span>
                         <SelectMenu
@@ -4405,9 +4405,7 @@ function App() {
                           align="end"
                           value={selectedAdminSettingsModel.contextCapacityMode ?? "standard"}
                           options={[
-                            { value: "standard", label: adminCodexCostBoundary !== null
-                              ? `비용 절약 · ${adminCodexCostBoundary.toLocaleString()} 토큰에서 압축 (기본)`
-                              : `표준 · ${(selectedAdminSettingsModel.defaultContextWindow ?? 272_000).toLocaleString()} 토큰 (기본)` },
+                            { value: "standard", label: `표준 · ${(adminStandardCompactionStart ?? 231_200).toLocaleString()} 토큰에서 압축 (기본)` },
                             { value: "maximum", label: adminHasCodexCostBoundary
                               ? `최대 컨텍스트 · ${selectedAdminSettingsModel.maximumContextWindow.toLocaleString()} 토큰 활용`
                               : `최대 · ${selectedAdminSettingsModel.maximumContextWindow.toLocaleString()} 토큰 (고비용)` },
@@ -4489,8 +4487,8 @@ function App() {
                         <small>
                           {adminStandardContextReserveTokens !== null
                             ? adminHasCodexCostBoundary
-                              ? `실제 전체 한도는 ${parsedAdminContextWindow.toLocaleString()} 토큰이며, 비용 절약 모드는 장문 비용이 증가하는 ${adminBaseInputContext?.toLocaleString() ?? "272,000"} 토큰에서 압축합니다.`
-                              : "표준 모드의 가격 경계에서 20K 여유를 둔 입력 예산입니다."
+                              ? `실제 전체 한도는 ${parsedAdminContextWindow.toLocaleString()} 토큰이며, 비용 절약 모드는 272K 장문 요금 경계의 85%인 ${adminBaseInputContext?.toLocaleString() ?? "231,200"} 토큰에서 압축합니다.`
+                              : "표준 모드에서 272K 장문 요금 경계의 85%인 231,200 토큰을 입력 예산으로 사용합니다."
                             : "Provider가 별도 입력 상한을 명시하면 그 값을 직접 사용합니다. 별도 상한이 없을 때만 전체 컨텍스트에서 출력 예약과 안전 여유를 뺍니다. Tool schema는 실제 입력 사용량에 포함됩니다."}
                         </small>
                       </span>
@@ -4498,12 +4496,12 @@ function App() {
                     </div>
                     <div className="settings-row">
                       <span>
-                        <strong>{adminStandardContextReserveTokens !== null ? (adminHasCodexCostBoundary ? "비용 증가 경계" : "자동 압축 여유") : "자동 압축 시작 비율"}</strong>
+                        <strong>{adminStandardContextReserveTokens !== null ? (adminHasCodexCostBoundary ? "자동 압축 시작점" : "자동 압축 안전 여유") : "자동 압축 시작 비율"}</strong>
                         <small>
                           {adminStandardContextReserveTokens !== null
                             ? adminHasCodexCostBoundary
-                              ? "이 경계를 넘으면 장문 컨텍스트 요금이 증가하므로 기본 모드에서는 여기서 자동 압축합니다."
-                              : "272K를 전부 채우기 직전에 압축할 수 있도록 약 20K를 남깁니다."
+                              ? "272K 장문 요금 경계에 도달하지 않도록 85% 지점에서 자동 압축합니다."
+                              : "272K 장문 요금 경계에 도달하지 않도록 15%인 40,800 토큰을 안전 여유로 남깁니다."
                             : "위 최대 입력 컨텍스트의 몇 %에서 선제 압축할지 정합니다."}
                           {adminStandardContextReserveTokens === null && selectedAdminSettingsModel?.contextPolicyLocked
                             ? ` Codex 서비스 정책은 ${adminContextUsagePercent}%로 고정됩니다.`

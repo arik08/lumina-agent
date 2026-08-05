@@ -13,15 +13,18 @@ CATALOG_VERIFIED_AT = date(2026, 7, 29)
 PUBLIC_PRICING_VERSION = "public-list-2026-07-12"
 DEFAULT_CONTEXT_COMPACTION_THRESHOLD = 0.75
 STANDARD_CONTEXT_WINDOW = 272_000
+STANDARD_CONTEXT_SAFE_INPUT_TOKENS = 231_200
 STANDARD_CONTEXT_COMPACTION_THRESHOLD = 1.0
-STANDARD_CONTEXT_COMPACTION_RESERVE_TOKENS = 20_000
+STANDARD_CONTEXT_COMPACTION_RESERVE_TOKENS = (
+    STANDARD_CONTEXT_WINDOW - STANDARD_CONTEXT_SAFE_INPUT_TOKENS
+)
 CODEX_LONG_CONTEXT_WINDOW = 1_050_000
-CODEX_LONG_CONTEXT_COST_BOUNDARY = 272_000
 CODEX_LONG_CONTEXT_MAX_INPUT_TOKENS = 922_000
 CODEX_LONG_CONTEXT_MAX_OUTPUT_TOKENS = 128_000
 CODEX_STANDARD_CONTEXT_RESERVE_TOKENS = (
-    CODEX_LONG_CONTEXT_WINDOW - CODEX_LONG_CONTEXT_COST_BOUNDARY
+    CODEX_LONG_CONTEXT_WINDOW - STANDARD_CONTEXT_SAFE_INPUT_TOKENS
 )
+STANDARD_CONTEXT_POLICY_REVISION = "2026-08-06.4-standard-context-85pct"
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +109,7 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
         ),
         default_max_output_tokens=42_000,
         context_compaction_threshold=STANDARD_CONTEXT_COMPACTION_THRESHOLD,
+        catalog_revision=STANDARD_CONTEXT_POLICY_REVISION,
     ),
     ModelCatalogSeed(
         provider_id="pgpt",
@@ -150,6 +154,7 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
         ),
         default_max_output_tokens=42_000,
         context_compaction_threshold=STANDARD_CONTEXT_COMPACTION_THRESHOLD,
+        catalog_revision=STANDARD_CONTEXT_POLICY_REVISION,
     ),
     ModelCatalogSeed(
         provider_id="pgpt",
@@ -174,6 +179,7 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
         ),
         default_max_output_tokens=42_000,
         context_compaction_threshold=STANDARD_CONTEXT_COMPACTION_THRESHOLD,
+        catalog_revision=STANDARD_CONTEXT_POLICY_REVISION,
     ),
     ModelCatalogSeed(
         provider_id="pgpt",
@@ -210,7 +216,7 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             long_context_output=18.0,
             version="public-list-2026-08-06",
         ),
-        catalog_revision="2026-08-06.3-gpt-5.6-pricing",
+        catalog_revision=STANDARD_CONTEXT_POLICY_REVISION,
         verified_at=date(2026, 8, 6),
     ),
     ModelCatalogSeed(
@@ -248,7 +254,7 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             long_context_output=1.8,
             version="public-list-2026-08-06",
         ),
-        catalog_revision="2026-08-06.3-gpt-5.6-pricing",
+        catalog_revision=STANDARD_CONTEXT_POLICY_REVISION,
         verified_at=date(2026, 8, 6),
     ),
     ModelCatalogSeed(
@@ -286,7 +292,7 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             long_context_cache_write_input=12.5,
             long_context_output=45.0,
         ),
-        catalog_revision="2026-08-06.2-codex-5.6-token-limits",
+        catalog_revision=STANDARD_CONTEXT_POLICY_REVISION,
         verified_at=date(2026, 8, 6),
     ),
     ModelCatalogSeed(
@@ -325,7 +331,7 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             long_context_output=18.0,
             version="public-list-2026-08-06",
         ),
-        catalog_revision="2026-08-06.3-gpt-5.6-pricing",
+        catalog_revision=STANDARD_CONTEXT_POLICY_REVISION,
         verified_at=date(2026, 8, 6),
     ),
     ModelCatalogSeed(
@@ -364,7 +370,7 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             long_context_output=1.8,
             version="public-list-2026-08-06",
         ),
-        catalog_revision="2026-08-06.3-gpt-5.6-pricing",
+        catalog_revision=STANDARD_CONTEXT_POLICY_REVISION,
         verified_at=date(2026, 8, 6),
     ),
     ModelCatalogSeed(
@@ -489,6 +495,7 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             ),
         ),
         context_compaction_threshold=STANDARD_CONTEXT_COMPACTION_THRESHOLD,
+        catalog_revision=STANDARD_CONTEXT_POLICY_REVISION,
         token_pricing=ModelTokenPricing(
             input=5.0,
             cached_input=0.5,
@@ -534,7 +541,7 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             long_context_output=18.0,
             version="public-list-2026-08-06",
         ),
-        catalog_revision="2026-08-06.3-gpt-5.6-pricing",
+        catalog_revision=STANDARD_CONTEXT_POLICY_REVISION,
         verified_at=date(2026, 8, 6),
     ),
     ModelCatalogSeed(
@@ -570,7 +577,7 @@ INITIAL_MODEL_CATALOG: tuple[ModelCatalogSeed, ...] = (
             long_context_output=1.8,
             version="public-list-2026-08-06",
         ),
-        catalog_revision="2026-08-06.3-gpt-5.6-pricing",
+        catalog_revision=STANDARD_CONTEXT_POLICY_REVISION,
         verified_at=date(2026, 8, 6),
     ),
     ModelCatalogSeed(

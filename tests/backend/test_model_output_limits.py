@@ -94,7 +94,7 @@ def test_context_policy_falls_back_to_catalog_metadata() -> None:
     )
 
 
-def test_codex_gpt56_standard_mode_compacts_at_long_context_cost_boundary() -> None:
+def test_codex_gpt56_standard_mode_compacts_at_eighty_five_percent_of_boundary() -> None:
     run = SimpleNamespace(
         snapshot_json={
             "execution": {
@@ -102,7 +102,7 @@ def test_codex_gpt56_standard_mode_compacts_at_long_context_cost_boundary() -> N
                     "context_window": 1_050_000,
                     "context_capacity_mode": "standard",
                     "context_compaction_threshold": 1.0,
-                    "standard_context_compaction_reserve_tokens": 778_000,
+                    "standard_context_compaction_reserve_tokens": 818_800,
                 }
             }
         },
@@ -114,8 +114,8 @@ def test_codex_gpt56_standard_mode_compacts_at_long_context_cost_boundary() -> N
     context_window, effective_input_budget = _context_budget(run, ())
 
     assert context_window == 1_050_000
-    assert effective_input_budget == 272_000
-    assert _compaction_threshold(run, effective_input_budget) == 272_000
+    assert effective_input_budget == 231_200
+    assert _compaction_threshold(run, effective_input_budget) == 231_200
 
 
 def test_codex_gpt56_maximum_mode_compacts_at_eighty_five_percent() -> None:
@@ -173,7 +173,7 @@ def test_context_budget_honors_measured_input_limit() -> None:
     assert effective_input_budget == 911_900
 
 
-def test_standard_context_mode_leaves_only_20k_price_headroom() -> None:
+def test_standard_context_mode_compacts_at_eighty_five_percent_of_boundary() -> None:
     run = SimpleNamespace(
         snapshot_json={
             "execution": {
@@ -183,7 +183,7 @@ def test_standard_context_mode_leaves_only_20k_price_headroom() -> None:
                     "configured_max_output_tokens": 42_000,
                     "context_capacity_mode": "standard",
                     "context_compaction_threshold": 1.0,
-                    "standard_context_compaction_reserve_tokens": 20_000,
+                    "standard_context_compaction_reserve_tokens": 40_800,
                 }
             }
         },
@@ -195,6 +195,6 @@ def test_standard_context_mode_leaves_only_20k_price_headroom() -> None:
     context_window, effective_input_budget = _context_budget(run, ())
 
     assert context_window == 272_000
-    assert effective_input_budget == 252_000
-    assert _compaction_threshold(run, effective_input_budget) == 252_000
+    assert effective_input_budget == 231_200
+    assert _compaction_threshold(run, effective_input_budget) == 231_200
     assert _padded_estimate(run, 200_000) == 200_000

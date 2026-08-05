@@ -222,7 +222,7 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         "last_warm_input_tokens",
         "last_warm_cached_tokens",
     } <= prompt_cache_seed_columns
-    assert revision == "0075"
+    assert revision == "0076"
     assert "ix_run_events_run_type" in run_event_indexes
     assert "ix_run_events_replay" not in run_event_indexes
     assert "ix_deep_analysis_events_replay" not in deep_analysis_event_indexes
@@ -537,6 +537,74 @@ def test_migration_0075_adds_codex_56_token_limits(tmp_path: Path) -> None:
     )
 
 
+def test_migration_0076_applies_standard_context_eighty_five_percent_safety(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "standard-context-85-percent.db"
+    database_url = f"sqlite:///{database.as_posix()}"
+    upgrade_database(database_url, "0075")
+
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            for provider_id, context_window, reserve in (
+                ("pgpt", 272_000, 20_000),
+                ("openai", 272_000, 20_000),
+                ("codex", 1_050_000, 778_000),
+            ):
+                connection.execute(
+                    text(
+                        "INSERT INTO provider_models "
+                        "(provider_id, model_key, display_name, runtime_model_id, "
+                        "aliases_json, enabled, is_default, sort_order, capabilities_json, "
+                        "source, catalog_revision, verified_at, id, created_at, updated_at) "
+                        "VALUES (:provider_id, 'gpt-5.6-sol', 'GPT-5.6-Sol', "
+                        "'gpt-5.6-sol', '[]', 1, 0, 10, :capabilities, "
+                        "'product_contract:user', 'old', "
+                        "'2026-08-06T00:00:00+00:00', :id, "
+                        "'2026-08-06T00:00:00+00:00', "
+                        "'2026-08-06T00:00:00+00:00')"
+                    ),
+                    {
+                        "provider_id": provider_id,
+                        "capabilities": json.dumps(
+                            {
+                                "context_window": context_window,
+                                "context_capacity_mode": "standard",
+                                "context_compaction_threshold": 1.0,
+                                "standard_context_compaction_reserve_tokens": reserve,
+                            },
+                            separators=(",", ":"),
+                        ),
+                        "id": f"{provider_id}-gpt-56-sol-standard-safe",
+                    },
+                )
+    finally:
+        engine.dispose()
+
+    upgrade_database(database_url, "0076")
+
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT provider_id, json_extract(capabilities_json, "
+                    "'$.standard_context_compaction_reserve_tokens'), "
+                    "catalog_revision FROM provider_models "
+                    "ORDER BY provider_id"
+                )
+            ).all()
+    finally:
+        engine.dispose()
+
+    assert rows == [
+        ("codex", 818_800, "2026-08-06.4-standard-context-85pct"),
+        ("openai", 40_800, "2026-08-06.4-standard-context-85pct"),
+        ("pgpt", 40_800, "2026-08-06.4-standard-context-85pct"),
+    ]
+
+
 def test_message_search_fts_migration_0056_round_trip(tmp_path: Path) -> None:
     database = tmp_path / "message-fts-round-trip.db"
     database_url = f"sqlite:///{database.as_posix()}"
@@ -793,7 +861,7 @@ def test_context_migration_adopts_legacy_create_all_table(tmp_path: Path) -> Non
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0075"
+                MigrationContext.configure(connection).get_current_revision() == "0076"
             )
     finally:
         engine.dispose()
@@ -823,7 +891,7 @@ def test_recent_migrations_adopt_tables_precreated_by_runtime_schema(
     try:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-        assert revision == "0075"
+        assert revision == "0076"
     finally:
         engine.dispose()
 
