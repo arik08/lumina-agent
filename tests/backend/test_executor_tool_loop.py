@@ -20,7 +20,6 @@ from lumina.models import ArtifactVersion, Message, Run, RunEvent, ToolExecution
 from lumina.providers import (
     MockProvider,
     MockToolCall,
-    ProviderEvent,
     ProviderMessage,
     ProviderUsage,
 )
@@ -1194,7 +1193,7 @@ def test_agent_loop_persists_web_evidence_and_returns_to_model(
     ) -> MockProvider:
         del wants_artifact
         if first_turn:
-            delegate = MockProvider(
+            return MockProvider(
                 text_chunks=(
                     "<progress>최신 자료를 검색하고 출처가 분명한 근거를 선별하겠습니다.</progress>\n",
                 ),
@@ -1204,17 +1203,6 @@ def test_agent_loop_persists_web_evidence_and_returns_to_model(
                     call_id="call_web_search",
                 ),
             )
-
-            class ReasoningSummaryProvider(MockProvider):
-                async def stream(self, request):
-                    yield ProviderEvent(
-                        type="reasoning_summary",
-                        text="공식 자료와 보조 자료를 나누어 근거를 검증하겠습니다.",
-                    )
-                    async for event in delegate.stream(request):
-                        yield event
-
-            return ReasoningSummaryProvider()
         return MockProvider(text_chunks=("확인한 출처를 바탕으로 답변했습니다.",))
 
     monkeypatch.setattr(executor_module, "web_search", fake_web_search)
@@ -1265,7 +1253,7 @@ def test_agent_loop_persists_web_evidence_and_returns_to_model(
             "tool",
         ]
         assert snapshot["activities"][1]["text"] == (
-            "공식 자료와 보조 자료를 나누어 근거를 검증하겠습니다."
+            "최신 자료를 검색하고 출처가 분명한 근거를 선별하겠습니다."
         )
         assert [activity["sequence"] for activity in snapshot["activities"]] == sorted(
             activity["sequence"] for activity in snapshot["activities"]

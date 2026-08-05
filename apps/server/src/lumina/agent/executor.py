@@ -2274,7 +2274,6 @@ class LocalRunExecutor:
             round_text: list[str] = []
             progress_control_buffer: str | None = ""
             model_progress_summary: str | None = None
-            provider_reasoning_summaries: set[str] = set()
             active_call_id: str | None = None
             interrupted_by_steer = False
             limit_violation: RunLimitViolation | None = None
@@ -2390,19 +2389,6 @@ class LocalRunExecutor:
                             await accept_visible_text(
                                 continuation_deduper.feed(visible_text)
                             )
-                        elif event.type == "reasoning_summary" and event.text:
-                            normalized_summary = " ".join(event.text.split()).strip()
-                            if (
-                                normalized_summary
-                                and normalized_summary
-                                not in provider_reasoning_summaries
-                            ):
-                                provider_reasoning_summaries.add(normalized_summary)
-                                await self._publish_progress_summary(
-                                    run_id,
-                                    normalized_summary,
-                                    phase="reasoning",
-                                )
                         elif event.type == "tool_call_started":
                             await flush_pending_text()
                             call_id = event.tool_call_id or new_uuid()
@@ -3080,7 +3066,7 @@ class LocalRunExecutor:
             ):
                 return
             await self._set_status(run_id, TOOLS_RUNNING)
-            if execution_calls and not provider_reasoning_summaries:
+            if execution_calls:
                 await self._publish_progress_summary(
                     run_id,
                     model_progress_summary or _tool_progress_fallback(execution_calls),

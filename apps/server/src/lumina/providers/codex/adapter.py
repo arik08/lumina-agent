@@ -375,7 +375,6 @@ class CodexResponsesAdapter:
             async for event in self._stream_direct(request):
                 if event.type in {
                     "text_delta",
-                    "reasoning_summary",
                     "tool_call_started",
                     "tool_call_delta",
                     "tool_call_completed",
@@ -416,7 +415,6 @@ class CodexResponsesAdapter:
                 async for event in delegate.stream(request):
                     if event.type in {
                         "text_delta",
-                        "reasoning_summary",
                         "tool_call_started",
                         "tool_call_delta",
                         "response_state",

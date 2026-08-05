@@ -9,7 +9,6 @@ import httpx
 
 from lumina.http_client import TrustManager, TrustProfile, create_http_client
 
-from ..catalog import initial_model_catalog
 from ..constants import DEFAULT_OPENAI_BASE_URL, OPENAI_PROVIDER_ID
 from ..errors import ProviderConfigurationError, ProviderRequestError
 from ..http import validate_http_base_url
@@ -132,37 +131,6 @@ def _responses_text_format(raw_format: Mapping[str, Any]) -> dict[str, Any]:
     return {"format": dict(raw_format)}
 
 
-def _supports_reasoning_summary(model: str) -> bool:
-    normalized = model.casefold()
-    return any(
-        item.capabilities.reasoning_effort
-        and normalized
-        in {
-            item.model_key.casefold(),
-            item.runtime_model_id.casefold(),
-            *(alias.casefold() for alias in item.aliases),
-        }
-        for item in initial_model_catalog()
-    )
-
-
-def _reasoning_summary_text(item: Mapping[str, Any]) -> str | None:
-    if item.get("type") != "reasoning":
-        return None
-    summary = item.get("summary")
-    if not isinstance(summary, (list, tuple)):
-        return None
-    parts = [
-        str(block.get("text", "")).strip()
-        for block in summary
-        if isinstance(block, Mapping)
-        and block.get("type") == "summary_text"
-        and isinstance(block.get("text"), str)
-        and str(block.get("text", "")).strip()
-    ]
-    return "\n\n".join(parts) or None
-
-
 def _mark_stable_system_cache_breakpoint(
     *,
     messages: tuple[ProviderMessage, ...],
@@ -210,8 +178,6 @@ def build_responses_payload(request: ProviderRequest) -> dict[str, Any]:
         payload["tools"] = [_responses_tool(tool) for tool in request.tools]
     if request.effort is not None:
         payload["reasoning"] = {"effort": request.effort}
-    if _supports_reasoning_summary(request.model):
-        payload.setdefault("reasoning", {})["summary"] = "auto"
     if is_gpt_5_6:
         payload.setdefault("reasoning", {})["context"] = "all_turns"
         payload["include"] = ["reasoning.encrypted_content"]
@@ -302,7 +268,6 @@ class OpenAIResponsesAdapter:
 
         states_by_item: dict[str, _ToolState] = {}
         states_by_index: dict[int, _ToolState] = {}
-        emitted_reasoning_summaries: set[str] = set()
         try:
             payload = build_responses_payload(request)
             if self._payload_transform is not None:
@@ -390,15 +355,6 @@ class OpenAIResponsesAdapter:
                             isinstance(item, Mapping)
                             and item.get("type") in {"reasoning", "compaction"}
                         ):
-                            summary_text = _reasoning_summary_text(item)
-                            if (
-                                summary_text is not None
-                                and summary_text not in emitted_reasoning_summaries
-                            ):
-                                emitted_reasoning_summaries.add(summary_text)
-                                yield ProviderEvent(
-                                    type="reasoning_summary", text=summary_text
-                                )
                             yield ProviderEvent(
                                 type="response_state",
                                 provider_metadata={"item": dict(item)},
@@ -430,21 +386,6 @@ class OpenAIResponsesAdapter:
                         response_payload = event.get("response")
                         if not isinstance(response_payload, Mapping):
                             response_payload = {}
-                        output = response_payload.get("output")
-                        if isinstance(output, (list, tuple)):
-                            for item in output:
-                                if not isinstance(item, Mapping):
-                                    continue
-                                summary_text = _reasoning_summary_text(item)
-                                if (
-                                    summary_text is None
-                                    or summary_text in emitted_reasoning_summaries
-                                ):
-                                    continue
-                                emitted_reasoning_summaries.add(summary_text)
-                                yield ProviderEvent(
-                                    type="reasoning_summary", text=summary_text
-                                )
                         for provider_event in _final_tool_events(
                             response_payload,
                             states_by_item=states_by_item,

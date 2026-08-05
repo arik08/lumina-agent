@@ -7,7 +7,6 @@ from typing import Any, Literal, Protocol, runtime_checkable
 MessageRole = Literal["system", "user", "assistant", "tool"]
 ProviderEventType = Literal[
     "text_delta",
-    "reasoning_summary",
     "tool_call_started",
     "tool_call_delta",
     "tool_call_completed",

@@ -1085,7 +1085,6 @@ async def test_pgpt_gpt_5_6_prefers_responses_with_server_compaction() -> None:
         paths.append(request.url.path)
         payload = json.loads(request.content)
         assert payload["reasoning"]["context"] == "all_turns"
-        assert payload["reasoning"]["summary"] == "auto"
         assert payload["context_management"] == [
             {"type": "compaction", "compact_threshold": 1_000}
         ]
