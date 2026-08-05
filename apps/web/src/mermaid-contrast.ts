@@ -4,9 +4,6 @@ const minimumTextContrast = 4.5;
 const lightText = "#ffffff";
 const darkText = "#20242c";
 const maximumContrastDarkText = "#000000";
-const darkSurface = { red: 29, green: 32, blue: 37, alpha: 1 };
-const maximumDarkNodeLuminance = 0.16;
-const darkNodeAuthoredColorWeight = 0.35;
 const originalInlineStyles = new WeakMap<Element, Map<string, { value: string; priority: string }>>();
 
 function parseCssColor(value: string): RgbColor | null {
@@ -61,15 +58,6 @@ export function readableMermaidTextColor(foreground: string, background: string)
   return maximumContrastDarkText;
 }
 
-export function darkMermaidNodeFill(fill: string) {
-  const color = parseCssColor(fill);
-  if (!color || color.alpha < 1 || relativeLuminance(color) <= maximumDarkNodeLuminance) return null;
-  const mix = (channel: keyof Pick<RgbColor, "red" | "green" | "blue">) => Math.round(
-    color[channel] * darkNodeAuthoredColorWeight + darkSurface[channel] * (1 - darkNodeAuthoredColorWeight),
-  );
-  return `rgb(${mix("red")}, ${mix("green")}, ${mix("blue")})`;
-}
-
 function setTemporaryStyle(element: Element, property: string, value: string) {
   let original = originalInlineStyles.get(element);
   if (!original) {
@@ -96,7 +84,10 @@ export function ensureMermaidNodeTextContrast(svg: SVGSVGElement, darkMode = fal
   for (const node of svg.querySelectorAll<SVGGElement>("g.node")) {
     const shape = node.querySelector<SVGGraphicsElement>(":scope > rect, :scope > polygon, :scope > circle, :scope > ellipse, :scope > path");
     const labelElements = node.querySelectorAll<SVGElement | HTMLElement>(".label, .label text, .label tspan, .label span, .label div");
-    if (shape) restoreTemporaryStyle(shape, "fill");
+    if (shape) {
+      restoreTemporaryStyle(shape, "fill");
+      restoreTemporaryStyle(shape, "stroke-width");
+    }
     for (const element of labelElements) {
       restoreTemporaryStyle(element, "fill");
       restoreTemporaryStyle(element, "color");
@@ -104,11 +95,14 @@ export function ensureMermaidNodeTextContrast(svg: SVGSVGElement, darkMode = fal
     delete node.dataset.luminaThemeAdjusted;
     delete node.dataset.luminaContrastAdjusted;
     if (shape && darkMode) {
-      const replacementFill = darkMermaidNodeFill(getComputedStyle(shape).fill);
-      if (replacementFill) {
-        setTemporaryStyle(shape, "fill", replacementFill);
-        node.dataset.luminaThemeAdjusted = "true";
+      setTemporaryStyle(shape, "fill", "var(--surface)");
+      setTemporaryStyle(shape, "stroke-width", "2px");
+      for (const element of labelElements) {
+        setTemporaryStyle(element, "fill", "var(--ink)");
+        setTemporaryStyle(element, "color", "var(--ink)");
       }
+      node.dataset.luminaThemeAdjusted = "true";
+      continue;
     }
 
     const label = node.querySelector<SVGElement | HTMLElement>(".label .nodeLabel, .label text, .label tspan, .label span, .label div")

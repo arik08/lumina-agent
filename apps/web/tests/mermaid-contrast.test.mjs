@@ -7,7 +7,7 @@ const source = readFileSync(new URL("../src/mermaid-contrast.ts", import.meta.ur
 const javascript = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText;
-const { darkMermaidNodeFill, mermaidTextContrastRatio, readableMermaidTextColor } = await import(
+const { mermaidTextContrastRatio, readableMermaidTextColor } = await import(
   `data:text/javascript;base64,${Buffer.from(javascript).toString("base64")}`
 );
 
@@ -38,19 +38,11 @@ test("skips colors whose effective contrast cannot be safely resolved", () => {
   assert.equal(readableMermaidTextColor("rgba(0, 0, 0, 0.5)", "#ffffff"), null);
 });
 
-test("darkens bright authored Mermaid node fills while preserving their color family", () => {
-  const blue = darkMermaidNodeFill("#d7e9fb");
-  const green = darkMermaidNodeFill("#dff5e9");
-  assert.equal(blue, "rgb(94, 102, 112)");
-  assert.equal(green, "rgb(97, 107, 106)");
-  assert.ok(mermaidTextContrastRatio("#ffffff", blue) >= 4.5);
-  assert.ok(mermaidTextContrastRatio("#ffffff", green) >= 4.5);
-  assert.notEqual(blue, green);
-});
-
-test("keeps already-dark or non-solid Mermaid node fills unchanged", () => {
-  assert.equal(darkMermaidNodeFill("#26334d"), null);
-  assert.equal(darkMermaidNodeFill("url(#gradient)"), null);
+test("matches dark-theme node fills to the canvas while retaining a stronger authored border", () => {
+  assert.match(source, /setTemporaryStyle\(shape, "fill", "var\(--surface\)"\)/);
+  assert.match(source, /setTemporaryStyle\(shape, "stroke-width", "2px"\)/);
+  assert.match(source, /setTemporaryStyle\(element, "color", "var\(--ink\)"\)/);
+  assert.match(source, /restoreTemporaryStyle\(shape, "stroke-width"\)/);
 });
 
 test("samples the rendered Mermaid label leaf and applies both SVG and HTML text colors", () => {
