@@ -32,15 +32,26 @@ ARTIFACT_WRITE_TOOL_SCHEMA: dict[str, Any] = {
     "function": {
         "name": "write_file",
         "description": (
-            "Create a user-requested UTF-8 Artifact without writing to the user-managed "
-            "Project file repository. Use it for source code, executable HTML apps, demos, "
-            "and games."
+            "Create or revise a user-requested UTF-8 Artifact without writing to the "
+            "user-managed Project file repository. Use it for source code, executable HTML "
+            "apps, demos, and games. To revise a file listed in the recent Artifact context, "
+            "pass its exact destination_artifact_id so Lumina saves a new immutable version "
+            "of that Artifact instead of creating a duplicate."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "path": {"type": "string", "minLength": 1, "maxLength": 1000},
                 "content": {"type": "string"},
+                "destination_artifact_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "description": (
+                        "Exact ID from the recent Artifact context when revising an existing "
+                        "file. Omit only when the user requested a separate new file."
+                    ),
+                },
             },
             "required": ["path", "content"],
             "additionalProperties": False,
@@ -143,10 +154,14 @@ WORKSPACE_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
         "function": {
             "name": "create_skill",
             "description": (
-                "Create or revise a Lumina Skill Draft and persist its package in the "
+                "Create or immediately revise a Lumina Skill Working Draft and persist its "
+                "complete package in the "
                 "current Project workspace under extensions/skills/<slug>/. Use this "
                 "instead of .skills/, a generic file Artifact, or run_python when the user "
-                "asks to create a Skill."
+                "asks to create or modify a Skill. For a revision, read the current package "
+                "first and submit the complete updated package with the existing slug. The "
+                "updated Draft becomes the owner's active Skill revision for subsequent Runs; "
+                "do not create an Artifact version for a Skill change."
             ),
             "parameters": {
                 "type": "object",

@@ -180,9 +180,11 @@ def create_artifact_version(
     change_summary: str,
     source_version: ArtifactVersion | None = None,
     precomputed_validation: ArtifactValidation | None = None,
+    require_text_editable: bool = True,
 ) -> ArtifactVersion:
     artifact = require_artifact(db, user, artifact_id, write=True)
-    ensure_artifact_text_editable(artifact)
+    if require_text_editable:
+        ensure_artifact_text_editable(artifact)
     if artifact.current_version_number != base_version:
         raise ApiProblem(
             409,

@@ -58,6 +58,10 @@ def test_workspace_tool_schemas_and_risk_contract() -> None:
     assert "without writing to the user-managed Project file repository" in (
         ARTIFACT_WRITE_TOOL_SCHEMA["function"]["description"]
     )
+    assert "destination_artifact_id" in ARTIFACT_WRITE_TOOL_SCHEMA["function"][
+        "parameters"
+    ]["properties"]
+    assert "active Skill revision" in create_skill_schema["description"]
     assert classify_tool_risk("glob", approval_mode="on_risk").effect == "read_only"
     write_risk = classify_tool_risk("write_file", approval_mode="on_risk")
     assert write_risk.effect == "workspace_write"
@@ -247,7 +251,6 @@ def test_skill_workspace_writes_register_and_update_active_draft(
                 "extensions/skills/daily-standup-helper/SKILL.md",
                 "extensions/skills/daily-standup-helper/references/templates.md",
             }
-
         with SessionLocal() as db:
             extension = db.scalar(
                 select(Extension).where(Extension.slug == "daily-standup-helper")
@@ -558,6 +561,106 @@ def test_write_file_result_is_exposed_as_document_artifact(
     assert snapshot["artifactUsage"]["lines"] == 1
     assert snapshot["artifactUsage"]["estimated"] is False
     assert snapshot["artifactUsage"]["targetTokens"] == 10_000
+
+
+def test_follow_up_revises_recent_generated_file_as_same_artifact(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path)
+    target_ids: list[str] = []
+    requests = []
+
+    class RecordingProvider(MockProvider):
+        async def stream(self, request):
+            requests.append(request)
+            async for event in super().stream(request):
+                yield event
+
+    def provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        del wants_artifact
+        if first_turn and not target_ids:
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="write_file",
+                    arguments={
+                        "path": "ai_snake_optimizer.html",
+                        "content": "<script>const SPEED_MULTIPLIER = 5;</script>",
+                    },
+                    call_id="create-snake-html",
+                )
+            )
+        if first_turn:
+            return RecordingProvider(
+                tool_call=MockToolCall(
+                    name="write_file",
+                    arguments={
+                        "path": "ai_snake_optimizer.html",
+                        "content": "<script>const SPEED_MULTIPLIER = 25;</script>",
+                        "destination_artifact_id": target_ids[0],
+                    },
+                    call_id="revise-snake-html",
+                )
+            )
+        return MockProvider(text_chunks=("수정을 반영했습니다.",))
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    with TestClient(create_app(settings)) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers=headers,
+            json={"projectId": project_id, "title": "Artifact follow-up edit"},
+        ).json()
+
+        first = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={**headers, "Idempotency-Key": "create-snake-html-run"},
+            json={"message": {"text": "HTML 지렁이 게임을 만들어 주세요."}},
+        )
+        assert first.status_code == 202, first.text
+        first_snapshot = _wait_for_completed(client, first.json()["run"]["runId"])
+        target_ids.append(first_snapshot["artifacts"][0]["id"])
+
+        second = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={**headers, "Idempotency-Key": "revise-snake-html-run"},
+            json={"message": {"text": "느린데. 5배 더 빠르게. 네가 해."}},
+        )
+        assert second.status_code == 202, second.text
+        second_snapshot = _wait_for_completed(client, second.json()["run"]["runId"])
+
+        assert second_snapshot["toolExecutions"][0]["result"]["action"] == "updated"
+        assert second_snapshot["toolExecutions"][0]["artifactId"] == target_ids[0]
+        detail = client.get(f"/api/artifacts/{target_ids[0]}")
+        assert detail.status_code == 200
+        assert detail.json()["versions"] == [2, 1]
+        download = client.get(f"/api/artifacts/{target_ids[0]}/download?version=2")
+        assert download.status_code == 200
+        assert b"SPEED_MULTIPLIER = 25" in download.content
+
+    second_request = requests[0]
+    tool_names = {
+        schema.get("function", {}).get("name") for schema in second_request.tools
+    }
+    assert {"write_file", "create_report"} <= tool_names
+    prompt = "\n".join(message.content or "" for message in second_request.messages)
+    assert "<recent-artifact-index>" in prompt
+    assert target_ids[0] in prompt
+    assert "SPEED_MULTIPLIER = 5" in prompt
+
+
+def _wait_for_completed(client: TestClient, run_id: str) -> dict:
+    deadline = time.monotonic() + 5
+    snapshot = {}
+    while time.monotonic() < deadline:
+        snapshot = client.get(f"/api/runs/{run_id}/snapshot").json()
+        if snapshot.get("status") == "completed":
+            return snapshot
+        time.sleep(0.02)
+    return snapshot
 
 
 def test_write_file_allows_executable_html_and_exposes_html_artifact(

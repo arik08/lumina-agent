@@ -12,6 +12,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..attachments.extraction import extract_attachment_text
+
 from ..context import estimate_text_tokens
 from ..models import (
     Artifact,
@@ -482,10 +484,9 @@ def _resolve_source_document(
             document_id,
             name=artifact.display_name,
             source_kind=source_kind,
-            content_loader=lambda: artifact_storage.read_bytes(
-                artifact_version.storage_key,
-                expected_sha256=artifact_version.content_hash,
-            ).decode("utf-8", errors="replace"),
+            content_loader=lambda: _artifact_version_content(
+                artifact_storage, artifact, artifact_version
+            ),
         )
     raise ValueError("Source document type is unavailable for this Run.")
 
@@ -504,6 +505,20 @@ def _project_file_version_content(
     else:
         raise ValueError("Source document text extraction is unavailable.")
     return raw.decode("utf-8", errors="replace")
+
+
+def _artifact_version_content(
+    storage: ManagedStorage, artifact: Artifact, version: ArtifactVersion
+) -> str:
+    raw = storage.read_bytes(version.storage_key, expected_sha256=version.content_hash)
+    extracted = extract_attachment_text(
+        filename=artifact.display_name,
+        mime_type=artifact.mime_type,
+        content=raw,
+    )
+    if extracted.status != "completed":
+        raise ValueError("Artifact text extraction is unavailable.")
+    return extracted.text
 
 
 def _search_document(

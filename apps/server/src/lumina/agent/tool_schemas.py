@@ -319,6 +319,16 @@ _REPORT_TOOL_SCHEMA: dict[str, Any] = {
             ),
             "properties": {
                 "format": {"type": "string", "enum": list(REPORT_FORMATS)},
+                "destination_artifact_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "description": (
+                        "Exact ID from the recent Artifact context when revising an existing "
+                        "report. Lumina preserves the Artifact and stores this result as its "
+                        "next immutable version. Omit only for a separate new report."
+                    ),
+                },
                 "title": {
                     "type": "string",
                     "minLength": 1,

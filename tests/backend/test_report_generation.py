@@ -123,6 +123,9 @@ def test_create_report_schema_advertises_every_supported_format() -> None:
     report_description = _REPORT_TOOL_SCHEMA["function"]["description"]
     schema = _REPORT_TOOL_SCHEMA["function"]["parameters"]["properties"]["format"]
     assert schema["enum"] == list(REPORT_FORMATS)
+    assert "destination_artifact_id" in _REPORT_TOOL_SCHEMA["function"]["parameters"][
+        "properties"
+    ]
     title_description = _REPORT_TOOL_SCHEMA["function"]["parameters"]["properties"][
         "title"
     ]["description"]
@@ -512,6 +515,98 @@ def test_create_report_tool_persists_and_downloads_selected_format(
                 item["displayName"] == "광양_설비_점검_보고서_2.html"
                 for item in duplicate_snapshot["artifacts"]
             )
+
+
+def test_follow_up_revises_binary_report_as_same_artifact_version(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'docx-revision.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    target_ids: list[str] = []
+    requests = []
+
+    class RecordingProvider(MockProvider):
+        async def stream(self, request):
+            requests.append(request)
+            async for event in super().stream(request):
+                yield event
+
+    def provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        del wants_artifact
+        if first_turn and not target_ids:
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="create_report",
+                    arguments=_arguments("docx"),
+                    call_id="create-docx-for-revision",
+                )
+            )
+        if first_turn:
+            revised = _arguments("docx")
+            revised["sections"][0]["body"] = "이상 징후를 해소했습니다."
+            revised["destination_artifact_id"] = target_ids[0]
+            return RecordingProvider(
+                tool_call=MockToolCall(
+                    name="create_report",
+                    arguments=revised,
+                    call_id="revise-existing-docx",
+                )
+            )
+        return MockProvider(text_chunks=("기존 보고서를 수정했습니다.",))
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "DOCX follow-up revision"},
+        ).json()
+        first = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "create-docx-for-revision-run",
+            },
+            json={"message": {"text": "점검 결과를 DOCX 보고서로 만들어 주세요."}},
+        )
+        assert first.status_code == 202, first.text
+        first_snapshot = _wait_for_terminal(client, first.json()["run"]["runId"])
+        target_ids.append(first_snapshot["artifacts"][0]["id"])
+
+        second = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "revise-existing-docx-run",
+            },
+            json={"message": {"text": "이상 징후가 해소된 것으로 수정해 주세요."}},
+        )
+        assert second.status_code == 202, second.text
+        second_snapshot = _wait_for_terminal(client, second.json()["run"]["runId"])
+        assert second_snapshot["status"] == "completed"
+        assert second_snapshot["toolExecutions"][0]["artifactId"] == target_ids[0]
+
+        detail = client.get(f"/api/artifacts/{target_ids[0]}").json()
+        assert detail["versions"] == [2, 1]
+        download = client.get(f"/api/artifacts/{target_ids[0]}/download?version=2")
+        document = Document(BytesIO(download.content))
+        assert "이상 징후를 해소했습니다." in "\n".join(
+            paragraph.text for paragraph in document.paragraphs
+        )
+
+    prompt = "\n".join(message.content or "" for message in requests[0].messages)
+    assert target_ids[0] in prompt
+    assert "이상 징후 1건을 확인했습니다." in prompt
 
 
 def test_create_report_commit_failure_cleans_artifact_content(
