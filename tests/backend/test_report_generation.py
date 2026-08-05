@@ -126,6 +126,9 @@ def test_create_report_schema_advertises_every_supported_format() -> None:
     assert "destination_artifact_id" in _REPORT_TOOL_SCHEMA["function"]["parameters"][
         "properties"
     ]
+    assert "destination_base_version" in _REPORT_TOOL_SCHEMA["function"]["parameters"][
+        "properties"
+    ]
     title_description = _REPORT_TOOL_SCHEMA["function"]["parameters"]["properties"][
         "title"
     ]["description"]
@@ -553,6 +556,7 @@ def test_follow_up_revises_binary_report_as_same_artifact_version(
             revised = _arguments("docx")
             revised["sections"][0]["body"] = "이상 징후를 해소했습니다."
             revised["destination_artifact_id"] = target_ids[0]
+            revised["destination_base_version"] = 1
             return RecordingProvider(
                 tool_call=MockToolCall(
                     name="create_report",

@@ -17,6 +17,7 @@ from ..project_files.service import (
     create_project_file_version,
     get_project_file_version,
     normalize_logical_path,
+    soft_delete_project_file,
 )
 from ..storage import ManagedStorage
 
@@ -50,6 +51,15 @@ ARTIFACT_WRITE_TOOL_SCHEMA: dict[str, Any] = {
                     "description": (
                         "Exact ID from the recent Artifact context when revising an existing "
                         "file. Omit only when the user requested a separate new file."
+                    ),
+                },
+                "destination_base_version": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": (
+                        "Current version from the Artifact context. Required with "
+                        "destination_artifact_id so stale edits fail instead of overwriting a "
+                        "newer version."
                     ),
                 },
             },
@@ -480,8 +490,10 @@ def _create_workspace_skill(
     package_root = f"extensions/skills/{extension.slug}"
     written_files: list[dict[str, Any]] = []
     current_files = _current_files(db, run.project_id)
+    expected_paths: set[str] = set()
     for relative_path, content in sorted(draft.package_json.items()):
         logical_path = normalize_logical_path(f"{package_root}/{relative_path}")
+        expected_paths.add(logical_path.casefold())
         encoded = content.encode("utf-8")
         existing = next(
             (
@@ -533,6 +545,20 @@ def _create_workspace_skill(
             }
         )
 
+    removed_files: list[str] = []
+    package_prefix = f"{package_root}/".casefold()
+    for item in current_files:
+        logical_key = item.logical_path.casefold()
+        if logical_key.startswith(package_prefix) and logical_key not in expected_paths:
+            soft_delete_project_file(
+                db,
+                user=user,
+                project_id=run.project_id,
+                file_id=item.id,
+                expected_revision=item.revision,
+            )
+            removed_files.append(item.logical_path)
+
     record_audit(
         db,
         action=(
@@ -549,6 +575,7 @@ def _create_workspace_skill(
             "conversationId": run.conversation_id,
             "draftRevision": draft.current_revision,
             "packageRoot": package_root,
+            "removedFiles": removed_files,
         },
     )
     return {
@@ -561,6 +588,7 @@ def _create_workspace_skill(
         "changed": changed,
         "packageRoot": package_root,
         "files": written_files,
+        "removedFiles": removed_files,
     }
 
 

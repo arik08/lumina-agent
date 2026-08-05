@@ -26,6 +26,7 @@ from sqlalchemy import exists, func, or_, select, update
 from sqlalchemy.orm import Session, aliased, defer
 
 from ..api.errors import ApiProblem
+from ..audit import record_audit
 from ..artifact_citations import run_artifact_citation_texts
 from ..attachments.extraction import extract_attachment_text
 from ..artifacts.service import (
@@ -34,6 +35,7 @@ from ..artifacts.service import (
     create_artifact,
     create_artifact_version,
     current_artifact_version,
+    read_artifact_version,
     require_artifact,
     validate_artifact_content_async,
 )
@@ -70,8 +72,10 @@ from .tool_schemas import (
     _FILE_OUTPUT_INTENT_TOOL_SCHEMA,
     _MAX_USER_INPUT_QUESTIONS,
     _READ_TOOL_RESULT_TOOL_SCHEMA,
+    _RENAME_ARTIFACT_TOOL_SCHEMA,
     _REPORT_TOOL_SCHEMA as _REPORT_TOOL_SCHEMA,
     _REQUEST_USER_INPUT_TOOL_SCHEMA,
+    _RESTORE_ARTIFACT_VERSION_TOOL_SCHEMA,
     _UPDATE_PLAN_TOOL_SCHEMA,
     _WEB_FETCH_TOOL_SCHEMA,
     _WEB_SEARCH_TOOL_SCHEMA,
@@ -2051,6 +2055,10 @@ class LocalRunExecutor:
         artifact_tools_available = retry_step_key != "final" and output_mode != "chat" and (
             output_mode == "file" or artifact_required or recent_artifact_count > 0
         )
+        artifact_management_available = recent_artifact_count > 0 or any(
+            isinstance(reference, Mapping) and reference.get("kind") == "artifact"
+            for reference in run.snapshot_json.get("prompt_references", [])
+        )
         mcp_tools = await self.mcp_runtime.prepare_run(run_id)
         mcp_tools_by_name = {tool.provider_name: tool for tool in mcp_tools}
         skill_activation_schema = _skill_activation_tool_schema(run.snapshot_json)
@@ -2087,6 +2095,14 @@ class LocalRunExecutor:
                 else ()
             ),
             *((ARTIFACT_WRITE_TOOL_SCHEMA,) if artifact_tools_available else ()),
+            *(
+                (
+                    _RENAME_ARTIFACT_TOOL_SCHEMA,
+                    _RESTORE_ARTIFACT_VERSION_TOOL_SCHEMA,
+                )
+                if artifact_management_available
+                else ()
+            ),
             *((GENERATE_IMAGE_TOOL_SCHEMA,) if image_generation_capable else ()),
             *(
                 (PYTHON_CALCULATION_TOOL_SCHEMA,)
@@ -4892,6 +4908,8 @@ class LocalRunExecutor:
             "When the user asks to change, fix, speed up, restyle, translate, or otherwise "
             "revise a prior generated file without requesting a separate copy, update the "
             "matching Artifact by passing its exact artifactId as destination_artifact_id. "
+            "Also pass its current version as destination_base_version so a stale edit cannot "
+            "replace newer work. "
             "A vague reference such as 'it', 'that', or 'do it yourself' targets the most "
             "recent matching output when the conversation makes that target unambiguous. "
             "Preserve unaffected content and format, and never claim that file editing is "
@@ -5406,7 +5424,9 @@ class LocalRunExecutor:
                 "deliverable that matches the request before finishing; research and chat "
                 "prose alone do not complete it. If the request revises a file in the recent "
                 "Artifact context, pass its exact destination_artifact_id and create the next "
-                "version of that same Artifact instead of a duplicate. Use `write_file` for source code and "
+                "version of that same Artifact instead of a duplicate. Also pass its current "
+                "destination_base_version; if it changed, re-read the Artifact before retrying. "
+                "Use `write_file` for source code and "
                 "executable HTML apps, demos, simulations, or games so the requested filename "
                 "and JavaScript are preserved. For report requests, you must call `create_report`; "
                 "use it for report-style HTML, "
@@ -6633,10 +6653,169 @@ class LocalRunExecutor:
                 payload,
                 (
                     f"Skill {payload['slug']} Working Draft 수정을 완료했습니다."
-                    if isinstance(payload.get("revision"), int)
-                    and payload["revision"] > 1
+                    if isinstance((skill_revision := payload.get("revision")), int)
+                    and skill_revision > 1
                     else f"Skill {payload['slug']} 생성을 완료했습니다."
                 ),
+            )
+            return payload
+
+        if tool_call["name"] == "rename_artifact":
+            try:
+                artifact_id = str(arguments.get("artifact_id") or "").strip()
+                base_version = int(arguments.get("base_version") or 0)
+                requested_name = str(arguments.get("display_name") or "").strip()
+                normalized_name = Path(normalize_logical_path(requested_name)).name
+                with session_scope() as db:
+                    workspace_run = db.get(Run, run_id)
+                    workspace_user = (
+                        db.get(User, workspace_run.user_id)
+                        if workspace_run is not None
+                        else None
+                    )
+                    if workspace_run is None or workspace_user is None:
+                        raise RuntimeError(
+                            "Run context disappeared during Artifact rename"
+                        )
+                    self._require_execution_owner(workspace_run)
+                    artifact = require_artifact(db, workspace_user, artifact_id, write=True)
+                    if artifact.project_id != workspace_run.project_id:
+                        raise ApiProblem(
+                            404,
+                            "artifact_edit_target_not_found",
+                            "현재 Project에서 수정할 Artifact를 찾을 수 없습니다.",
+                        )
+                    if artifact.current_version_number != base_version:
+                        raise ApiProblem(
+                            409,
+                            "artifact_version_conflict",
+                            "Artifact가 다른 곳에서 변경되었습니다. 최신 버전을 확인해 주세요.",
+                            details={"currentVersion": artifact.current_version_number},
+                        )
+                    if Path(normalized_name).suffix.casefold() != Path(
+                        artifact.display_name
+                    ).suffix.casefold():
+                        raise ApiProblem(
+                            409,
+                            "artifact_format_conflict",
+                            "Artifact 이름을 바꿀 때 기존 파일 확장자를 유지해 주세요.",
+                        )
+                    previous_name = artifact.display_name
+                    artifact.display_name = normalized_name
+                    artifact.updated_at = utc_now()
+                    record_audit(
+                        db,
+                        action="artifact_renamed_by_agent",
+                        target_type="artifact",
+                        target_id=artifact.id,
+                        result="success",
+                        actor=workspace_user,
+                        metadata={
+                            "projectId": workspace_run.project_id,
+                            "conversationId": workspace_run.conversation_id,
+                            "baseVersion": base_version,
+                            "previousName": previous_name,
+                            "displayName": normalized_name,
+                        },
+                    )
+                    payload = {
+                        "artifact_id": artifact.id,
+                        "base_version": base_version,
+                        "display_name": artifact.display_name,
+                        "previous_name": previous_name,
+                    }
+            except (ApiProblem, TypeError, ValueError) as exc:
+                return await self._fail_tool_execution(run_id, tool_id, exc)
+            await self._complete_tool_execution(
+                run_id,
+                tool_id,
+                payload,
+                "Artifact 이름을 변경했습니다.",
+                artifact_id=str(payload["artifact_id"]),
+            )
+            return payload
+
+        if tool_call["name"] == "restore_artifact_version":
+            try:
+                artifact_id = str(arguments.get("artifact_id") or "").strip()
+                base_version = int(arguments.get("base_version") or 0)
+                source_version_number = int(arguments.get("source_version") or 0)
+                change_summary = str(arguments.get("change_summary") or "").strip()
+                with (
+                    cleanup_artifact_storage_on_error(self.storage) as storage_keys,
+                    session_scope() as db,
+                ):
+                    workspace_run = db.get(Run, run_id)
+                    workspace_user = (
+                        db.get(User, workspace_run.user_id)
+                        if workspace_run is not None
+                        else None
+                    )
+                    if workspace_run is None or workspace_user is None:
+                        raise RuntimeError(
+                            "Run context disappeared during Artifact restore"
+                        )
+                    self._require_execution_owner(workspace_run)
+                    artifact = require_artifact(db, workspace_user, artifact_id, write=True)
+                    if artifact.project_id != workspace_run.project_id:
+                        raise ApiProblem(
+                            404,
+                            "artifact_edit_target_not_found",
+                            "현재 Project에서 수정할 Artifact를 찾을 수 없습니다.",
+                        )
+                    _artifact, source_version, content = read_artifact_version(
+                        db,
+                        self.storage,
+                        user=workspace_user,
+                        artifact_id=artifact.id,
+                        version_number=source_version_number,
+                    )
+                    version = create_artifact_version(
+                        db,
+                        self.storage,
+                        user=workspace_user,
+                        artifact_id=artifact.id,
+                        base_version=base_version,
+                        content=content,
+                        change_type="restore",
+                        change_summary=(
+                            change_summary
+                            or f"v{source_version.version_number} 버전에서 복원"
+                        ),
+                        source_version=source_version,
+                    )
+                    storage_keys.append(version.storage_key)
+                    record_audit(
+                        db,
+                        action="artifact_version_restored_by_agent",
+                        target_type="artifact",
+                        target_id=artifact.id,
+                        result="success",
+                        actor=workspace_user,
+                        metadata={
+                            "projectId": workspace_run.project_id,
+                            "conversationId": workspace_run.conversation_id,
+                            "baseVersion": base_version,
+                            "sourceVersion": source_version.version_number,
+                            "version": version.version_number,
+                        },
+                    )
+                    payload = {
+                        "artifact_id": artifact.id,
+                        "artifact_version": version.version_number,
+                        "source_version": source_version.version_number,
+                        "content_hash": version.content_hash,
+                        "validation_status": version.validation_status,
+                        "validation": version.validation_json,
+                    }
+            except (ApiProblem, OSError, TypeError, ValueError) as exc:
+                return await self._fail_tool_execution(run_id, tool_id, exc)
+            await self._complete_tool_execution(
+                run_id,
+                tool_id,
+                payload,
+                "이전 Artifact 버전을 새 버전으로 복원했습니다.",
+                artifact_id=str(payload["artifact_id"]),
             )
             return payload
 
@@ -6647,6 +6826,9 @@ class LocalRunExecutor:
                 destination_artifact_id = str(
                     arguments.get("destination_artifact_id") or ""
                 ).strip()
+                destination_base_version = int(
+                    arguments.get("destination_base_version") or 0
+                )
                 content_text = str(arguments.get("content", ""))
                 content = content_text.encode("utf-8")
                 if len(content) > self.settings.max_upload_bytes:
@@ -6686,13 +6868,16 @@ class LocalRunExecutor:
                         )
                     self._require_execution_owner(workspace_run)
                     if destination_artifact_id:
+                        if destination_base_version < 1:
+                            raise ApiProblem(
+                                400,
+                                "artifact_base_version_required",
+                                "기존 Artifact 수정에는 기준 버전이 필요합니다.",
+                            )
                         artifact = require_artifact(
                             db, workspace_user, destination_artifact_id, write=True
                         )
-                        if (
-                            artifact.project_id != workspace_run.project_id
-                            or artifact.conversation_id != workspace_run.conversation_id
-                        ):
+                        if artifact.project_id != workspace_run.project_id:
                             raise ApiProblem(
                                 404,
                                 "artifact_edit_target_not_found",
@@ -6710,7 +6895,7 @@ class LocalRunExecutor:
                             self.storage,
                             user=workspace_user,
                             artifact_id=artifact.id,
-                            base_version=artifact.current_version_number or 0,
+                            base_version=destination_base_version,
                             content=content,
                             change_type="agent_edited",
                             precomputed_validation=precomputed_validation,
@@ -6743,6 +6928,8 @@ class LocalRunExecutor:
                         "sizeBytes": version.size_bytes,
                         "artifact_id": artifact.id,
                         "artifact_version": version.version_number,
+                        "validation_status": version.validation_status,
+                        "validation": version.validation_json,
                     }
                     artifact_id = artifact.id
                     artifact_usage: dict[str, Any] = {
@@ -6828,6 +7015,9 @@ class LocalRunExecutor:
                 destination_artifact_id = str(
                     arguments.get("destination_artifact_id") or ""
                 ).strip()
+                destination_base_version = int(
+                    arguments.get("destination_base_version") or 0
+                )
                 if (
                     revision_artifact_id
                     and destination_artifact_id
@@ -6837,20 +7027,29 @@ class LocalRunExecutor:
                         "The report revision target changed during the active edit."
                     )
                 target_artifact_id = revision_artifact_id or destination_artifact_id
+                if destination_artifact_id and destination_base_version < 1:
+                    raise ApiProblem(
+                        400,
+                        "artifact_base_version_required",
+                        "기존 Artifact 수정에는 기준 버전이 필요합니다.",
+                    )
                 target_artifact = (
                     require_artifact(db, report_user, target_artifact_id, write=True)
                     if target_artifact_id
                     else None
                 )
-                if target_artifact is not None and (
-                    target_artifact.project_id != report_run.project_id
-                    or target_artifact.conversation_id != report_run.conversation_id
+                if (
+                    target_artifact is not None
+                    and target_artifact.project_id != report_run.project_id
                 ):
                     raise ApiProblem(
                         404,
                         "artifact_edit_target_not_found",
-                        "현재 대화에서 수정할 Artifact를 찾을 수 없습니다.",
+                        "현재 Project에서 수정할 Artifact를 찾을 수 없습니다.",
                     )
+                target_base_version = (
+                    destination_base_version if target_artifact is not None else 0
+                )
                 report_images = (
                     ()
                     if revision_artifact_id or reject_unexpected_html
@@ -7029,7 +7228,7 @@ class LocalRunExecutor:
                         self.storage,
                         user=user,
                         artifact_id=artifact.id,
-                        base_version=artifact.current_version_number or 0,
+                        base_version=target_base_version,
                         content=report.content,
                         change_type="agent_edited",
                         change_summary="선택한 목표 분량에 맞게 기존 보고서를 보강",
@@ -7148,7 +7347,7 @@ class LocalRunExecutor:
                     self.storage,
                     user=user,
                     artifact_id=artifact.id,
-                    base_version=artifact.current_version_number or 0,
+                    base_version=target_base_version,
                     content=report.content,
                     change_type="agent_edited",
                     change_summary=(

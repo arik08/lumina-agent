@@ -61,6 +61,9 @@ def test_workspace_tool_schemas_and_risk_contract() -> None:
     assert "destination_artifact_id" in ARTIFACT_WRITE_TOOL_SCHEMA["function"][
         "parameters"
     ]["properties"]
+    assert "destination_base_version" in ARTIFACT_WRITE_TOOL_SCHEMA["function"][
+        "parameters"
+    ]["properties"]
     assert "active Skill revision" in create_skill_schema["description"]
     assert classify_tool_risk("glob", approval_mode="on_risk").effect == "read_only"
     write_risk = classify_tool_risk("write_file", approval_mode="on_risk")
@@ -498,6 +501,79 @@ def test_create_skill_tool_persists_package_in_extensions_workspace(
             assert draft.package_json["agents/openai.yaml"].startswith("interface:\n")
 
 
+def test_create_skill_revision_removes_omitted_workspace_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path)
+    calls = 0
+
+    def provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        nonlocal calls
+        del wants_artifact
+        if not first_turn:
+            return MockProvider(text_chunks=("Skill 수정을 완료했습니다.",))
+        calls += 1
+        files = {"SKILL.md": "---\nname: cleanup-skill\ndescription: cleanup\n---\n"}
+        if calls == 1:
+            files["references/old.md"] = "remove me"
+        return MockProvider(
+            tool_call=MockToolCall(
+                name="create_skill",
+                arguments={
+                    "slug": "cleanup-skill",
+                    "name": "cleanup-skill",
+                    "description": "Skill package cleanup",
+                    "files": files,
+                },
+                call_id=f"cleanup-skill-{calls}",
+            )
+        )
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    with TestClient(create_app(settings)) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers=headers,
+            json={"projectId": project_id, "title": "Skill cleanup"},
+        ).json()
+        for index in (1, 2):
+            started = client.post(
+                f"/api/conversations/{conversation['id']}/runs",
+                headers={**headers, "Idempotency-Key": f"cleanup-skill-run-{index}"},
+                json={"message": {"text": "기존 cleanup-skill을 수정해 주세요."}},
+            )
+            assert started.status_code == 202, started.text
+            snapshot = _wait_for_completed(client, started.json()["run"]["runId"])
+            assert snapshot["status"] == "completed"
+
+        assert snapshot["toolExecutions"][0]["result"]["removedFiles"] == [
+            "extensions/skills/cleanup-skill/references/old.md"
+        ]
+        with SessionLocal() as db:
+            active_paths = set(
+                db.scalars(
+                    select(ProjectFile.logical_path).where(
+                        ProjectFile.project_id == project_id,
+                        ProjectFile.deleted_at.is_(None),
+                    )
+                )
+            )
+            assert active_paths == {"extensions/skills/cleanup-skill/SKILL.md"}
+            extension = db.scalar(
+                select(Extension).where(Extension.slug == "cleanup-skill")
+            )
+            assert extension is not None
+            draft = db.scalar(
+                select(ExtensionDraft).where(ExtensionDraft.extension_id == extension.id)
+            )
+            assert draft is not None
+            assert set(draft.package_json) == {"SKILL.md"}
+
+
 def test_write_file_result_is_exposed_as_document_artifact(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -599,6 +675,7 @@ def test_follow_up_revises_recent_generated_file_as_same_artifact(
                         "path": "ai_snake_optimizer.html",
                         "content": "<script>const SPEED_MULTIPLIER = 25;</script>",
                         "destination_artifact_id": target_ids[0],
+                        "destination_base_version": 1,
                     },
                     call_id="revise-snake-html",
                 )
@@ -633,6 +710,7 @@ def test_follow_up_revises_recent_generated_file_as_same_artifact(
         second_snapshot = _wait_for_completed(client, second.json()["run"]["runId"])
 
         assert second_snapshot["toolExecutions"][0]["result"]["action"] == "updated"
+        assert second_snapshot["toolExecutions"][0]["result"]["validation_status"]
         assert second_snapshot["toolExecutions"][0]["artifactId"] == target_ids[0]
         detail = client.get(f"/api/artifacts/{target_ids[0]}")
         assert detail.status_code == 200
@@ -650,6 +728,128 @@ def test_follow_up_revises_recent_generated_file_as_same_artifact(
     assert "<recent-artifact-index>" in prompt
     assert target_ids[0] in prompt
     assert "SPEED_MULTIPLIER = 5" in prompt
+
+
+def test_artifact_management_tools_rename_and_restore_without_regeneration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path)
+    first_turn_count = 0
+    artifact_ids: list[str] = []
+
+    def provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        nonlocal first_turn_count
+        del wants_artifact
+        if not first_turn:
+            return MockProvider(text_chunks=("요청한 Artifact 작업을 완료했습니다.",))
+        first_turn_count += 1
+        if first_turn_count == 1:
+            tool_call = MockToolCall(
+                name="write_file",
+                arguments={"path": "before.md", "content": "version one"},
+                call_id="artifact-create",
+            )
+        elif first_turn_count == 2:
+            tool_call = MockToolCall(
+                name="write_file",
+                arguments={
+                    "path": "before.md",
+                    "content": "version two",
+                    "destination_artifact_id": artifact_ids[0],
+                    "destination_base_version": 1,
+                },
+                call_id="artifact-edit",
+            )
+        elif first_turn_count == 3:
+            tool_call = MockToolCall(
+                name="rename_artifact",
+                arguments={
+                    "artifact_id": artifact_ids[0],
+                    "base_version": 2,
+                    "display_name": "after.md",
+                },
+                call_id="artifact-rename",
+            )
+        elif first_turn_count == 4:
+            tool_call = MockToolCall(
+                name="restore_artifact_version",
+                arguments={
+                    "artifact_id": artifact_ids[0],
+                    "base_version": 2,
+                    "source_version": 1,
+                },
+                call_id="artifact-restore",
+            )
+        else:
+            tool_call = MockToolCall(
+                name="write_file",
+                arguments={
+                    "path": "after.md",
+                    "content": "stale replacement",
+                    "destination_artifact_id": artifact_ids[0],
+                    "destination_base_version": 2,
+                },
+                call_id="artifact-stale-edit",
+            )
+        return MockProvider(tool_call=tool_call)
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    with TestClient(create_app(settings)) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        origin_conversation = client.post(
+            "/api/conversations",
+            headers=headers,
+            json={"projectId": project_id, "title": "Artifact origin"},
+        ).json()
+        editing_conversation = client.post(
+            "/api/conversations",
+            headers=headers,
+            json={"projectId": project_id, "title": "Artifact editing"},
+        ).json()
+        prompts = (
+            "Markdown 파일을 만들어 주세요.",
+            "방금 만든 Artifact 내용을 수정해 주세요.",
+            "방금 Artifact 이름을 after.md로 바꿔 주세요.",
+            "방금 Artifact를 v1 내용으로 복원해 주세요.",
+            "오래된 v2 기준 내용으로 덮어써 주세요.",
+        )
+        for index, prompt in enumerate(prompts, 1):
+            conversation = origin_conversation if index == 1 else editing_conversation
+            message: dict[str, object] = {"text": prompt}
+            if artifact_ids:
+                message["promptReferences"] = [
+                    {
+                        "kind": "artifact",
+                        "referenceId": artifact_ids[0],
+                        "versionOrDigest": str(1 if index == 2 else 2),
+                    }
+                ]
+            started = client.post(
+                f"/api/conversations/{conversation['id']}/runs",
+                headers={**headers, "Idempotency-Key": f"artifact-management-{index}"},
+                json={"message": message},
+            )
+            assert started.status_code == 202, started.text
+            snapshot = _wait_for_completed(client, started.json()["run"]["runId"])
+            assert snapshot["status"] == "completed"
+            if index == 1:
+                artifact_ids.append(snapshot["artifacts"][0]["id"])
+            if index == 5:
+                stale_execution = snapshot["toolExecutions"][0]
+                assert stale_execution["status"] == "failed"
+                assert "최신 버전" in stale_execution["error"]
+
+        detail = client.get(f"/api/artifacts/{artifact_ids[0]}")
+        assert detail.status_code == 200
+        assert detail.json()["displayName"] == "after.md"
+        assert detail.json()["versions"] == [3, 2, 1]
+        restored = client.get(
+            f"/api/artifacts/{artifact_ids[0]}/download?version=3"
+        )
+        assert restored.content == b"version one"
 
 
 def _wait_for_completed(client: TestClient, run_id: str) -> dict:

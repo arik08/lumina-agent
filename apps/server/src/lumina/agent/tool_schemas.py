@@ -159,6 +159,52 @@ _UPDATE_PLAN_TOOL_SCHEMA = {
 }
 
 
+_RENAME_ARTIFACT_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "rename_artifact",
+        "description": (
+            "Rename an existing Artifact without regenerating its content. Use the exact "
+            "Artifact ID and current base version from the Artifact context. Keep the existing "
+            "file extension."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "artifact_id": {"type": "string", "minLength": 1, "maxLength": 64},
+                "base_version": {"type": "integer", "minimum": 1},
+                "display_name": {"type": "string", "minLength": 1, "maxLength": 255},
+            },
+            "required": ["artifact_id", "base_version", "display_name"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+_RESTORE_ARTIFACT_VERSION_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "restore_artifact_version",
+        "description": (
+            "Restore an earlier editable Artifact version as a new immutable version. Use the "
+            "exact Artifact ID, its current base version, and the source version to restore."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "artifact_id": {"type": "string", "minLength": 1, "maxLength": 64},
+                "base_version": {"type": "integer", "minimum": 1},
+                "source_version": {"type": "integer", "minimum": 1},
+                "change_summary": {"type": "string", "maxLength": 500},
+            },
+            "required": ["artifact_id", "base_version", "source_version"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
 _REQUEST_USER_INPUT_TOOL_SCHEMA = {
     "type": "function",
     "function": {
@@ -327,6 +373,15 @@ _REPORT_TOOL_SCHEMA: dict[str, Any] = {
                         "Exact ID from the recent Artifact context when revising an existing "
                         "report. Lumina preserves the Artifact and stores this result as its "
                         "next immutable version. Omit only for a separate new report."
+                    ),
+                },
+                "destination_base_version": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": (
+                        "Current version from the Artifact context. Required with "
+                        "destination_artifact_id so stale edits fail instead of overwriting a "
+                        "newer version."
                     ),
                 },
                 "title": {
