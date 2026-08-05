@@ -137,8 +137,11 @@ def test_codex_runtime_profiles_are_derived_from_reviewed_openai_models() -> Non
     assert codex_profile.token_pricing == openai_profile.token_pricing
 
     for model in initial_model_catalog("codex")[:3]:
+        assert model.capabilities.max_input_tokens == 922_000
+        assert model.capabilities.max_output_tokens == 128_000
         assert model.capabilities.context_capacity_mode == "standard"
         assert model.capabilities.maximum_context_window == 1_050_000
+        assert model.capabilities.maximum_input_tokens == 922_000
         assert model.capabilities.maximum_context_compaction_threshold == 0.85
         assert model.capabilities.standard_context_compaction_reserve_tokens == 778_000
 

@@ -222,7 +222,7 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         "last_warm_input_tokens",
         "last_warm_cached_tokens",
     } <= prompt_cache_seed_columns
-    assert revision == "0074"
+    assert revision == "0075"
     assert "ix_run_events_run_type" in run_event_indexes
     assert "ix_run_events_replay" not in run_event_indexes
     assert "ix_deep_analysis_events_replay" not in deep_analysis_event_indexes
@@ -482,6 +482,61 @@ def test_migration_0074_adds_codex_56_context_modes(tmp_path: Path) -> None:
     )
 
 
+def test_migration_0075_adds_codex_56_token_limits(tmp_path: Path) -> None:
+    database = tmp_path / "codex-56-token-limits.db"
+    database_url = f"sqlite:///{database.as_posix()}"
+    upgrade_database(database_url, "0074")
+
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO provider_models "
+                    "(provider_id, model_key, display_name, runtime_model_id, "
+                    "aliases_json, enabled, is_default, sort_order, capabilities_json, "
+                    "source, catalog_revision, verified_at, id, created_at, updated_at) "
+                    "VALUES ('codex', 'gpt-5.6-sol', 'GPT-5.6-Sol', 'gpt-5.6-sol', "
+                    "'[]', 1, 0, 10, :capabilities, "
+                    "'product_contract:user', '2026-08-06.1-codex-5.6-context-modes', "
+                    "'2026-08-06T00:00:00+00:00', 'codex-gpt-56-sol-limits', "
+                    "'2026-08-06T00:00:00+00:00', '2026-08-06T00:00:00+00:00')"
+                ),
+                {
+                    "capabilities": (
+                        '{"context_window":1050000,'
+                        '"context_capacity_mode":"standard"}'
+                    )
+                },
+            )
+    finally:
+        engine.dispose()
+
+    upgrade_database(database_url, "0075")
+
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    "SELECT json_extract(capabilities_json, '$.max_input_tokens'), "
+                    "json_extract(capabilities_json, '$.max_output_tokens'), "
+                    "json_extract(capabilities_json, '$.maximum_input_tokens'), "
+                    "catalog_revision FROM provider_models "
+                    "WHERE provider_id = 'codex' AND model_key = 'gpt-5.6-sol'"
+                )
+            ).one()
+    finally:
+        engine.dispose()
+
+    assert row == (
+        922_000,
+        128_000,
+        922_000,
+        "2026-08-06.2-codex-5.6-token-limits",
+    )
+
+
 def test_message_search_fts_migration_0056_round_trip(tmp_path: Path) -> None:
     database = tmp_path / "message-fts-round-trip.db"
     database_url = f"sqlite:///{database.as_posix()}"
@@ -738,7 +793,7 @@ def test_context_migration_adopts_legacy_create_all_table(tmp_path: Path) -> Non
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0074"
+                MigrationContext.configure(connection).get_current_revision() == "0075"
             )
     finally:
         engine.dispose()
@@ -768,7 +823,7 @@ def test_recent_migrations_adopt_tables_precreated_by_runtime_schema(
     try:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-        assert revision == "0074"
+        assert revision == "0075"
     finally:
         engine.dispose()
 

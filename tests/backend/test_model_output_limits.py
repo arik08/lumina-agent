@@ -126,6 +126,8 @@ def test_codex_gpt56_maximum_mode_compacts_at_eighty_five_percent() -> None:
                     "context_window": 1_050_000,
                     "context_capacity_mode": "maximum",
                     "context_compaction_threshold": 0.85,
+                    "max_input_tokens": 922_000,
+                    "max_output_tokens": 128_000,
                     "standard_context_compaction_reserve_tokens": 778_000,
                 }
             }
@@ -138,8 +140,8 @@ def test_codex_gpt56_maximum_mode_compacts_at_eighty_five_percent() -> None:
     context_window, effective_input_budget = _context_budget(run, ())
 
     assert context_window == 1_050_000
-    assert effective_input_budget == 1_041_808
-    assert _compaction_threshold(run, effective_input_budget) == 885_536
+    assert effective_input_budget == 917_904
+    assert _compaction_threshold(run, effective_input_budget) == 780_218
 
 
 def test_context_budget_honors_measured_input_limit() -> None:

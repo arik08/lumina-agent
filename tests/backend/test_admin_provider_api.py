@@ -255,8 +255,11 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         assert codex_gpt_56["defaultContextUsageRatio"] == 1.0
         assert codex_gpt_56["contextCapacityMode"] == "standard"
         assert codex_gpt_56["maximumContextWindow"] == 1_050_000
+        assert codex_gpt_56["maximumInputTokens"] == 922_000
         assert codex_gpt_56["maximumContextUsageRatio"] == 0.85
         assert codex_gpt_56["standardContextReserveTokens"] == 778_000
+        assert codex_gpt_56["maxInputTokens"] == 922_000
+        assert codex_gpt_56["maxOutputTokens"] == 128_000
 
         codex_gpt_56_maximum = client.patch(
             "/api/admin/providers/codex/models/gpt-5.6-sol",
@@ -266,7 +269,7 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
                     **codex_gpt_56["capabilities"],
                     "context_capacity_mode": "maximum",
                     "context_window": 1_050_000,
-                    "max_input_tokens": None,
+                    "max_input_tokens": 922_000,
                     "context_compaction_threshold": 0.85,
                     "standard_context_compaction_reserve_tokens": 778_000,
                 }
