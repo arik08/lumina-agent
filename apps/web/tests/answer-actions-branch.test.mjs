@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const turnSource = await readFile(new URL("../src/components/ConversationTurn.tsx", import.meta.url), "utf8");
+const stylesheet = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
 const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
 const workspaceSource = await readFile(new URL("../src/use-lumina-workspace.ts", import.meta.url), "utf8");
 const actionIconsSource = await readFile(new URL("../src/components/ActionIcons.tsx", import.meta.url), "utf8");
@@ -19,6 +20,14 @@ test("answer actions place usage first and branch immediately before share", () 
   assert.ok(usageIndex >= 0 && usageIndex < copyIndex, "usage control should be the leftmost answer action");
   assert.ok(branchIndex >= 0 && branchIndex < shareIndex, "branch should be immediately before share");
   assert.match(actions.slice(branchIndex, shareIndex), /BranchFromHereIcon size=\{16\}/);
+});
+
+test("answer actions and completion time stay quiet until the metadata row is engaged", () => {
+  assert.match(stylesheet, /\.answer-actions button \{[^}]*color: var\(--faint\);[^}]*transition: color 160ms/s);
+  assert.match(stylesheet, /\.answer-completed-time \{[^}]*color: var\(--faint\);[^}]*transition: color 160ms/s);
+  assert.match(stylesheet, /\.final-answer-meta:where\(:hover, :focus-within\) \.answer-actions button \{ color: var\(--muted\); \}/);
+  assert.match(stylesheet, /\.final-answer-meta:where\(:hover, :focus-within\) \.answer-completed-time \{ color: var\(--muted\); \}/);
+  assert.match(stylesheet, /\.answer-actions button:hover \{[^}]*color: var\(--ink\);/s);
 });
 
 test("branch icon uses the attached split-arrow shape and every share action uses the rotated shared icon", () => {
