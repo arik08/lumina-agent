@@ -23,8 +23,9 @@ test("answer actions place usage first and branch immediately before share", () 
 });
 
 test("answer actions and completion time stay quiet until the metadata row is engaged", () => {
-  assert.match(stylesheet, /\.answer-actions button \{[^}]*color: var\(--faint\);[^}]*transition: color 160ms/s);
-  assert.match(stylesheet, /\.answer-completed-time \{[^}]*color: var\(--faint\);[^}]*transition: color 160ms/s);
+  assert.match(stylesheet, /\.final-answer-meta \{[^}]*--answer-meta-idle-color: color-mix\(in srgb, var\(--faint\) 55%, transparent\);/s);
+  assert.match(stylesheet, /\.answer-actions button \{[^}]*color: var\(--answer-meta-idle-color\);[^}]*transition: color 160ms/s);
+  assert.match(stylesheet, /\.answer-completed-time \{[^}]*color: var\(--answer-meta-idle-color\);[^}]*transition: color 160ms/s);
   assert.match(stylesheet, /\.final-answer-meta:where\(:hover, :focus-within\) \.answer-actions button \{ color: var\(--muted\); \}/);
   assert.match(stylesheet, /\.final-answer-meta:where\(:hover, :focus-within\) \.answer-completed-time \{ color: var\(--muted\); \}/);
   assert.match(stylesheet, /\.answer-actions button:hover \{[^}]*color: var\(--ink\);/s);
