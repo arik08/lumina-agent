@@ -14,6 +14,12 @@ export interface TimedExecution {
   completedAt: string | null;
 }
 
+export function formatDuration(durationMs: number | null, running = false) {
+  if (durationMs === null) return "—";
+  const displayedDurationMs = running ? Math.floor(durationMs / 1_000) * 1_000 : durationMs;
+  return `${(displayedDurationMs / 1_000).toFixed(2)}초`;
+}
+
 export function progressStageTimingById(
   stages: ProgressStageBoundary[],
   timelineStartedAtMs: number,

@@ -90,6 +90,7 @@ import { sanitizeAssistantResponse } from "../assistant-response";
 import { GlobalTooltipLayer } from "./GlobalTooltip";
 import { formatModelExchangeValue } from "../model-exchange-format";
 import {
+  formatDuration,
   mergedToolActiveDurationMs,
   progressStageTimingById,
 } from "../run-activity-duration";
@@ -168,11 +169,6 @@ function toolCallIcon(toolName: string, size = 15) {
   if (normalizedName.includes("report")) return <FileCode2 className="tool-kind-icon is-report" size={size} aria-hidden="true" />;
   if (normalizedName === "generate_image") return <ImageIcon className="tool-kind-icon is-image" size={size} aria-hidden="true" />;
   return <FileText className="tool-kind-icon" size={size} aria-hidden="true" />;
-}
-
-function formatDuration(durationMs: number | null) {
-  if (durationMs === null) return "—";
-  return `${(durationMs / 1000).toFixed(2)}초`;
 }
 
 function formatWorkDuration(durationMs: number) {
@@ -690,7 +686,7 @@ function ToolCallRow({
         </span>
         <span className="tool-call-detail" data-tooltip={headerDetail ?? undefined}>{headerDetail}</span>
         <span className={`tool-call-status status-${running ? "running" : complete ? "complete" : "warning"}`}>{stoppedByRun ? (runOutcome === "failed" ? "실패" : "중지됨") : toolStatusLabel(execution.status)}</span>
-        <span className="tool-call-duration" data-tooltip={execution.toolName === "write_file" ? "파일 내용 생성 시작부터 디스크 저장 완료까지의 시간" : "도구 실행 시간"}>{formatDuration(liveDurationMs)}</span>
+        <span className="tool-call-duration" data-tooltip={execution.toolName === "write_file" ? "파일 내용 생성 시작부터 디스크 저장 완료까지의 시간" : "도구 실행 시간"}>{formatDuration(liveDurationMs, running)}</span>
         {isOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
       </button>
       {writeFileActive && execution.progress && (
@@ -716,7 +712,7 @@ function ToolCallRow({
             <SyntaxCode value={toolDetailText.requestText} language={execution.input ? "json" : "plaintext"} />
           </section>
           <section className="tool-message-section">
-            <div className="tool-message-heading"><span>도구 결과</span><span className="tool-message-state">{stoppedByRun ? (runOutcome === "failed" ? "실패" : "중지됨") : toolStatusLabel(execution.status)} · {formatDuration(liveDurationMs)}</span></div>
+            <div className="tool-message-heading"><span>도구 결과</span><span className="tool-message-state">{stoppedByRun ? (runOutcome === "failed" ? "실패" : "중지됨") : toolStatusLabel(execution.status)} · {formatDuration(liveDurationMs, running)}</span></div>
             <SyntaxCode value={toolDetailText.resultText} language={execution.result ? "json" : "plaintext"} />
           </section>
         </div>,
@@ -784,7 +780,7 @@ function ModelProcessingRow({ durationMs, state, sent, received, model, provider
         </span>
         <span className="tool-call-detail">{awaitingInput ? "확인 질문 · 사용자 답변 대기" : state === "stopped" ? "사용자 요청으로 모델 처리를 중지했습니다." : `모델 판단 · 내부 실행 합계${reasoningTokens === undefined ? "" : ` · 내부 추론 ${reasoningTokens.toLocaleString()} 토큰`}`}</span>
         <span className={`tool-call-status status-${running ? "running" : state === "completed" ? "complete" : "warning"}`}>{statusLabel}</span>
-        <span className="tool-call-duration" data-tooltip="여러 모델 호출과 Skill·계획 처리, 재시도 시간을 합산한 값(외부 도구 실행 제외)">{formatDuration(durationMs)}</span>
+        <span className="tool-call-duration" data-tooltip="여러 모델 호출과 Skill·계획 처리, 재시도 시간을 합산한 값(외부 도구 실행 제외)">{formatDuration(durationMs, running)}</span>
         {isOpen ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
       </button>
       {isOpen && (
@@ -1139,6 +1135,9 @@ function RunActivityTimeline({
         const toolGroupDurationMs = stageTiming && toolActivities.some((activity) => activity.execution.startedAt)
           ? toolActiveDurationMs
           : toolCallGroupDuration(toolActivities);
+        const toolGroupRunning = timelineRunning && toolActivities.some((activity) =>
+          ["queued", "running", "streaming"].includes(activity.execution.status),
+        );
         const toolGroupId = summary ? `progress-tools-${summary.id}` : undefined;
         const toggleTools = (event: ReactMouseEvent<HTMLButtonElement>) => {
           preserveConversationScrollPosition(event.currentTarget, () => {
@@ -1190,12 +1189,12 @@ function RunActivityTimeline({
                 <div className="tool-call-group-summary">
                   {toolCallIcon(toolActivities[0].execution.toolName, 14)}
                   <span>{toolCallGroupSummary(toolActivities)}</span>
-                  <span className="tool-call-group-duration" data-tooltip="도구 실행 시간">{formatDuration(toolGroupDurationMs)}</span>
+                  <span className="tool-call-group-duration" data-tooltip="도구 실행 시간">{formatDuration(toolGroupDurationMs, toolGroupRunning)}</span>
                   {toolsOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
                 </div>
               </button>
             ) : (
-              <div className={`progress-summary phase-${summary.phase}`}><div className="progress-summary-text"><span>{summary.text}</span>{showStageDuration && <span className="progress-summary-duration" data-tooltip="단계 전체 소요 시간">{formatDuration(stageDurationMs)}</span>}</div></div>
+              <div className={`progress-summary phase-${summary.phase}`}><div className="progress-summary-text"><span>{summary.text}</span>{showStageDuration && <span className="progress-summary-duration" data-tooltip="단계 전체 소요 시간">{formatDuration(stageDurationMs, modelProcessingRunning)}</span>}</div></div>
             ))}
             {toolsOpen && summary && (
               <div className={`progress-tools ${summary && collapsingSummaryIds.has(summary.id) ? "is-collapsing" : ""}`} id={toolGroupId}>

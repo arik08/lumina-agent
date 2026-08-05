@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { mergedToolActiveDurationMs, progressStageDurationById } from "../src/run-activity-duration.ts";
+import { formatDuration, mergedToolActiveDurationMs, progressStageDurationById } from "../src/run-activity-duration.ts";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
@@ -27,6 +27,12 @@ test("stage durations cover the complete run instead of only tool execution time
   assert.equal(durations.get("seven"), finishedAtMs - Date.parse(stages[6].createdAt));
 });
 
+test("live durations keep zeroed decimals while completed durations keep measured precision", () => {
+  assert.equal(formatDuration(13_140, true), "13.00초");
+  assert.equal(formatDuration(13_140), "13.14초");
+  assert.equal(formatDuration(null, true), "—");
+});
+
 test("an invalid run start falls back to the first persisted stage timestamp", () => {
   const stages = [
     { id: "one", createdAt: "2026-07-12T15:17:05.273Z" },
@@ -43,7 +49,7 @@ test("group heading shows only merged tool time while model time has its own row
 
   assert.match(app, /const toolGroupDurationMs = stageTiming/);
   assert.match(app, /tool-call-group-duration" data-tooltip="도구 실행 시간"/);
-  assert.match(app, /formatDuration\(toolGroupDurationMs\)/);
+  assert.match(app, /formatDuration\(toolGroupDurationMs, toolGroupRunning\)/);
   assert.doesNotMatch(app, /formatDuration\(stageDurationMs \?\? toolCallGroupDuration/);
 });
 
