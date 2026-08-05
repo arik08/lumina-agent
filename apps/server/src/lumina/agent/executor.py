@@ -2053,7 +2053,13 @@ class LocalRunExecutor:
         artifact_required = (
             retry_step_key != "final"
             and output_mode == "auto"
-            and bool(_ARTIFACT_CREATION_REQUEST.search(user_message))
+            and (
+                bool(_ARTIFACT_CREATION_REQUEST.search(user_message))
+                or (
+                    recent_artifact_count > 0
+                    and _artifact_delivery_skill_selected(run.snapshot_json)
+                )
+            )
         )
         artifact_tools_available = retry_step_key != "final" and output_mode != "chat" and (
             output_mode == "file" or artifact_required or recent_artifact_count > 0
@@ -3029,13 +3035,14 @@ class LocalRunExecutor:
                         ProviderMessage(
                             role="user",
                             content=(
-                                "[Artifact delivery requirement] The requested report is not "
-                                "complete yet because no Artifact file has been created. Call "
-                                "`create_report` now. When the user did not name another format, "
-                                "use `html`. If the `visual-artifact` Skill is semantically "
-                                "appropriate and is not active yet, call `activate_skill` by "
-                                "itself first, then follow its returned instructions before "
-                                "creating the report. Do not finish with chat text only."
+                                "[Artifact delivery requirement] The requested Artifact work is "
+                                "not complete yet because no file or new file version has been "
+                                "created. For source code or executable HTML apps, demos, "
+                                "simulations, and games, call `write_file`; for report-style "
+                                "documents, call `create_report`. When revising a file from the "
+                                "recent Artifact context, pass its exact destination_artifact_id "
+                                "and current destination_base_version so the same Artifact gets a "
+                                "new version. Do not finish with chat text only."
                             ),
                         )
                     )
@@ -3169,6 +3176,12 @@ class LocalRunExecutor:
             for resolved_index, (call, result) in enumerate(resolved_calls):
                 if call["name"] == "classify_file_output_intent":
                     artifact_required = result.get("fileCreationRequested") is True
+                if (
+                    call["name"] == "activate_skill"
+                    and artifact_tools_available
+                    and _artifact_delivery_skill_result(result)
+                ):
+                    artifact_required = True
                 if (
                     call["name"] in {"create_report", "write_file"}
                     and isinstance(result, dict)
@@ -5452,7 +5465,10 @@ class LocalRunExecutor:
             and schema["function"].get("name") == "create_report"
             for schema in tool_schemas
         )
-        artifact_required = bool(_ARTIFACT_CREATION_REQUEST.search(user_message))
+        artifact_required = bool(_ARTIFACT_CREATION_REQUEST.search(user_message)) or (
+            artifact_tool_available
+            and _artifact_delivery_skill_selected(run.snapshot_json)
+        )
         if artifact_tool_available and artifact_required:
             turn_system_parts.append(
                 "Artifact contract: The user requested a reusable file. Create exactly the "
@@ -10357,6 +10373,34 @@ _ARTIFACT_CREATION_REQUEST = re.compile(
     r"(?:create|generate|write).{0,24}"
     r"(?:보고서|report|html|artifact|document|markdown|\.md|\.py|file))"
 )
+
+_ARTIFACT_DELIVERY_SKILL_SLUGS = frozenset({"visual-artifact"})
+
+
+def _artifact_delivery_skill_selected(snapshot: Mapping[str, Any]) -> bool:
+    selected_ids = {
+        str(item)
+        for item in snapshot.get("auto_selected_skill_ids", [])
+        if str(item)
+    }
+    selected_ids.update(
+        str(reference.get("reference_id", ""))
+        for reference in snapshot.get("prompt_references", [])
+        if isinstance(reference, Mapping) and reference.get("kind") == "skill"
+    )
+    return any(
+        str(extension.get("extension_id", "")) in selected_ids
+        and str(extension.get("slug", extension.get("name", ""))).casefold()
+        in _ARTIFACT_DELIVERY_SKILL_SLUGS
+        for extension in snapshot.get("extensions", [])
+        if isinstance(extension, Mapping)
+    )
+
+
+def _artifact_delivery_skill_result(result: object) -> bool:
+    return isinstance(result, Mapping) and str(
+        result.get("slug", result.get("name", ""))
+    ).casefold() in _ARTIFACT_DELIVERY_SKILL_SLUGS
 
 
 def _consume_progress_control(

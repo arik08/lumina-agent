@@ -15,8 +15,9 @@ from lumina.agent.executor import LocalRunExecutor, local_run_executor
 from lumina.config import Settings
 from lumina.main import create_app
 from lumina.db import SessionLocal
+from lumina.extensions.service import create_skill
 from lumina.instructions.service import DEFAULT_SYSTEM_PROMPT
-from lumina.models import ArtifactVersion, Message, Run, RunEvent, ToolExecution
+from lumina.models import ArtifactVersion, Message, Run, RunEvent, ToolExecution, User
 from lumina.providers import (
     MockProvider,
     MockToolCall,
@@ -507,6 +508,34 @@ def test_skill_activation_can_share_the_planning_turn() -> None:
     description = schema["function"]["description"]
     assert "same response as `update_plan`" in description
     assert "not with substantive tools" in description
+
+
+def test_visual_artifact_selection_requires_artifact_delivery() -> None:
+    snapshot = {
+        "extensions": [
+            {
+                "extension_id": "visual-id",
+                "slug": "visual-artifact",
+                "name": "Visual Artifact",
+            }
+        ],
+        "auto_selected_skill_ids": ["visual-id"],
+        "prompt_references": [],
+    }
+
+    assert executor_module._artifact_delivery_skill_selected(snapshot) is True
+    assert (
+        executor_module._artifact_delivery_skill_result(
+            {"skillId": "visual-id", "slug": "visual-artifact"}
+        )
+        is True
+    )
+    assert (
+        executor_module._artifact_delivery_skill_result(
+            {"skillId": "review-id", "slug": "review-only"}
+        )
+        is False
+    )
 
 
 def test_large_web_fetch_result_is_truncated_only_for_provider_context() -> None:
@@ -1811,6 +1840,139 @@ def test_report_request_recovers_when_model_tries_to_finish_without_artifact(
         "without internal IDs or raw tool-result fields" in observed_system_prompts[0]
     )
     assert "must call `create_report`" not in observed_stable_prefixes[0]
+
+
+def test_visual_artifact_follow_up_cannot_finish_without_a_new_version(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'visual-follow-up.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    provider_turn = 0
+    skill_id = ""
+    artifact_id = ""
+    wants_artifact_values: list[bool] = []
+
+    def provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        nonlocal provider_turn
+        del first_turn
+        provider_turn += 1
+        wants_artifact_values.append(wants_artifact)
+        if provider_turn == 1:
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="write_file",
+                    arguments={
+                        "path": "solar-system.html",
+                        "content": (
+                            "<!doctype html><html><body><canvas></canvas>"
+                            "<script>window.rotate=true;</script></body></html>"
+                        ),
+                    },
+                    call_id="call_initial_simulator",
+                )
+            )
+        if provider_turn == 2:
+            return MockProvider(text_chunks=("시뮬레이터를 만들었습니다.",))
+        if provider_turn == 3:
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="activate_skill",
+                    arguments={
+                        "skillId": skill_id,
+                        "reason": "기존 HTML 시뮬레이터의 상호작용을 수정합니다.",
+                    },
+                    call_id="call_visual_skill",
+                )
+            )
+        if provider_turn == 4:
+            return MockProvider(text_chunks=("우클릭 Pan 기능을 추가했습니다.",))
+        if provider_turn == 5:
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="write_file",
+                    arguments={
+                        "path": "solar-system.html",
+                        "content": (
+                            "<!doctype html><html><body><canvas></canvas><script>"
+                            "window.rotate=true;window.panOnRightClick=true;"
+                            "</script></body></html>"
+                        ),
+                        "destination_artifact_id": artifact_id,
+                        "destination_base_version": 1,
+                    },
+                    call_id="call_pan_revision",
+                )
+            )
+        return MockProvider(text_chunks=("우클릭 Pan 기능을 추가했습니다.",))
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        with SessionLocal() as db:
+            admin = db.query(User).filter(User.login_id == "admin@posco.com").one()
+            skill, _draft = create_skill(
+                db,
+                user=admin,
+                name="visual-artifact",
+                slug="visual-artifact",
+                description="브라우저에서 여는 단일 HTML 시각 산출물을 만듭니다.",
+                package_files={
+                    "SKILL.md": (
+                        "# visual-artifact\n\n"
+                        "기존 HTML 산출물은 같은 Artifact의 새 버전으로 수정합니다."
+                    )
+                },
+                project_id=project_id,
+            )
+            skill_id = skill.id
+            db.commit()
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "시뮬레이터 후속 수정"},
+        ).json()
+        initial = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "visual-follow-up-initial-0001",
+            },
+            json={"message": {"text": "태양계 시뮬레이터 HTML 파일을 만들어줘"}},
+        )
+        initial_snapshot = _wait_for_terminal(
+            client, initial.json()["run"]["runId"]
+        )
+        artifact_id = initial_snapshot["artifacts"][0]["id"]
+
+        follow_up = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "visual-follow-up-pan-0001",
+            },
+            json={"message": {"text": "우클릭으로 Pan 이동도 가능하게 해줘"}},
+        )
+        follow_up_snapshot = _wait_for_terminal(
+            client, follow_up.json()["run"]["runId"]
+        )
+
+    assert follow_up_snapshot["status"] == "completed"
+    assert provider_turn == 6
+    assert wants_artifact_values[2:5] == [False, True, True]
+    assert [
+        tool["toolName"] for tool in follow_up_snapshot["toolExecutions"]
+    ] == ["write_file"]
+    assert follow_up_snapshot["toolExecutions"][0]["artifactId"] == artifact_id
+    assert follow_up_snapshot["artifacts"][0]["currentVersion"] == 2
 
 
 def test_web_fetch_starts_visible_report_drafting_before_create_report_output(
