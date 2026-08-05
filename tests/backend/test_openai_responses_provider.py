@@ -98,7 +98,11 @@ def test_gpt_5_6_payload_enables_reasoning_context_and_server_compaction() -> No
         )
     )
 
-    assert payload["reasoning"] == {"effort": "high", "context": "all_turns"}
+    assert payload["reasoning"] == {
+        "effort": "high",
+        "summary": "auto",
+        "context": "all_turns",
+    }
     assert payload["include"] == ["reasoning.encrypted_content"]
     assert payload["context_management"] == [
         {"type": "compaction", "compact_threshold": 252_000}
@@ -163,6 +167,7 @@ def test_pre_5_6_model_does_not_replay_5_6_encrypted_state() -> None:
         {"role": "user", "content": "New input"},
     ]
     assert "context_management" not in payload
+    assert payload["reasoning"] == {"summary": "auto"}
 
 
 def test_responses_payload_marks_only_stable_system_prefix_for_gpt_5_6() -> None:
@@ -515,6 +520,12 @@ async def test_openai_responses_emits_encrypted_reasoning_and_compaction_state()
                     "item": {
                         "id": "rs_1",
                         "type": "reasoning",
+                        "summary": [
+                            {
+                                "type": "summary_text",
+                                "text": "근거를 비교해 다음 단계를 정했습니다.",
+                            }
+                        ],
                         "encrypted_content": "opaque-reasoning",
                     },
                 },
@@ -529,7 +540,21 @@ async def test_openai_responses_emits_encrypted_reasoning_and_compaction_state()
                 },
                 {
                     "type": "response.completed",
-                    "response": {"status": "completed", "output": []},
+                    "response": {
+                        "status": "completed",
+                        "output": [
+                            {
+                                "id": "rs_1",
+                                "type": "reasoning",
+                                "summary": [
+                                    {
+                                        "type": "summary_text",
+                                        "text": "근거를 비교해 다음 단계를 정했습니다.",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
                 },
             ),
         )
@@ -551,6 +576,10 @@ async def test_openai_responses_emits_encrypted_reasoning_and_compaction_state()
         ]
 
     state_events = [event for event in events if event.type == "response_state"]
+    summary_events = [event for event in events if event.type == "reasoning_summary"]
+    assert [event.text for event in summary_events] == [
+        "근거를 비교해 다음 단계를 정했습니다."
+    ]
     assert [event.provider_metadata["item"]["type"] for event in state_events] == [
         "reasoning",
         "compaction",
