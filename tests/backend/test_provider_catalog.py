@@ -146,6 +146,34 @@ def test_codex_runtime_profiles_are_derived_from_reviewed_openai_models() -> Non
         assert model.capabilities.standard_context_compaction_reserve_tokens == 778_000
 
 
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("gpt-5.6-terra", (2.0, 0.2, 2.5, 12.0, 4.0, 0.4, 5.0, 18.0)),
+        ("gpt-5.6-luna", (0.2, 0.02, 0.25, 1.2, 0.4, 0.04, 0.5, 1.8)),
+    ],
+)
+def test_gpt_5_6_efficient_model_pricing_matches_public_rate_card(
+    model: str, expected: tuple[float, ...]
+) -> None:
+    for provider_id in ("codex", "openai"):
+        profile = model_operational_profile(provider_id, model)
+        assert profile is not None
+        pricing = profile.token_pricing
+        assert pricing is not None
+        assert (
+            pricing.input,
+            pricing.cached_input,
+            pricing.cache_write_input,
+            pricing.output,
+            pricing.long_context_input,
+            pricing.long_context_cached_input,
+            pricing.long_context_cache_write_input,
+            pricing.long_context_output,
+        ) == expected
+        assert pricing.version == "public-list-2026-08-06"
+
+
 def test_runtime_model_ids_are_declared_only_in_the_catalog() -> None:
     root = Path(__file__).resolve().parents[2]
     catalog_path = (root / "apps/server/src/lumina/providers/catalog.py").resolve()
