@@ -262,11 +262,7 @@ def get_provider_catalog(
                 "enabled": status == "ready",
                 "connectionStatus": status,
                 "defaultModelKey": next(
-                    (
-                        str(model["modelKey"])
-                        for model in models
-                        if model["isDefault"]
-                    ),
+                    (str(model["modelKey"]) for model in models if model["isDefault"]),
                     None,
                 ),
             }
@@ -295,13 +291,24 @@ def _capabilities(
 ) -> dict[str, object]:
     provider_efforts = raw.get("effort_options") or ("low", "medium", "high")
     efforts = ("auto", *(value for value in provider_efforts if value != "auto"))
+    context_window = _positive_capability_int(
+        raw.get("context_window", raw.get("contextWindow"))
+    ) or _positive_capability_int(fallback_context_window)
+    max_input_tokens = _positive_capability_int(
+        raw.get("max_input_tokens", raw.get("maxInputTokens"))
+    ) or _positive_capability_int(fallback_max_input_tokens)
     return {
         "toolCalling": bool(raw.get("tools", raw.get("tool_calling", True))),
         "structuredOutput": bool(raw.get("structured_output", True)),
         "imageInput": bool(raw.get("image_input", False)),
         "imageGeneration": bool(raw.get("image_generation", False)),
-        "contextWindow": raw.get("context_window") or fallback_context_window,
-        "maxInputTokens": raw.get("max_input_tokens") or fallback_max_input_tokens,
+        "contextWindow": context_window,
+        "contextInputLimit": _context_input_limit(
+            raw,
+            context_window=context_window,
+            max_input_tokens=max_input_tokens,
+        ),
+        "maxInputTokens": max_input_tokens,
         "effortOptions": [
             {
                 "id": value,
@@ -315,6 +322,48 @@ def _capabilities(
             for value in efforts
         ],
     }
+
+
+def _positive_capability_int(value: object) -> int | None:
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0
+        else None
+    )
+
+
+def _context_input_limit(
+    raw: dict[str, Any],
+    *,
+    context_window: int | None,
+    max_input_tokens: int | None,
+) -> int | None:
+    if context_window is None:
+        return None
+    capacity_mode = raw.get("context_capacity_mode", raw.get("contextCapacityMode"))
+    if capacity_mode not in {"standard", "maximum"}:
+        return context_window
+
+    input_budget = min(max_input_tokens or context_window, context_window)
+    standard_reserve = _positive_capability_int(
+        raw.get(
+            "standard_context_compaction_reserve_tokens",
+            raw.get("standardContextCompactionReserveTokens"),
+        )
+    )
+    if capacity_mode == "standard" and standard_reserve is not None:
+        input_budget = min(input_budget, max(1, context_window - standard_reserve))
+
+    ratio = raw.get(
+        "context_compaction_threshold", raw.get("contextCompactionThreshold")
+    )
+    if (
+        not isinstance(ratio, (int, float))
+        or isinstance(ratio, bool)
+        or not 0 < ratio <= 1
+    ):
+        ratio = 1.0
+    return max(1, int(input_budget * ratio))
 
 
 def _setting(db: Session, user_id: str, key: str) -> UserSetting | None:
@@ -351,7 +400,9 @@ def _resolved_settings(
         conversation_width_setting.value_json if conversation_width_setting else 900
     )
     conversation_font_size = (
-        conversation_font_size_setting.value_json if conversation_font_size_setting else 14
+        conversation_font_size_setting.value_json
+        if conversation_font_size_setting
+        else 14
     )
     output_mode_key = "composer.output_mode"
     output_mode_setting = (
@@ -412,7 +463,8 @@ def _resolved_settings(
         ),
         "conversationFontSize": (
             conversation_font_size
-            if isinstance(conversation_font_size, int) and 14 <= conversation_font_size <= 24
+            if isinstance(conversation_font_size, int)
+            and 14 <= conversation_font_size <= 24
             else 14
         ),
         "outputMode": output_mode
@@ -548,10 +600,7 @@ def _claim_settings_revision(
             _raise_settings_revision_conflict(db)
         db.expire(user, ["settings_revision"])
 
-    if (
-        project.project_type == "shared"
-        and changed_fields & _PROJECT_SETTINGS_FIELDS
-    ):
+    if project.project_type == "shared" and changed_fields & _PROJECT_SETTINGS_FIELDS:
         expected_project_revision = project.settings_revision
         result = db.execute(
             update(Project)
@@ -610,9 +659,7 @@ def patch_current_settings(
         model_candidates_setting,
         clarification_setting,
         prompt_enhancement_instruction_setting,
-    ) = (
-        _resolved_settings(db, context.user, project, settings)
-    )
+    ) = _resolved_settings(db, context.user, project, settings)
     if current["revision"] != payload.expected_revision:
         _raise_settings_revision_conflict(db)
     _claim_settings_revision(

@@ -65,7 +65,9 @@ test("composer keeps model controls intact and sends independent analysis and an
   assert.match(styles, /@container composer \(max-width: 440px\) \{[\s\S]*?\.composer-picker:has\(\.analysis-depth-control\) \{ display: none; \}/);
   assert.match(styles, /@container composer \(max-width: 380px\) \{[\s\S]*?\.prompt-enhancement-picker \{ display: none; \}/);
   assert.match(app, /<ComposerPicker[\s\S]*?controlClassName="model-control"[\s\S]*?<ComposerPicker[\s\S]*?controlClassName=\{`effort-control/);
-  assert.match(app, /<ContextUsageIndicator[\s\S]*?usedTokens=\{latestContextInputTokens\}[\s\S]*?contextWindow=\{selectedCandidate\.contextWindow\}[\s\S]*?<ComposerPicker[\s\S]*?controlClassName="model-control"/);
+  assert.match(app, /contextInputLimit: model\.capabilities\.contextInputLimit \?\? model\.capabilities\.contextWindow/);
+  assert.match(app, /saveAdminContextCapacityMode[\s\S]*?setAdminSettingsModels[\s\S]*?await workspace\.refreshProviderCatalog\(\)/);
+  assert.match(app, /<ContextUsageIndicator[\s\S]*?usedTokens=\{latestContextInputTokens\}[\s\S]*?contextWindow=\{selectedCandidate\.contextInputLimit\}[\s\S]*?<ComposerPicker[\s\S]*?controlClassName="model-control"/);
   assert.match(app, /activeRun\?\.modelTurnMetrics\.at\(-1\)\?\.inputTokens \?\? 0/);
   assert.match(app, /컨텍스트 길이[\s\S]*?usagePercent[\s\S]*?remainingPercent[\s\S]*?formatContextTokens\(safeUsedTokens\)[\s\S]*?formatContextTokens\(contextWindow\)/);
   assert.match(styles, /\.composer-footer \.context-usage-trigger \{[^}]*width: 31px;[^}]*color: var\(--muted\)/);
@@ -80,4 +82,5 @@ test("composer keeps model controls intact and sends independent analysis and an
   assert.doesNotMatch(app, /setTargetOutputTokens\(defaultArtifactOutputTokens\);\s*setAnalysisDepth\("auto"\)/);
   assert.match(types, /analysisDepth: AnalysisDepth/);
   assert.match(types, /answerLength: AnswerLength/);
+  assert.match(types, /contextInputLimit: number \| null/);
 });

@@ -78,8 +78,9 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
                 invalid_settings,
                 rejected_settings.text,
             )
-        assert client.get("/api/settings/current").json()["revision"] == (
-            current_settings["revision"]
+        assert (
+            client.get("/api/settings/current").json()["revision"]
+            == (current_settings["revision"])
         )
 
         personal_execution = client.patch(
@@ -206,9 +207,7 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
             },
         )
         assert configured_ratio.status_code == 422, configured_ratio.text
-        assert (
-            configured_ratio.json()["code"] == "context_capacity_profile_mismatch"
-        )
+        assert configured_ratio.json()["code"] == "context_capacity_profile_mismatch"
 
         rejected_ratio = client.patch(
             "/api/admin/providers/pgpt/models/gpt-5.4",
@@ -261,6 +260,15 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         assert codex_gpt_56["maxInputTokens"] == 922_000
         assert codex_gpt_56["maxOutputTokens"] == 128_000
 
+        standard_public_models = client.get("/api/providers/codex/models")
+        assert standard_public_models.status_code == 200
+        standard_public_gpt_56 = next(
+            model
+            for model in standard_public_models.json()
+            if model["modelKey"] == "gpt-5.6-sol"
+        )
+        assert standard_public_gpt_56["capabilities"]["contextInputLimit"] == 272_000
+
         codex_gpt_56_maximum = client.patch(
             "/api/admin/providers/codex/models/gpt-5.6-sol",
             headers={"X-CSRF-Token": csrf},
@@ -278,13 +286,17 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         assert codex_gpt_56_maximum.status_code == 200, codex_gpt_56_maximum.text
         assert codex_gpt_56_maximum.json()["contextCapacityMode"] == "maximum"
         assert (
-            codex_gpt_56_maximum.json()["capabilities"][
-                "context_compaction_threshold"
-            ]
+            codex_gpt_56_maximum.json()["capabilities"]["context_compaction_threshold"]
             == 0.85
         )
         public_codex_models = client.get("/api/providers/codex/models")
         assert public_codex_models.status_code == 200
+        public_codex_gpt_56 = next(
+            model
+            for model in public_codex_models.json()
+            if model["modelKey"] == "gpt-5.6-sol"
+        )
+        assert public_codex_gpt_56["capabilities"]["contextInputLimit"] == 783_700
         public_codex_gpt_54 = next(
             model
             for model in public_codex_models.json()

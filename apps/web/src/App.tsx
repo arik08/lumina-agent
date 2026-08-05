@@ -1646,6 +1646,7 @@ function App() {
       setAdminSettingsModels((models) => models.map(
         (model) => model.modelKey === updated.modelKey ? updated : model,
       ));
+      await workspace.refreshProviderCatalog();
     } catch (error) {
       setAdminSettingsError(
         error instanceof Error ? error.message : "컨텍스트 용량 모드를 저장하지 못했습니다.",
@@ -1838,6 +1839,7 @@ function App() {
         modelKey: model.modelKey,
         modelLabel: model.displayName,
         contextWindow: model.capabilities.contextWindow,
+        contextInputLimit: model.capabilities.contextInputLimit ?? model.capabilities.contextWindow,
         effortOptions: model.capabilities.effortOptions,
       })),
   );
@@ -4250,10 +4252,10 @@ function App() {
                       {pendingComposerMode === "queue_next" ? "Queue" : "Steering"}
                     </span>
                   )}
-                  {selectedCandidate?.contextWindow && (
+                  {selectedCandidate?.contextInputLimit && (
                     <ContextUsageIndicator
                       usedTokens={latestContextInputTokens}
-                      contextWindow={selectedCandidate.contextWindow}
+                      contextWindow={selectedCandidate.contextInputLimit}
                     />
                   )}
                   <ComposerPicker
