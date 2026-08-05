@@ -2285,6 +2285,8 @@ export interface RunSnapshot {
     catalogRevision: string;
   };
   modelTurnMetrics: ModelTurnMetric[];
+  providerActivity: ProviderActivity | null;
+  providerRetries: ProviderRetry[];
   limits: {
     maxModelTurns: number;
     maxTotalTokens: number;
@@ -2312,6 +2314,25 @@ export interface ModelTurnMetric {
   outputTokens: number;
   reasoningTokens?: number | null;
   cacheHitRatio: number;
+}
+
+export interface ProviderActivity {
+  status: "waiting_first_output" | "receiving" | "retry_waiting" | "completed" | "failed" | "limited" | "interrupted";
+  stage: string;
+  attempt: number;
+  maxAttempts: number;
+  startedAt: IsoDateTime;
+  timeoutSeconds: number;
+  completedAt?: IsoDateTime;
+}
+
+export interface ProviderRetry {
+  attempt: number;
+  maxAttempts: number;
+  delaySeconds: number;
+  stage: string;
+  statusCode: number | null;
+  createdAt: IsoDateTime;
 }
 
 export type RunActivity = {
@@ -2452,6 +2473,8 @@ export type RunEventType =
   | "run_started"
   | "run_status_changed"
   | "model_turn_completed"
+  | "provider_activity_changed"
+  | "provider_retry_scheduled"
   | "assistant_text_delta"
   | "assistant_draft_rewound"
   | "progress_summary"
@@ -2499,6 +2522,8 @@ interface RunEventEnvelope<TType extends RunEventType, TPayload> {
 export type RunEvent =
   | RunEventEnvelope<"run_started" | "run_status_changed", { status: RunStatus }>
   | RunEventEnvelope<"model_turn_completed", ModelTurnMetric>
+  | RunEventEnvelope<"provider_activity_changed", ProviderActivity>
+  | RunEventEnvelope<"provider_retry_scheduled", Omit<ProviderRetry, "createdAt">>
   | RunEventEnvelope<"assistant_text_delta", { messageId: UUID; delta: string }>
   | RunEventEnvelope<
       "assistant_draft_rewound",

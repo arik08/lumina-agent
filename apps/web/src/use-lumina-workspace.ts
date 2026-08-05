@@ -597,6 +597,30 @@ export function useLuminaWorkspace() {
 
       if (event.type === "run_started" || event.type === "run_status_changed") {
         nextSnapshot.status = event.payload.status;
+      } else if (event.type === "provider_activity_changed") {
+        nextSnapshot.providerActivity = event.payload;
+      } else if (event.type === "provider_retry_scheduled") {
+        nextSnapshot.providerActivity = {
+          status: "retry_waiting",
+          stage: event.payload.stage,
+          attempt: event.payload.attempt,
+          maxAttempts: event.payload.maxAttempts,
+          startedAt: event.createdAt,
+          timeoutSeconds: event.payload.delaySeconds,
+        };
+        nextSnapshot.providerRetries = [
+          ...(nextSnapshot.providerRetries ?? []),
+          { ...event.payload, createdAt: event.createdAt },
+        ].slice(-128);
+      } else if (event.type === "model_turn_completed") {
+        nextSnapshot.modelTurnMetrics = [...nextSnapshot.modelTurnMetrics, event.payload].slice(-512);
+        if (nextSnapshot.providerActivity) {
+          nextSnapshot.providerActivity = {
+            ...nextSnapshot.providerActivity,
+            status: event.payload.status,
+            completedAt: event.createdAt,
+          };
+        }
       } else if (event.type === "progress_summary") {
         nextSnapshot.activities = [
           ...nextSnapshot.activities,

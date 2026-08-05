@@ -77,6 +77,8 @@ import type {
   ClarificationMode,
   MemoryCitation,
   MessageCitation,
+  ProviderActivity,
+  ProviderRetry,
   RunActivity,
   RunCommand,
   RunSnapshot,
@@ -642,7 +644,8 @@ function ToolCallRow({
       : null
   );
   const activeWriteFileName = writeFileName(execution);
-  const headerDetail = activeWriteFileName ?? webSearchQuery(execution) ?? webFetchSummary(execution) ?? createReportSummary(execution);
+  const liveStatus = running ? execution.resultSummary[0] : null;
+  const headerDetail = liveStatus ?? activeWriteFileName ?? webSearchQuery(execution) ?? webFetchSummary(execution) ?? createReportSummary(execution);
   const writeProgress = tokenBucketProgress(execution.progress?.tokens ?? 0);
   const toolDetailText = useMemo(() => {
     if (!isOpen) return null;
@@ -730,7 +733,15 @@ function modelExchangeText(value: unknown) {
 
 type ModelProcessingState = RunActivityOutcome | "awaiting_input";
 
-function ModelProcessingRow({ durationMs, state, sent, received, model, provider, reasoningTokens }: {
+function providerWaitReason(stage: string) {
+  if (stage === "first_output") return "첫 응답 없음";
+  if (stage === "stream") return "응답 스트림 중단";
+  if (stage === "rate_limit") return "Provider 사용량 제한";
+  if (stage === "authentication") return "Provider 인증 실패";
+  return "Provider 요청 일시 오류";
+}
+
+function ModelProcessingRow({ durationMs, state, sent, received, model, provider, reasoningTokens, providerActivity, providerRetries }: {
   durationMs: number;
   state: ModelProcessingState;
   sent: ModelExchangeItem[];
@@ -738,16 +749,57 @@ function ModelProcessingRow({ durationMs, state, sent, received, model, provider
   model?: string;
   provider?: string;
   reasoningTokens?: number;
+  providerActivity?: ProviderActivity | null;
+  providerRetries: ProviderRetry[];
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const contentId = useId();
   const running = state === "running";
   const awaitingInput = state === "awaiting_input";
-  const statusLabel = running ? "처리 중" : awaitingInput ? "답변 대기" : state === "completed" ? "완료" : state === "failed" ? "실패" : "중지됨";
+  const clockNow = useSharedNow(running);
+  const waitStartedAtMs = providerActivity ? Date.parse(providerActivity.startedAt) : Number.NaN;
+  const waitElapsedSeconds = Number.isFinite(waitStartedAtMs)
+    ? Math.max(0, (clockNow - waitStartedAtMs) / 1000)
+    : 0;
+  const waitRemainingSeconds = providerActivity
+    ? Math.max(0, providerActivity.timeoutSeconds - waitElapsedSeconds)
+    : 0;
+  const retrying = running && providerActivity?.status === "retry_waiting";
+  const statusLabel = running
+    ? providerActivity?.status === "waiting_first_output"
+      ? "응답 대기"
+      : providerActivity?.status === "receiving"
+        ? "수신 중"
+        : retrying
+          ? "재시도 대기"
+          : "처리 중"
+    : awaitingInput ? "답변 대기" : state === "completed" ? "완료" : state === "failed" ? "실패" : "중지됨";
+  const providerDetail = running && providerActivity?.status === "waiting_first_output"
+    ? waitRemainingSeconds > 0
+      ? `Provider 첫 응답 대기 · 시도 ${providerActivity.attempt} · ${Math.ceil(waitRemainingSeconds)}초 남음 (${providerActivity.timeoutSeconds}초 제한)`
+      : "Provider 첫 응답 제한시간 도달 · 재시도 상태 확인 중"
+    : running && providerActivity?.status === "receiving"
+      ? waitRemainingSeconds > 0
+        ? `Provider 응답 수신 중 · 다음 이벤트 ${Math.ceil(waitRemainingSeconds)}초 남음 (무응답 시 자동 재시도)`
+        : "Provider 응답 무응답 제한시간 도달 · 재시도 상태 확인 중"
+      : retrying && providerActivity
+        ? waitRemainingSeconds > 0.05
+          ? `${providerWaitReason(providerActivity.stage)} · 재시도 ${providerActivity.attempt}/${providerActivity.maxAttempts} · ${waitRemainingSeconds.toFixed(1)}초 후`
+          : `${providerWaitReason(providerActivity.stage)} · 재시도 ${providerActivity.attempt}/${providerActivity.maxAttempts} 시작 중`
+        : !running && providerRetries.length > 0
+          ? `모델 처리 완료 · 자동 재시도 ${providerRetries.length}회 포함`
+          : null;
+  const providerHistoryItems: ModelExchangeItem[] = [
+    ...(providerActivity ? [{ label: "현재 Provider 상태", value: providerDetail ?? providerActivity.status }] : []),
+    ...providerRetries.map((retry, index) => ({
+      label: `자동 재시도 ${index + 1}`,
+      value: `${providerWaitReason(retry.stage)} · ${retry.attempt}/${retry.maxAttempts} · ${retry.delaySeconds.toFixed(2)}초 후`,
+    })),
+  ];
   const exchangeSections = [
     { title: "Provider로 보냄", items: sent, empty: "이 단계에서 별도로 전달된 도구 결과가 없습니다." },
-    { title: "Provider에서 받음", items: received, empty: running ? "응답을 수신하고 있습니다." : state === "stopped" ? "모델 응답이 완료되기 전에 작업을 중지했습니다." : "공개 가능한 응답 내용이 없습니다." },
+    { title: "Provider에서 받음", items: [...providerHistoryItems, ...received], empty: running ? "응답을 수신하고 있습니다." : state === "stopped" ? "모델 응답이 완료되기 전에 작업을 중지했습니다." : "공개 가능한 응답 내용이 없습니다." },
   ];
 
   useEffect(() => {
@@ -778,8 +830,8 @@ function ModelProcessingRow({ durationMs, state, sent, received, model, provider
           {running ? <LoaderCircle className="status-icon is-running" size={15} aria-hidden="true" /> : null}
           {!running && !awaitingInput && state !== "completed" ? <AlertCircle className="status-icon status-warning" size={15} aria-hidden="true" /> : null}
         </span>
-        <span className="tool-call-detail">{awaitingInput ? "확인 질문 · 사용자 답변 대기" : state === "stopped" ? "사용자 요청으로 모델 처리를 중지했습니다." : `모델 판단 · 내부 실행 합계${reasoningTokens === undefined ? "" : ` · 내부 추론 ${reasoningTokens.toLocaleString()} 토큰`}`}</span>
-        <span className={`tool-call-status status-${running ? "running" : state === "completed" ? "complete" : "warning"}`}>{statusLabel}</span>
+        <span className="tool-call-detail">{awaitingInput ? "확인 질문 · 사용자 답변 대기" : state === "stopped" ? "사용자 요청으로 모델 처리를 중지했습니다." : providerDetail ?? `모델 판단 · 내부 실행 합계${reasoningTokens === undefined ? "" : ` · 내부 추론 ${reasoningTokens.toLocaleString()} 토큰`}`}</span>
+        <span className={`tool-call-status status-${retrying ? "warning" : running ? "running" : state === "completed" ? "complete" : "warning"}`} aria-live="polite">{statusLabel}</span>
         <span className="tool-call-duration" data-tooltip="여러 모델 호출과 Skill·계획 처리, 재시도 시간을 합산한 값(외부 도구 실행 제외)">{formatDuration(durationMs, running)}</span>
         {isOpen ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
       </button>
@@ -809,6 +861,16 @@ function ModelProcessingRow({ durationMs, state, sent, received, model, provider
 }
 
 function toolCallGroupSummary(activities: RunActivity[]) {
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const activity = activities[index];
+    if (
+      activity.type === "tool"
+      && ["queued", "running", "streaming"].includes(activity.execution.status)
+      && activity.execution.resultSummary[0]
+    ) {
+      return activity.execution.resultSummary[0];
+    }
+  }
   const counts = new Map<string, number>();
   for (const activity of activities) {
     if (activity.type !== "tool") continue;
@@ -913,6 +975,8 @@ function RunActivityTimeline({
   model,
   provider,
   reasoningTokens,
+  providerActivity,
+  providerRetries,
   openCalls,
   onToggleCall,
   onCopy,
@@ -933,6 +997,8 @@ function RunActivityTimeline({
   model?: string;
   provider?: string;
   reasoningTokens?: number;
+  providerActivity?: ProviderActivity | null;
+  providerRetries: ProviderRetry[];
   openCalls: Set<string>;
   onToggleCall: (id: string) => void;
   onCopy: (execution: ToolExecution) => void;
@@ -1188,7 +1254,7 @@ function RunActivityTimeline({
                 </div>
                 <div className="tool-call-group-summary">
                   {toolCallIcon(toolActivities[0].execution.toolName, 14)}
-                  <span>{toolCallGroupSummary(toolActivities)}</span>
+                  <span aria-live="polite" role="status">{toolCallGroupSummary(toolActivities)}</span>
                   <span className="tool-call-group-duration" data-tooltip="도구 실행 시간">{formatDuration(toolGroupDurationMs, toolGroupRunning)}</span>
                   {toolsOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
                 </div>
@@ -1217,6 +1283,8 @@ function RunActivityTimeline({
                     received={received}
                     model={model}
                     provider={provider}
+                    providerActivity={providerActivity}
+                    providerRetries={providerRetries}
                     reasoningTokens={!timelineRunning && groupIndex === activityGroups.length - 1 ? reasoningTokens : undefined}
                   />
                 )}
@@ -2147,6 +2215,8 @@ export const AssistantTurn = memo(function AssistantTurn({
                 model={snapshot?.execution.runtimeModelId}
                 provider={snapshot?.execution.providerId}
                 reasoningTokens={reasoningTokens}
+                providerActivity={snapshot?.providerActivity}
+                providerRetries={snapshot?.providerRetries ?? []}
                 openCalls={openCalls}
                 onCopy={onCopyTool}
                 onToggleCall={toggleOpenCall}

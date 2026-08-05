@@ -1434,6 +1434,7 @@ class LocalRunExecutor:
         *,
         first_output_timeout_seconds: float = _PROVIDER_FIRST_OUTPUT_TIMEOUT_SECONDS,
         event_idle_timeout_seconds: float = _PROVIDER_EVENT_IDLE_TIMEOUT_SECONDS,
+        on_first_event: Callable[[], Awaitable[None]] | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Stop a silent Provider stream on control changes or missing output."""
         stream = provider.stream(request)
@@ -1467,6 +1468,8 @@ class LocalRunExecutor:
                         event = pending.result()
                     except StopAsyncIteration:
                         return
+                    if not first_event_received and on_first_event is not None:
+                        await on_first_event()
                     first_event_received = True
                     yield event
                     pending = asyncio.ensure_future(anext(stream))
@@ -2369,7 +2372,39 @@ class LocalRunExecutor:
                 )
                 async with asyncio.timeout(remaining_run_seconds):
                     provider_attempt_count += 1
-                    async for event in self._provider_events(run_id, provider, request):
+                    provider_activity_started_at = utc_now()
+                    await self._set_provider_activity(
+                        run_id,
+                        {
+                            "status": "waiting_first_output",
+                            "stage": "first_output",
+                            "attempt": provider_attempt_count,
+                            "maxAttempts": len(_PROVIDER_RETRY_DELAYS_SECONDS) + 1,
+                            "startedAt": provider_activity_started_at.isoformat(),
+                            "timeoutSeconds": _PROVIDER_FIRST_OUTPUT_TIMEOUT_SECONDS,
+                        },
+                    )
+
+                    async def mark_provider_stream_started() -> None:
+                        received_at = utc_now()
+                        await self._set_provider_activity(
+                            run_id,
+                            {
+                                "status": "receiving",
+                                "stage": "stream",
+                                "attempt": provider_attempt_count,
+                                "maxAttempts": len(_PROVIDER_RETRY_DELAYS_SECONDS) + 1,
+                                "startedAt": received_at.isoformat(),
+                                "timeoutSeconds": _PROVIDER_EVENT_IDLE_TIMEOUT_SECONDS,
+                            },
+                        )
+
+                    async for event in self._provider_events(
+                        run_id,
+                        provider,
+                        request,
+                        on_first_event=mark_provider_stream_started,
+                    ):
                         if event.type == "text_delta" and event.text:
                             streamed_output_chars += len(event.text)
                         elif event.type == "tool_call_delta" and event.arguments_delta:
@@ -8815,6 +8850,28 @@ class LocalRunExecutor:
             await asyncio.sleep(delay_seconds)
         return True
 
+    async def _set_provider_activity(
+        self, run_id: str, payload: dict[str, Any]
+    ) -> None:
+        await self._run_database_mutation(
+            run_id, self._set_provider_activity_database, run_id, payload
+        )
+        await event_broker.notify(run_id)
+
+    def _set_provider_activity_database(
+        self, run_id: str, payload: dict[str, Any]
+    ) -> None:
+        with session_scope() as db:
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
+            if run is None or run.status in TERMINAL_STATUSES:
+                return
+            self._require_execution_owner(run)
+            run.snapshot_json = {
+                **run.snapshot_json,
+                "provider_activity": payload,
+            }
+            append_event(db, run, "provider_activity_changed", payload)
+
     def _schedule_provider_retry_database(
         self,
         run_id: str,
@@ -8834,17 +8891,33 @@ class LocalRunExecutor:
                 _nonnegative_int(usage.get("model_turns")), round_index
             )
             run.usage_json = usage
+            retry_payload = {
+                "attempt": retry_index + 2,
+                "maxAttempts": max_retries + 1,
+                "delaySeconds": delay_seconds,
+                "stage": error.stage,
+                "statusCode": error.status_code,
+            }
+            retry_record = {**retry_payload, "createdAt": utc_now().isoformat()}
+            previous_retries = run.snapshot_json.get("provider_retries", [])
+            retries = list(previous_retries) if isinstance(previous_retries, list) else []
+            run.snapshot_json = {
+                **run.snapshot_json,
+                "provider_activity": {
+                    "status": "retry_waiting",
+                    "stage": error.stage,
+                    "attempt": retry_index + 2,
+                    "maxAttempts": max_retries + 1,
+                    "startedAt": retry_record["createdAt"],
+                    "timeoutSeconds": delay_seconds,
+                },
+                "provider_retries": [*retries, retry_record][-128:],
+            }
             append_event(
                 db,
                 run,
                 "provider_retry_scheduled",
-                {
-                    "attempt": retry_index + 2,
-                    "maxAttempts": max_retries + 1,
-                    "delaySeconds": delay_seconds,
-                    "stage": error.stage,
-                    "statusCode": error.status_code,
-                },
+                retry_payload,
             )
         return True
 
@@ -9187,10 +9260,18 @@ class LocalRunExecutor:
                 list(previous_metrics) if isinstance(previous_metrics, list) else []
             )
             metrics.append(payload)
-            run.snapshot_json = {
+            snapshot = {
                 **run.snapshot_json,
                 "model_turn_metrics": metrics[-512:],
             }
+            provider_activity = run.snapshot_json.get("provider_activity")
+            if isinstance(provider_activity, Mapping):
+                snapshot["provider_activity"] = {
+                    **provider_activity,
+                    "status": payload["status"],
+                    "completedAt": utc_now().isoformat(),
+                }
+            run.snapshot_json = snapshot
             append_event(db, run, "model_turn_completed", payload)
 
     async def _wait_until_runnable(self, run_id: str) -> bool:

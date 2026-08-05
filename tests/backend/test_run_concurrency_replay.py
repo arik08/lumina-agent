@@ -1123,6 +1123,17 @@ def test_retryable_provider_failure_retries_only_before_output(
 
     assert snapshot["status"] == "completed"
     assert provider.attempts == 2
+    assert snapshot["providerActivity"]["status"] == "completed"
+    assert snapshot["providerRetries"] == [
+        {
+            "attempt": 2,
+            "maxAttempts": 3,
+            "delaySeconds": 0.0,
+            "stage": "response",
+            "statusCode": 503,
+            "createdAt": snapshot["providerRetries"][0]["createdAt"],
+        }
+    ]
     with SessionLocal() as db:
         retry_events = list(
             db.scalars(
@@ -1130,6 +1141,16 @@ def test_retryable_provider_failure_retries_only_before_output(
                 .where(
                     RunEvent.run_id == run_id,
                     RunEvent.event_type == "provider_retry_scheduled",
+                )
+                .order_by(RunEvent.sequence)
+            )
+        )
+        provider_activity_events = list(
+            db.scalars(
+                select(RunEvent)
+                .where(
+                    RunEvent.run_id == run_id,
+                    RunEvent.event_type == "provider_activity_changed",
                 )
                 .order_by(RunEvent.sequence)
             )
@@ -1142,6 +1163,11 @@ def test_retryable_provider_failure_retries_only_before_output(
         "stage": "response",
         "statusCode": 503,
     }
+    assert [event.payload_json["status"] for event in provider_activity_events] == [
+        "waiting_first_output",
+        "waiting_first_output",
+        "receiving",
+    ]
 
 
 def test_hidden_progress_does_not_block_safe_provider_retry(

@@ -105,6 +105,22 @@ test("non-tool time is rendered as a model processing row with a clear explanati
   assert.doesNotMatch(app, /Provider 요청 전송 · 응답 수신/);
 });
 
+test("provider waits and retries remain visible instead of looking like silent Thinking", async () => {
+  const apiTypes = await read("../src/api-types.ts");
+  const workspace = await read("../src/use-lumina-workspace.ts");
+  const app = await read("../src/components/ConversationTurn.tsx");
+
+  assert.match(apiTypes, /RunEventEnvelope<"provider_activity_changed", ProviderActivity>/);
+  assert.match(apiTypes, /RunEventEnvelope<"provider_retry_scheduled", Omit<ProviderRetry, "createdAt">>/);
+  assert.match(workspace, /event\.type === "provider_activity_changed"/);
+  assert.match(workspace, /event\.type === "provider_retry_scheduled"/);
+  assert.match(app, /Provider 첫 응답 대기 · 시도/);
+  assert.match(app, /다음 이벤트 .*초 남음 \(무응답 시 자동 재시도\)/);
+  assert.match(app, /응답 스트림 중단/);
+  assert.match(app, /재시도 대기/);
+  assert.match(app, /자동 재시도 \$\{providerRetries\.length\}회 포함/);
+});
+
 test("cancelled runs stop active Thinking and tool rows with explicit feedback", async () => {
   const app = await read("../src/components/ConversationTurn.tsx");
 

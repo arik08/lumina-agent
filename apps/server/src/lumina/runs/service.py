@@ -1784,6 +1784,8 @@ def run_snapshot(
             "catalogRevision": execution.get("catalog_revision", "unknown"),
         },
         "modelTurnMetrics": run.snapshot_json.get("model_turn_metrics", []),
+        "providerActivity": run.snapshot_json.get("provider_activity"),
+        "providerRetries": run.snapshot_json.get("provider_retries", []),
         "limits": run.snapshot_json.get("limits", {}),
         "usage": usage,
         "mcpServers": run.snapshot_json.get("mcp_servers", []),
