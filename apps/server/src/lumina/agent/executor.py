@@ -2278,7 +2278,6 @@ class LocalRunExecutor:
             interrupted_by_steer = False
             limit_violation: RunLimitViolation | None = None
             provider_request_error: ProviderRequestError | None = None
-            provider_output_started = False
             provider_tool_output_started = False
             provider_stop_reason: str | None = None
             pending_text: list[str] = []
@@ -2364,7 +2363,6 @@ class LocalRunExecutor:
                         }:
                             if first_provider_output_at is None:
                                 first_provider_output_at = time.perf_counter()
-                            provider_output_started = True
                         if event.type in {
                             "tool_call_started",
                             "tool_call_delta",
@@ -2725,7 +2723,7 @@ class LocalRunExecutor:
                     provider_request_error,
                     retry_index=provider_retry_attempt,
                     round_index=round_index,
-                    output_started=provider_output_started,
+                    output_started=bool(round_text) or provider_tool_output_started,
                 ):
                     provider_retry_attempt += 1
                     continue

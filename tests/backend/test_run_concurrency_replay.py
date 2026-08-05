@@ -690,6 +690,29 @@ class _RetryableProvider:
         yield ProviderEvent(type="completed", stop_reason="stop")
 
 
+class _HiddenProgressThenSucceedProvider:
+    provider_id = "mock"
+    capabilities = ProviderCapabilities(tools=True)
+
+    def __init__(self) -> None:
+        self.attempts = 0
+
+    async def stream(self, _request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
+        self.attempts += 1
+        if self.attempts == 1:
+            yield ProviderEvent(
+                type="text_delta",
+                text="<progress>보고서 작성 경로를 준비하고 있습니다.</progress>\n",
+            )
+            raise ProviderRequestError(
+                "temporary stream stall after hidden progress",
+                retryable=True,
+                stage="stream",
+            )
+        yield ProviderEvent(type="text_delta", text="report generation recovered")
+        yield ProviderEvent(type="completed", stop_reason="stop")
+
+
 class _AlwaysRetryableProvider:
     provider_id = "mock"
     capabilities = ProviderCapabilities(tools=True)
@@ -1119,6 +1142,48 @@ def test_retryable_provider_failure_retries_only_before_output(
         "stage": "response",
         "statusCode": 503,
     }
+
+
+def test_hidden_progress_does_not_block_safe_provider_retry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _HiddenProgressThenSucceedProvider()
+    monkeypatch.setattr(
+        local_run_executor, "_provider", lambda *_args, **_kwargs: provider
+    )
+    monkeypatch.setattr(
+        executor_module,
+        "_PROVIDER_RETRY_DELAYS_SECONDS",
+        (0.0, 0.0),
+        raising=False,
+    )
+
+    with TestClient(
+        create_app(_settings(tmp_path, "retry-after-hidden-progress.db"))
+    ) as client:
+        csrf = _login(client)
+        conversation_id = _conversation(client, csrf, "Hidden progress retry")
+        run_id = _start_run(
+            client,
+            csrf,
+            conversation_id,
+            text="retry-after-hidden-progress",
+            idempotency_key="retry-after-hidden-progress-0001",
+        )
+        snapshot = _wait_for_terminal(client, run_id)
+
+    assert snapshot["status"] == "completed"
+    assert snapshot["assistantDraft"]["text"] == "report generation recovered"
+    assert provider.attempts == 2
+    with SessionLocal() as db:
+        retry_event = db.scalar(
+            select(RunEvent).where(
+                RunEvent.run_id == run_id,
+                RunEvent.event_type == "provider_retry_scheduled",
+            )
+        )
+    assert retry_event is not None
+    assert retry_event.payload_json["stage"] == "stream"
 
 
 def test_exhausted_provider_retries_preserve_safe_failure_taxonomy(
