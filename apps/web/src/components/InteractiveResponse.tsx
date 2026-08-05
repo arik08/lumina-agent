@@ -230,7 +230,7 @@ function MermaidSurface({ source, expanded = false, zoom = 1, onInitialFit }: {
       bindFunctions?.(containerRef.current);
       const renderedSvg = containerRef.current.querySelector("svg");
       if (renderedSvg) {
-        ensureMermaidNodeTextContrast(renderedSvg);
+        ensureMermaidNodeTextContrast(renderedSvg, Boolean(containerRef.current.closest(".theme-dark")));
         const naturalWidth = renderedSvg.viewBox.baseVal.width || renderedSvg.getBoundingClientRect().width;
         const naturalHeight = renderedSvg.viewBox.baseVal.height || renderedSvg.getBoundingClientRect().height;
         baseWidthRef.current = naturalWidth;
@@ -255,6 +255,22 @@ function MermaidSurface({ source, expanded = false, zoom = 1, onInitialFit }: {
     });
     return () => { cancelled = true; };
   }, [expanded, nearViewport, onInitialFit, source]);
+
+  useEffect(() => {
+    const themeRoot = containerRef.current?.closest<HTMLElement>(".app-shell")
+      ?? document.querySelector<HTMLElement>(".app-shell");
+    if (!themeRoot) return undefined;
+    const applyTheme = () => {
+      const container = containerRef.current;
+      const renderedSvg = container?.querySelector("svg");
+      if (container && renderedSvg) {
+        ensureMermaidNodeTextContrast(renderedSvg, themeRoot.classList.contains("theme-dark"));
+      }
+    };
+    const observer = new MutationObserver(applyTheme);
+    observer.observe(themeRoot, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, [nearViewport, source]);
 
   useEffect(() => {
     zoomRef.current = zoom;

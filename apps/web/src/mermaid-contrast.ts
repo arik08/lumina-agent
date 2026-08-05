@@ -4,6 +4,10 @@ const minimumTextContrast = 4.5;
 const lightText = "#ffffff";
 const darkText = "#20242c";
 const maximumContrastDarkText = "#000000";
+const darkSurface = { red: 29, green: 32, blue: 37, alpha: 1 };
+const maximumDarkNodeLuminance = 0.16;
+const darkNodeAuthoredColorWeight = 0.35;
+const originalInlineStyles = new WeakMap<Element, Map<string, { value: string; priority: string }>>();
 
 function parseCssColor(value: string): RgbColor | null {
   const hex = value.trim().match(/^#([\da-f]{3}|[\da-f]{6})$/i)?.[1];
@@ -57,9 +61,56 @@ export function readableMermaidTextColor(foreground: string, background: string)
   return maximumContrastDarkText;
 }
 
-export function ensureMermaidNodeTextContrast(svg: SVGSVGElement) {
+export function darkMermaidNodeFill(fill: string) {
+  const color = parseCssColor(fill);
+  if (!color || color.alpha < 1 || relativeLuminance(color) <= maximumDarkNodeLuminance) return null;
+  const mix = (channel: keyof Pick<RgbColor, "red" | "green" | "blue">) => Math.round(
+    color[channel] * darkNodeAuthoredColorWeight + darkSurface[channel] * (1 - darkNodeAuthoredColorWeight),
+  );
+  return `rgb(${mix("red")}, ${mix("green")}, ${mix("blue")})`;
+}
+
+function setTemporaryStyle(element: Element, property: string, value: string) {
+  let original = originalInlineStyles.get(element);
+  if (!original) {
+    original = new Map();
+    originalInlineStyles.set(element, original);
+  }
+  if (!original.has(property)) {
+    const style = (element as SVGElement | HTMLElement).style;
+    original.set(property, { value: style.getPropertyValue(property), priority: style.getPropertyPriority(property) });
+  }
+  (element as SVGElement | HTMLElement).style.setProperty(property, value, "important");
+}
+
+function restoreTemporaryStyle(element: Element, property: string) {
+  const original = originalInlineStyles.get(element)?.get(property);
+  if (!original) return;
+  const style = (element as SVGElement | HTMLElement).style;
+  if (original.value) style.setProperty(property, original.value, original.priority);
+  else style.removeProperty(property);
+  originalInlineStyles.get(element)?.delete(property);
+}
+
+export function ensureMermaidNodeTextContrast(svg: SVGSVGElement, darkMode = false) {
   for (const node of svg.querySelectorAll<SVGGElement>("g.node")) {
     const shape = node.querySelector<SVGGraphicsElement>(":scope > rect, :scope > polygon, :scope > circle, :scope > ellipse, :scope > path");
+    const labelElements = node.querySelectorAll<SVGElement | HTMLElement>(".label, .label text, .label tspan, .label span, .label div");
+    if (shape) restoreTemporaryStyle(shape, "fill");
+    for (const element of labelElements) {
+      restoreTemporaryStyle(element, "fill");
+      restoreTemporaryStyle(element, "color");
+    }
+    delete node.dataset.luminaThemeAdjusted;
+    delete node.dataset.luminaContrastAdjusted;
+    if (shape && darkMode) {
+      const replacementFill = darkMermaidNodeFill(getComputedStyle(shape).fill);
+      if (replacementFill) {
+        setTemporaryStyle(shape, "fill", replacementFill);
+        node.dataset.luminaThemeAdjusted = "true";
+      }
+    }
+
     const label = node.querySelector<SVGElement | HTMLElement>(".label .nodeLabel, .label text, .label tspan, .label span, .label div")
       ?? node.querySelector<SVGElement | HTMLElement>(".label");
     if (!shape || !label) continue;
@@ -73,14 +124,16 @@ export function ensureMermaidNodeTextContrast(svg: SVGSVGElement) {
 
     node.dataset.luminaContrastAdjusted = "true";
     const labelRoot = node.querySelector<SVGElement>(".label");
-    labelRoot?.style.setProperty("color", replacement, "important");
-    labelRoot?.style.setProperty("fill", replacement, "important");
+    if (labelRoot) {
+      setTemporaryStyle(labelRoot, "color", replacement);
+      setTemporaryStyle(labelRoot, "fill", replacement);
+    }
     for (const element of node.querySelectorAll<SVGElement>(".label text, .label tspan")) {
-      element.style.setProperty("fill", replacement, "important");
-      element.style.setProperty("color", replacement, "important");
+      setTemporaryStyle(element, "fill", replacement);
+      setTemporaryStyle(element, "color", replacement);
     }
     for (const element of node.querySelectorAll<HTMLElement>(".label span, .label div")) {
-      element.style.setProperty("color", replacement, "important");
+      setTemporaryStyle(element, "color", replacement);
     }
   }
 }
