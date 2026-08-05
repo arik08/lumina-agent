@@ -140,8 +140,15 @@ def test_codex_gpt56_maximum_mode_compacts_at_eighty_five_percent() -> None:
     context_window, effective_input_budget = _context_budget(run, ())
 
     assert context_window == 1_050_000
-    assert effective_input_budget == 917_904
-    assert _compaction_threshold(run, effective_input_budget) == 780_218
+    assert effective_input_budget == 922_000
+    assert _compaction_threshold(run, effective_input_budget) == 783_700
+
+    _, budget_with_tools = _context_budget(
+        run,
+        ({"type": "function", "name": "example", "description": "tool schema"},),
+    )
+    assert budget_with_tools == 922_000
+    assert _compaction_threshold(run, budget_with_tools) == 783_700
 
 
 def test_context_budget_honors_measured_input_limit() -> None:
@@ -163,7 +170,7 @@ def test_context_budget_honors_measured_input_limit() -> None:
     context_window, effective_input_budget = _context_budget(run, ())
 
     assert context_window == 1_050_000
-    assert effective_input_budget == 907_804
+    assert effective_input_budget == 911_900
 
 
 def test_standard_context_mode_leaves_only_20k_price_headroom() -> None:

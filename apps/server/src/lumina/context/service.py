@@ -896,10 +896,10 @@ def _context_budget(
         else 0
     )
     safety_margin = max(256, min(4_096, context_window // 20))
-    max_input_tokens = _positive_integer(
-        capabilities.get("max_input_tokens", capabilities.get("maxInputTokens")),
-        context_window,
+    configured_max_input = capabilities.get(
+        "max_input_tokens", capabilities.get("maxInputTokens")
     )
+    max_input_tokens = _positive_integer(configured_max_input, context_window)
     capacity_mode = capabilities.get(
         "context_capacity_mode", capabilities.get("contextCapacityMode")
     )
@@ -917,6 +917,12 @@ def _context_budget(
             256,
             min(context_window - standard_reserve, max_input_tokens),
         )
+    if (
+        isinstance(configured_max_input, int)
+        and not isinstance(configured_max_input, bool)
+        and configured_max_input > 0
+    ):
+        return context_window, max(256, min(max_input_tokens, context_window))
     return context_window, max(
         256,
         min(context_window - reserved_output, max_input_tokens)
