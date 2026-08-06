@@ -66,12 +66,8 @@
 .lumina-select-trigger:disabled { cursor: default; opacity: .5; }
 
 .lumina-select-menu {
-  position: absolute;
-  z-index: 100;
-  top: calc(100% + 5px);
   display: grid;
   width: max-content;
-  min-width: 100%;
   max-width: min(320px, calc(100vw - 24px));
   max-height: min(280px, calc(100vh - 32px));
   gap: 2px;
@@ -86,9 +82,11 @@
   scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
-.lumina-select.align-start .lumina-select-menu { left: 0; }
-.lumina-select.align-end .lumina-select-menu { right: 0; }
-.lumina-select.opens-above .lumina-select-menu { top: auto; bottom: calc(100% + 5px); }
+.lumina-select-menu-global {
+  position: fixed;
+  z-index: 1000;
+  color: var(--ink);
+}
 
 .lumina-select-menu::-webkit-scrollbar { width: 7px; }
 .lumina-select-menu::-webkit-scrollbar-track { background: transparent; }
@@ -129,7 +127,7 @@
 .lumina-select-menu > button:disabled { cursor: default; opacity: .45; }
 
 .lumina-select.size-small .lumina-select-trigger { height: var(--control-height-sm); padding: 0 7px; font-size: 10.5px; }
-.lumina-select.size-small .lumina-select-menu > button { height: 28px; font-size: 11px; }
+.lumina-select-menu-global.size-small > button { height: 28px; font-size: 11px; }
 
 @media (prefers-reduced-motion: reduce) {
   .lumina-select-trigger > svg { transition: none; }

@@ -1,5 +1,6 @@
 import { Check, ChevronDown } from "lucide-react";
-import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import "./SelectMenu.css";
 
 export interface SelectMenuOption {
@@ -21,6 +22,17 @@ interface SelectMenuProps {
   className?: string;
 }
 
+interface SelectMenuPosition {
+  left: number;
+  top: number;
+  minWidth: number;
+  maxHeight: number;
+  opensAbove: boolean;
+}
+
+const MENU_GAP = 5;
+const VIEWPORT_MARGIN = 12;
+
 export function SelectMenu({
   value,
   options,
@@ -34,7 +46,7 @@ export function SelectMenu({
   className = "",
 }: SelectMenuProps) {
   const [open, setOpen] = useState(false);
-  const [opensAbove, setOpensAbove] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<SelectMenuPosition | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -43,6 +55,27 @@ export function SelectMenu({
   const selectedIndex = options.findIndex((option) => option.value === value);
   const selected = options[selectedIndex];
 
+  const positionMenu = useCallback(() => {
+    if (!rootRef.current || !menuRef.current) return;
+    const triggerRect = rootRef.current.getBoundingClientRect();
+    const menuRect = menuRef.current.getBoundingClientRect();
+    const availableBelow = Math.max(0, window.innerHeight - triggerRect.bottom - MENU_GAP - VIEWPORT_MARGIN);
+    const availableAbove = Math.max(0, triggerRect.top - MENU_GAP - VIEWPORT_MARGIN);
+    const opensAbove = menuRect.height > availableBelow && availableAbove > availableBelow;
+    const maxHeight = Math.min(280, opensAbove ? availableAbove : availableBelow);
+    const visibleHeight = Math.min(menuRect.height, maxHeight);
+    const menuWidth = Math.max(menuRect.width, triggerRect.width);
+    const preferredLeft = align === "end" ? triggerRect.right - menuWidth : triggerRect.left;
+    const left = Math.min(
+      Math.max(VIEWPORT_MARGIN, preferredLeft),
+      Math.max(VIEWPORT_MARGIN, window.innerWidth - menuWidth - VIEWPORT_MARGIN),
+    );
+    const top = opensAbove
+      ? Math.max(VIEWPORT_MARGIN, triggerRect.top - MENU_GAP - visibleHeight)
+      : triggerRect.bottom + MENU_GAP;
+    setMenuPosition({ left, top, minWidth: triggerRect.width, maxHeight, opensAbove });
+  }, [align]);
+
   useEffect(() => {
     if (!open) return;
     const focusIndex = selectedIndex >= 0 && !options[selectedIndex]?.disabled
@@ -50,7 +83,11 @@ export function SelectMenu({
       : options.findIndex((option) => !option.disabled);
     const frame = window.requestAnimationFrame(() => optionRefs.current[focusIndex]?.focus());
     const closeOnOutsidePointer = (event: PointerEvent) => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false);
+      if (
+        event.target instanceof Node
+        && !rootRef.current?.contains(event.target)
+        && !menuRef.current?.contains(event.target)
+      ) setOpen(false);
     };
     document.addEventListener("pointerdown", closeOnOutsidePointer);
     return () => {
@@ -60,13 +97,19 @@ export function SelectMenu({
   }, [open, options, selectedIndex]);
 
   useLayoutEffect(() => {
-    if (!open || !rootRef.current || !menuRef.current) return;
-    const rootRect = rootRef.current.getBoundingClientRect();
-    const menuRect = menuRef.current.getBoundingClientRect();
-    const lacksRoomBelow = rootRect.bottom + menuRect.height + 13 > window.innerHeight;
-    const hasRoomAbove = rootRect.top - menuRect.height - 13 >= 0;
-    setOpensAbove(lacksRoomBelow && hasRoomAbove);
-  }, [open, options.length]);
+    if (!open) {
+      setMenuPosition(null);
+      return;
+    }
+    positionMenu();
+    const reposition = () => positionMenu();
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    };
+  }, [open, options.length, positionMenu]);
 
   useEffect(() => {
     if (disabled || options.length === 0) setOpen(false);
@@ -112,51 +155,70 @@ export function SelectMenu({
     optionRefs.current[available[nextPosition]]?.focus();
   };
 
-  return (
+  const menu = open && createPortal(
     <div
-      className={`lumina-select size-${size} width-${width} align-${align} ${open ? "is-open" : ""} ${opensAbove ? "opens-above" : ""} ${className}`.trim()}
-      ref={rootRef}
+      className={`lumina-select-menu lumina-select-menu-global size-${size} ${menuPosition?.opensAbove ? "opens-above" : ""} ${rootRef.current?.closest(".theme-dark") ? "theme-dark" : ""}`.trim()}
+      id={listId}
+      role="listbox"
+      aria-label={`${ariaLabel} 목록`}
+      ref={menuRef}
+      onKeyDown={moveFocus}
+      style={{
+        left: menuPosition?.left ?? 0,
+        top: menuPosition?.top ?? 0,
+        minWidth: menuPosition?.minWidth,
+        maxHeight: menuPosition?.maxHeight,
+        visibility: menuPosition ? "visible" : "hidden",
+      } as CSSProperties}
     >
-      <button
-        className="lumina-select-trigger"
-        type="button"
-        aria-label={ariaLabel}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={open ? listId : undefined}
-        disabled={disabled || options.length === 0}
-        ref={triggerRef}
-        onClick={() => setOpen((current) => !current)}
-        onKeyDown={(event) => {
-          event.stopPropagation();
-          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-            event.preventDefault();
-            setOpen(true);
-          }
-        }}
+      {options.map((option, index) => (
+        <button
+          className={option.value === value ? "is-selected" : ""}
+          type="button"
+          role="option"
+          aria-selected={option.value === value}
+          disabled={option.disabled}
+          key={option.value}
+          ref={(element) => { optionRefs.current[index] = element; }}
+          onClick={() => choose(option.value)}
+        >
+          <span>{option.label}</span>
+          <Check size={12} aria-hidden="true" />
+        </button>
+      ))}
+    </div>,
+    document.body,
+  );
+
+  return (
+    <>
+      <div
+        className={`lumina-select size-${size} width-${width} align-${align} ${open ? "is-open" : ""} ${className}`.trim()}
+        ref={rootRef}
       >
-        <span>{selected?.label ?? placeholder ?? ariaLabel}</span>
-        <ChevronDown size={13} aria-hidden="true" />
-      </button>
-      {open && (
-        <div className="lumina-select-menu" id={listId} role="listbox" aria-label={`${ariaLabel} 목록`} ref={menuRef} onKeyDown={moveFocus}>
-          {options.map((option, index) => (
-            <button
-              className={option.value === value ? "is-selected" : ""}
-              type="button"
-              role="option"
-              aria-selected={option.value === value}
-              disabled={option.disabled}
-              key={option.value}
-              ref={(element) => { optionRefs.current[index] = element; }}
-              onClick={() => choose(option.value)}
-            >
-              <span>{option.label}</span>
-              <Check size={12} aria-hidden="true" />
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+        <button
+          className="lumina-select-trigger"
+          type="button"
+          aria-label={ariaLabel}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-controls={open ? listId : undefined}
+          disabled={disabled || options.length === 0}
+          ref={triggerRef}
+          onClick={() => setOpen((current) => !current)}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              setOpen(true);
+            }
+          }}
+        >
+          <span>{selected?.label ?? placeholder ?? ariaLabel}</span>
+          <ChevronDown size={13} aria-hidden="true" />
+        </button>
+      </div>
+      {menu}
+    </>
   );
 }

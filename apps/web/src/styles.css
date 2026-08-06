@@ -2845,6 +2845,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .artifact-source-editor { width: 100%; min-height: calc(100svh - 129px); flex: 1; padding: 20px; background: #f7f8f9; color: #343a43; font: 11px/1.7 var(--font-code); }
 
 .artifact-length-popover.theme-dark,
+.lumina-select-menu.theme-dark,
 .app-shell.theme-dark,
 .shared-viewer.theme-dark,
 .shared-viewer-state.theme-dark {
