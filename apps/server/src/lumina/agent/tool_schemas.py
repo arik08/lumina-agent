@@ -7,11 +7,12 @@ from copy import deepcopy
 from typing import Any
 
 from ..artifacts.reporting import REPORT_FORMATS
+from ..user_input import MAX_USER_INPUT_QUESTIONS
 from .execution_policy import _optional_positive_int
 from .text_utils import _bounded_text
 
 
-_MAX_USER_INPUT_QUESTIONS = 10
+_MAX_USER_INPUT_QUESTIONS = MAX_USER_INPUT_QUESTIONS
 _ARTIFACT_TARGET_FLOOR_RATIO = 0.7
 _ARTIFACT_TARGET_CEILING_RATIO = 1.3
 _ARTIFACT_FIRST_PASS_PREFERRED_FLOOR_RATIO = 0.9
@@ -212,8 +213,14 @@ _REQUEST_USER_INPUT_TOOL_SCHEMA = {
         "description": (
             "Pause the Run for a compact set of user clarification questions. Call this tool by "
             "itself and only under the active clarification-mode contract. Group independent, "
-            "currently known questions; for an explicit interview, use later calls for questions "
-            "that genuinely depend on earlier answers. Never repeat a resolved question or exceed "
+            "currently known questions. Each question object must ask for exactly one fact or "
+            "decision; never pack several independent facts into one prompt or its free-form "
+            "answer instruction. Put those facts in separate question items in the same bundle. "
+            "For an interview or intake, include every currently foreseeable high-value question "
+            "in the first bundle instead of intentionally splitting the interview across repeated "
+            "submit-and-wait cycles. Use a later call only when an answer reveals a material "
+            "blocking question that could not reasonably have been anticipated. Never repeat a "
+            "resolved question or exceed "
             "ten questions in total across the Run. The UI "
             "automatically adds a free-form custom answer to every question, so provide only "
             "two to four useful objective options. Do not use this for tool approval."

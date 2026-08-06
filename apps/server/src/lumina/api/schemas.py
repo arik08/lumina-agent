@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ..user_input import MAX_USER_INPUT_QUESTIONS
+
 
 def _to_camel(value: str) -> str:
     first, *rest = value.split("_")
@@ -277,7 +279,10 @@ class RunActionRequest(ApiModel):
     approval_id: str | None = None
     command_id: str | None = None
     input_request_id: str | None = None
-    answers: list[UserInputAnswer] = Field(default_factory=list, max_length=4)
+    answers: list[UserInputAnswer] = Field(
+        default_factory=list,
+        max_length=MAX_USER_INPUT_QUESTIONS,
+    )
     note: str | None = Field(default=None, max_length=2000)
     payload: dict[str, Any] = Field(default_factory=dict)
 

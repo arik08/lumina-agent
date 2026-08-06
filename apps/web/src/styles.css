@@ -2503,7 +2503,7 @@ button.schedule-run-row:disabled { cursor: wait; opacity: 1; }
 .artifact-model-output-help { margin-inline-start: var(--space-1); padding: 0; border: 0; background: transparent; color: inherit; font: inherit; line-height: 1; cursor: help; }
 .artifact-model-output-help:hover { color: var(--cobalt); }
 .artifact-progress-meter { position: relative; overflow: hidden; width: 100%; height: 7px; border: 1px solid color-mix(in srgb, var(--artifact-progress-color) 34%, var(--line)); border-radius: 2px; background: color-mix(in srgb, var(--artifact-progress-color) 9%, transparent); box-shadow: inset 0 1px 2px color-mix(in srgb, var(--ink) 12%, transparent); }
-.artifact-progress-fill { display: block; height: 100%; background: var(--artifact-progress-color); box-shadow: 0 0 7px color-mix(in srgb, var(--artifact-progress-color) 48%, transparent); transition: width 100ms linear; }
+.artifact-progress-fill { display: block; height: 100%; background: var(--artifact-progress-color); box-shadow: 0 0 7px color-mix(in srgb, var(--artifact-progress-color) 48%, transparent); transition: none; }
 @container (max-width: 560px) {
   .artifact-progress-target { display: none; }
 }
@@ -2588,7 +2588,7 @@ button.schedule-run-row:disabled { cursor: wait; opacity: 1; }
 .write-file-stream-heading span { overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
 .write-file-stream-meter { position: relative; overflow: hidden; height: 9px; border: 1px solid color-mix(in srgb, var(--write-stream-color) 52%, var(--line)); border-radius: 2px; background: color-mix(in srgb, var(--write-stream-color) 9%, var(--surface-soft)); box-shadow: inset 0 1px 2px color-mix(in srgb, var(--ink) 16%, transparent); }
 .write-file-stream-meter::after { position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0, transparent calc(10% - 1px), color-mix(in srgb, var(--surface) 62%, transparent) calc(10% - 1px), color-mix(in srgb, var(--surface) 62%, transparent) 10%); content: ""; pointer-events: none; }
-.write-file-stream-meter > span { display: block; height: 100%; background: var(--write-stream-color); box-shadow: 0 0 8px color-mix(in srgb, var(--write-stream-color) 58%, transparent); transition: width 180ms cubic-bezier(.25, 1, .5, 1); }
+.write-file-stream-meter > span { display: block; height: 100%; background: var(--write-stream-color); box-shadow: 0 0 8px color-mix(in srgb, var(--write-stream-color) 58%, transparent); transition: none; }
 .status-complete { color: var(--success); }
 .status-running { color: var(--cobalt); }
 .status-waiting { color: var(--muted); }

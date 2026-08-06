@@ -94,18 +94,23 @@ test("parallel tool intervals are merged before calculating non-tool model time"
   assert.equal(stageFinishedAtMs - stageStartedAtMs - toolActiveDurationMs, 22_240);
 });
 
-test("non-tool time is rendered as a model processing row with a clear explanation", async () => {
+test("non-tool time is rendered as a user-facing answer preparation row", async () => {
   const app = await read("../src/components/ConversationTurn.tsx");
 
   assert.match(app, /<ModelProcessingRow[\s\S]*durationMs=\{modelProcessingDurationMs\}/);
-  assert.match(app, /모델 판단 · 내부 실행 합계/);
-  assert.match(app, /내부 추론 \$\{reasoningTokens\.toLocaleString\(\)\} 토큰/);
-  assert.match(app, /reasoningTokens=\{!timelineRunning && groupIndex === activityGroups\.length - 1 \? reasoningTokens : undefined\}/);
+  assert.match(app, /const modelProcessingRunning = timelineRunning[\s\S]*&& !toolGroupRunning/);
+  assert.match(app, /!timelineRunning && summary\?\.id === latestProgressSummaryId[\s\S]*\? runOutcome[\s\S]*: "completed"/);
+  assert.match(app, /hasModelProcessingRow && toolGroupRunning[\s\S]*<ModelProcessingRow[\s\S]*toolActivities\.map/);
+  assert.match(app, /toolActivities\.map[\s\S]*hasModelProcessingRow && !toolGroupRunning[\s\S]*<ModelProcessingRow/);
+  assert.match(app, /답변을 준비하고 있습니다\./);
+  assert.match(app, /답변을 준비했습니다\./);
+  assert.doesNotMatch(app, /모델 판단 · 내부 실행 합계/);
+  assert.doesNotMatch(app, /내부 추론 \$\{reasoningTokens\.toLocaleString\(\)\} 토큰/);
   assert.match(app, /여러 모델 호출과 Skill·계획 처리, 재시도 시간을 합산한 값\(외부 도구 실행 제외\)/);
-  assert.doesNotMatch(app, /Provider 요청 전송 · 응답 수신/);
+  assert.doesNotMatch(app, /Provider 응답/);
 });
 
-test("provider waits and retries remain visible instead of looking like silent Thinking", async () => {
+test("provider waits and retries stay internal while the user sees a stable processing state", async () => {
   const apiTypes = await read("../src/api-types.ts");
   const workspace = await read("../src/use-lumina-workspace.ts");
   const app = await read("../src/components/ConversationTurn.tsx");
@@ -114,32 +119,50 @@ test("provider waits and retries remain visible instead of looking like silent T
   assert.match(apiTypes, /RunEventEnvelope<"provider_retry_scheduled", Omit<ProviderRetry, "createdAt">>/);
   assert.match(workspace, /event\.type === "provider_activity_changed"/);
   assert.match(workspace, /event\.type === "provider_retry_scheduled"/);
-  assert.match(app, /Provider 첫 응답 대기 · 시도/);
-  assert.match(app, /다음 이벤트 .*초 남음 \(무응답 시 자동 재시도\)/);
-  assert.match(app, /응답 스트림 중단/);
-  assert.match(app, /재시도 대기/);
-  assert.match(app, /자동 재시도 \$\{providerRetries\.length\}회 포함/);
+  assert.match(app, /const statusLabel = running[\s\S]*\? "처리 중"/);
+  assert.doesNotMatch(app, /Provider 첫 응답 대기 · 시도/);
+  assert.doesNotMatch(app, /다음 이벤트 .*초 남음 \(무응답 시 자동 재시도\)/);
+  assert.doesNotMatch(app, /재시도 대기/);
+  assert.doesNotMatch(app, /자동 재시도 \$\{providerRetries\.length\}회 포함/);
 });
 
-test("cancelled runs stop active Thinking and tool rows with explicit feedback", async () => {
+test("search engine implementation names are normalized in visible tool text", async () => {
+  const app = await read("../src/components/ConversationTurn.tsx");
+  const userFacingText = await read("../src/user-facing-system-text.ts");
+
+  assert.match(userFacingText, /replace\(\/duckduckgo\(\?:_html\)\?\/gi, "검색"\)/);
+  assert.match(app, /userFacingSystemText\(formatModelExchangeValue\(value\)\)/);
+  assert.match(app, /userFacingSystemText\(activity\.execution\.resultSummary\[0\]\)/);
+});
+
+test("provider-only progress summaries are rewritten around the user task", async () => {
+  const app = await read("../src/components/ConversationTurn.tsx");
+  const userFacingText = await read("../src/user-facing-system-text.ts");
+
+  assert.match(userFacingText, /Provider가 빈 응답을 반환해/);
+  assert.match(userFacingText, /return "답변을 계속 준비하고 있습니다\."/);
+  assert.match(app, /userFacingSystemText\(summary\.text\)/);
+});
+
+test("cancelled runs stop active answer preparation and tool rows with explicit feedback", async () => {
   const app = await read("../src/components/ConversationTurn.tsx");
 
-  assert.match(app, /awaitingInput \? "Q&A" : "Thinking"/);
-  assert.match(app, /state === "stopped" \? "사용자 요청으로 모델 처리를 중지했습니다\."/);
+  assert.match(app, /awaitingInput \? "Q&A" : "답변 준비"/);
+  assert.match(app, /state === "stopped" \? "요청에 따라 답변 준비를 중지했습니다\."/);
   assert.match(app, /state === "failed" \? "실패" : "중지됨"/);
   assert.match(app, /const stoppedByRun = executionActive && \(runOutcome === "stopped" \|\| runOutcome === "failed"\)/);
   assert.match(app, /stoppedByRun \? \(runOutcome === "failed" \? "실패" : "중지됨"\)/);
   assert.match(app, /요청에 따라 작업을 중지했습니다\./);
 });
 
-test("model processing expands to the actual persisted exchange instead of token totals", async () => {
+test("answer preparation expands to user-facing persisted exchange details", async () => {
   const app = await read("../src/components/ConversationTurn.tsx");
 
   assert.match(app, /className=\{`tool-call-trigger model-processing-row/);
   assert.match(app, /aria-expanded=\{isOpen\}/);
-  assert.match(app, /실제 교환 정보/);
-  assert.match(app, /Provider로 보냄/);
-  assert.match(app, /Provider에서 받음/);
+  assert.match(app, /처리 세부 정보/);
+  assert.match(app, /모델에 전달한 내용/);
+  assert.match(app, /모델이 반환한 내용/);
   assert.doesNotMatch(app, /화면에 저장된 실제 사용자 메시지/);
   assert.doesNotMatch(app, /현재 Run 누적 토큰/);
 });

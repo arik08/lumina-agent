@@ -1221,6 +1221,10 @@ def event_response(event: RunEvent) -> dict[str, Any]:
 
 def tool_display_name(tool_name: str) -> str:
     """Keep the visible tool name identical across events and snapshots."""
+    if tool_name == "web_search":
+        return "검색"
+    if tool_name == "web_fetch":
+        return "페이지 확인"
     return tool_name
 
 

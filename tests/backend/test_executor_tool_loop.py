@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -999,16 +1000,12 @@ def test_write_file_progress_counts_streamed_tokens_and_lines() -> None:
     assert completed["lines"] == 2
 
 
-def test_artifact_progress_refreshes_at_100ms_with_live_model_output() -> None:
-    assert executor_module._ARTIFACT_PROGRESS_INTERVAL_SECONDS == 0.1
+def test_artifact_progress_checkpoints_at_one_second_with_live_model_output() -> None:
+    assert not hasattr(executor_module, "_ARTIFACT_PROGRESS_INTERVAL_SECONDS")
     assert executor_module._ARTIFACT_PROGRESS_CHECKPOINT_INTERVAL_SECONDS == 1.0
-    assert executor_module._artifact_progress_due(None, 10.0)
-    assert not executor_module._artifact_progress_due(10.0, 10.099)
-    assert executor_module._artifact_progress_due(10.0, 10.1)
-    assert not executor_module._artifact_progress_due(
-        10.0, 10.999, interval_seconds=1.0
-    )
-    assert executor_module._artifact_progress_due(10.0, 11.0, interval_seconds=1.0)
+    assert executor_module._artifact_progress_checkpoint_due(None, 10.0)
+    assert not executor_module._artifact_progress_checkpoint_due(10.0, 10.999)
+    assert executor_module._artifact_progress_checkpoint_due(10.0, 11.0)
     assert executor_module._live_model_output_tokens(3_204, 400) == 3_304
 
 
@@ -2242,6 +2239,92 @@ def test_executable_html_write_file_satisfies_artifact_completion_gate(
     assert [tool["toolName"] for tool in snapshot["toolExecutions"]] == ["write_file"]
     assert len(snapshot["artifacts"]) == 1
     assert snapshot["artifacts"][0]["displayName"] == "game.html"
+
+
+@pytest.mark.parametrize(
+    "destination_artifact_id",
+    [
+        "new",
+        "new-file",
+        "none",
+        "00000000-0000-0000-0000-000000000000",
+    ],
+)
+def test_new_write_file_recovers_invented_destination_artifact_id(
+    monkeypatch, tmp_path: Path, destination_artifact_id: str
+) -> None:
+    database_slug = destination_artifact_id.replace("-", "_")
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / f'write-file-{database_slug}.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    provider_turn = 0
+
+    def provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        nonlocal provider_turn
+        del first_turn
+        assert wants_artifact is True
+        provider_turn += 1
+        if provider_turn > 1:
+            return MockProvider(text_chunks=("HTML 시뮬레이터를 만들었습니다.",))
+        return MockProvider(
+            tool_call=MockToolCall(
+                name="write_file",
+                arguments={
+                    "path": "solar-system.html",
+                    "content": (
+                        "<!doctype html><html><body><canvas></canvas>"
+                        "<script>window.simulationRunning=true;</script></body></html>"
+                    ),
+                    "destination_artifact_id": destination_artifact_id,
+                    "destination_base_version": 1,
+                },
+                call_id="call_invented_destination",
+            )
+        )
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "신규 HTML 생성 복구"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": f"write-file-{database_slug}-0001",
+            },
+            json={"message": {"text": "태양계 시뮬레이터 HTML을 만들어줘"}},
+        )
+        assert started.status_code == 202, started.text
+        snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
+
+    assert snapshot["status"] == "completed"
+    assert provider_turn == 2
+    assert len(snapshot["artifacts"]) == 1
+    assert snapshot["artifacts"][0]["displayName"] == "solar-system.html"
+    assert snapshot["toolExecutions"][0]["status"] == "completed"
+    assert snapshot["toolExecutions"][0]["result"]["action"] == "created"
+
+
+def test_write_file_new_destination_placeholder_normalization() -> None:
+    assert executor_module._write_file_destination_is_new_placeholder("new")
+    assert executor_module._write_file_destination_is_new_placeholder("NEW_FILE")
+    assert executor_module._write_file_destination_is_new_placeholder(" new artifact ")
+    assert executor_module._write_file_destination_is_new_placeholder("none")
+    assert not executor_module._write_file_destination_is_new_placeholder(
+        "00000000-0000-0000-0000-000000000000"
+    )
 
 
 def test_write_file_commit_failure_cleans_artifact_content(

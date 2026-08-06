@@ -14,14 +14,15 @@ def _tool(tool_name: str) -> ToolExecution:
     )
 
 
-def test_tool_display_name_preserves_canonical_underscores() -> None:
-    assert tool_display_name("web_search") == "web_search"
-    assert tool_display_name("web_fetch") == "web_fetch"
+def test_tool_display_name_uses_user_facing_search_labels() -> None:
+    assert tool_display_name("web_search") == "검색"
+    assert tool_display_name("web_fetch") == "페이지 확인"
 
 
 def test_tool_name_is_identical_in_live_events_and_run_snapshots() -> None:
     for tool_name in ("web_search", "web_fetch", "create_report", "mcp__server__fetch"):
         tool = _tool(tool_name)
 
-        assert _tool_event(tool)["label"] == tool_name
-        assert tool_response(tool)["label"] == tool_name
+        expected_label = tool_display_name(tool_name)
+        assert _tool_event(tool)["label"] == expected_label
+        assert tool_response(tool)["label"] == expected_label

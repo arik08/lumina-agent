@@ -43,7 +43,7 @@ test("clarification card identifies questions and supports objective, custom, an
 
 test("awaiting clarification is shown as Q&A and freezes the model-work clock", () => {
   assert.match(turnSource, /status === "awaiting_input"/);
-  assert.match(turnSource, /awaitingInput \? "Q&A" : "Thinking"/);
+  assert.match(turnSource, /awaitingInput \? "Q&A" : "답변 준비"/);
   assert.match(turnSource, /확인 질문 · 사용자 답변 대기/);
   assert.match(turnSource, /awaitingInput && Number\.isFinite\(inputWaitStartedAtMs\)/);
   assert.match(turnSource, /timelineRunning=\{!terminal && !awaitingInput\}/);

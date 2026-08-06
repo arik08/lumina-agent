@@ -154,6 +154,15 @@ def test_account_clarification_setting_and_durable_input_resume(
         assert "never put questions for the person in visible answer text" in (
             provider_system_text
         )
+        assert "each independent fact or decision as a separate question" in (
+            provider_system_text
+        )
+        assert "never pack multiple facts into one prompt" in provider_system_text
+        assert "every currently foreseeable high-value question in the first bundle" in (
+            provider_system_text
+        )
+        assert "do not intentionally split known questions" in provider_system_text
+        assert "repeated submit-and-wait cycles" in provider_system_text
         assert "Personalized-guidance intake" in provider_system_text
         assert "generic list of conditional 'if X, then Y' advice" in (
             provider_system_text
@@ -257,6 +266,76 @@ def test_account_clarification_setting_and_durable_input_resume(
                 "input_submitted",
                 "input_checkpoint_consumed",
             } <= events
+
+
+def test_ten_question_bundle_can_be_submitted_in_one_action(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    questions = [
+        {
+            "id": f"intake_{index}",
+            "prompt": f"확인 질문 {index}",
+            "options": [
+                {"id": "yes", "label": "예"},
+                {"id": "no", "label": "아니요"},
+            ],
+        }
+        for index in range(1, 11)
+    ]
+
+    def ten_question_provider(
+        _provider_id: str,
+        *,
+        wants_artifact: bool,
+        first_turn: bool,
+    ) -> MockProvider:
+        del wants_artifact
+        if first_turn:
+            return MockProvider(
+                tool_call=MockToolCall(
+                    name="request_user_input",
+                    call_id="ten-question-bundle",
+                    arguments={"questions": questions},
+                )
+            )
+        return MockProvider(text_chunks=("열 가지 답변을 반영했습니다.",))
+
+    monkeypatch.setattr(local_run_executor, "_provider", ten_question_provider)
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        headers = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers=headers,
+            json={"projectId": project_id, "title": "열 문항 제출 검증"},
+        )
+        started = client.post(
+            f"/api/conversations/{conversation.json()['id']}/runs",
+            headers={**headers, "Idempotency-Key": "ten-question-start"},
+            json={"message": {"text": "인터뷰를 시작해 주세요."}},
+        )
+        assert started.status_code == 202, started.text
+        run_id = started.json()["run"]["runId"]
+        waiting = _wait_for_status(client, run_id, {"awaiting_input"})
+        request = waiting["inputRequests"][0]
+        assert len(request["questions"]) == 10
+
+        submitted = client.post(
+            f"/api/runs/{run_id}/actions",
+            headers={**headers, "Idempotency-Key": "ten-question-submit"},
+            json={
+                "type": "submit_user_input",
+                "inputRequestId": request["id"],
+                "answers": [
+                    {"questionId": question["id"], "optionId": "yes"}
+                    for question in questions
+                ],
+            },
+        )
+        assert submitted.status_code == 200, submitted.text
+        completed = _wait_for_status(client, run_id, {"completed"})
+        assert completed["inputRequests"][0]["status"] == "submitted"
 
 
 def test_explicit_interview_can_resume_into_a_second_question_card(

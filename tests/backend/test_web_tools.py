@@ -93,6 +93,379 @@ async def test_duckduckgo_search_parses_structured_evidence() -> None:
 
 
 @pytest.mark.asyncio
+async def test_duckduckgo_search_falls_back_to_browser_profile_after_challenge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+    delays: list[float] = []
+    progress: list[str] = []
+    browser_profiles: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(
+            202,
+            headers={"content-type": "text/html; charset=utf-8"},
+            text="<html><body>Unfortunately, bots use DuckDuckGo too. "
+            "Please complete the following challenge.</body></html>",
+        )
+
+    def browser_fallback(_url: str, **kwargs) -> tuple[object, ...]:
+        browser_profiles.append(kwargs["browser_profile"])
+        return (
+            web_module._SearchEntry(
+                url="https://example.com/recovered",
+                title="Recovered result",
+                snippet="Browser-compatible snippet",
+            ),
+        )
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    async def record_progress(message: str) -> None:
+        progress.append(message)
+
+    monkeypatch.setattr(web_module, "_DUCKDUCKGO_MIN_REQUEST_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setattr(
+        web_module, "_search_duckduckgo_impersonated_endpoint", browser_fallback
+    )
+    monkeypatch.setattr(web_module.asyncio, "sleep", record_sleep)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await web_search(
+            "challenge recovery",
+            tool_execution_id="tool-search-retry",
+            client=client,
+            resolver=_public_resolver,
+            policy=WebToolPolicy(max_retries=1),
+            progress_callback=record_progress,
+        )
+
+    assert attempts == 1
+    assert browser_profiles == ["chrome"]
+    assert delays == []
+    assert progress == [
+        "검색 서비스의 사람 확인 응답을 감지해 "
+        "브라우저 호환 검색 경로로 전환합니다."
+    ]
+    assert [source.title for source in result.sources] == ["Recovered result"]
+    assert result.sources[0].verbatim_excerpt == "Browser-compatible snippet"
+
+
+@pytest.mark.asyncio
+async def test_duckduckgo_search_does_not_retry_explicit_no_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            text='<div class="result result--no-result">'
+            '<div class="no-results__message">No results found</div></div>',
+        )
+
+    async def fail_sleep(_delay: float) -> None:
+        pytest.fail("explicit no-results responses must not be retried")
+
+    monkeypatch.setattr(web_module.asyncio, "sleep", fail_sleep)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await web_search(
+            "legitimate zero results",
+            tool_execution_id="tool-search-empty",
+            client=client,
+            resolver=_public_resolver,
+        )
+
+    assert attempts == 1
+    assert result.sources == ()
+
+
+@pytest.mark.asyncio
+async def test_duckduckgo_search_fails_instead_of_returning_false_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+    browser_profiles: list[str] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            text="<html><body>Unexpected search page</body></html>",
+        )
+
+    async def skip_sleep(_delay: float) -> None:
+        return None
+
+    def malformed_browser_fallback(_url: str, **kwargs) -> tuple[object, ...]:
+        browser_profiles.append(kwargs["browser_profile"])
+        raise WebToolError(
+            "search_results_unavailable",
+            "검색 응답에서 결과 또는 명시적인 결과 없음 상태를 확인하지 못했습니다.",
+            stage="search",
+            retryable=True,
+            status_code=200,
+        )
+
+    monkeypatch.setattr(web_module.asyncio, "sleep", skip_sleep)
+    monkeypatch.setattr(
+        web_module,
+        "_search_duckduckgo_impersonated_endpoint",
+        malformed_browser_fallback,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(WebToolError) as captured:
+            await web_search(
+                "malformed search response",
+                tool_execution_id="tool-search-malformed",
+                client=client,
+                resolver=_public_resolver,
+                policy=WebToolPolicy(max_retries=1),
+            )
+
+    assert attempts == 1
+    assert browser_profiles == ["chrome"]
+    assert captured.value.code == "search_results_unavailable"
+    assert str(captured.value) == (
+        "검색 응답에서 결과 또는 명시적인 결과 없음 상태를 확인하지 못했습니다."
+    )
+    assert captured.value.retryable is True
+    assert captured.value.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_duckduckgo_search_reports_persistent_challenge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+    delays: list[float] = []
+    progress: list[str] = []
+    timeline: list[str] = []
+    browser_profiles: list[str] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(
+            202,
+            headers={"content-type": "text/html; charset=utf-8"},
+            text="<html><body>Please complete the following challenge.</body></html>",
+        )
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+        timeline.append(f"sleep:{delay}")
+
+    async def record_progress(message: str) -> None:
+        progress.append(message)
+        timeline.append(message)
+
+    def challenged_browser_fallback(_url: str, **kwargs) -> tuple[object, ...]:
+        browser_profiles.append(kwargs["browser_profile"])
+        raise WebToolError(
+            "duckduckgo_challenge",
+            "검색 서비스에서 사람 확인 절차를 요청했습니다.",
+            stage="search",
+            retryable=True,
+            status_code=202,
+        )
+
+    monkeypatch.setattr(web_module, "_DUCKDUCKGO_MIN_REQUEST_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setattr(
+        web_module,
+        "_search_duckduckgo_impersonated_endpoint",
+        challenged_browser_fallback,
+    )
+    monkeypatch.setattr(web_module.asyncio, "sleep", record_sleep)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(WebToolError) as captured:
+            await web_search(
+                "persistent challenge",
+                tool_execution_id="tool-search-challenge",
+                client=client,
+                resolver=_public_resolver,
+                policy=WebToolPolicy(max_retries=3),
+                progress_callback=record_progress,
+            )
+
+    assert attempts == 1
+    assert browser_profiles == ["chrome", "safari", "chrome124"]
+    assert delays == pytest.approx([10.0, 10.0], abs=0.01)
+    assert progress == [
+        "검색 서비스의 사람 확인 응답을 감지해 "
+        "브라우저 호환 검색 경로로 전환합니다.",
+        "검색이 일시적으로 제한되어 10초 후 다른 검색 경로로 "
+        "재시도합니다 (2/3).",
+        "검색이 일시적으로 제한되어 10초 후 다른 검색 경로로 "
+        "재시도합니다 (3/3).",
+    ]
+    first_progress_index = timeline.index(
+        "검색이 일시적으로 제한되어 10초 후 다른 검색 경로로 "
+        "재시도합니다 (2/3)."
+    )
+    first_sleep_index = next(
+        index for index, item in enumerate(timeline) if item.startswith("sleep:")
+    )
+    assert first_sleep_index > first_progress_index
+    assert captured.value.code == "duckduckgo_challenge"
+    assert str(captured.value) == (
+        "검색이 일시적으로 제한되었습니다. 잠시 후 다시 검색해 주세요."
+    )
+    assert captured.value.retryable is True
+    assert captured.value.status_code == 202
+
+
+def test_duckduckgo_browser_fallback_preserves_transport_limits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    curl_options: list[tuple[object, object]] = []
+    closed = False
+
+    class FakeCurl:
+        def setopt(self, option: object, value: object) -> None:
+            curl_options.append((option, value))
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "text/html; charset=utf-8"}
+
+    class FakeSession:
+        def __init__(self, *, curl: object) -> None:
+            calls.append({"curl": curl})
+
+        def get(self, url: str, **kwargs) -> FakeResponse:
+            calls.append({"url": url, **kwargs})
+            callback = kwargs["content_callback"]
+            callback(
+                b'<a class="result__a" href="https://example.com/browser">'
+                b'Browser result</a><div class="result__snippet">Safe snippet</div>'
+            )
+            return FakeResponse()
+
+        def close(self) -> None:
+            nonlocal closed
+            closed = True
+
+    monkeypatch.setattr(web_module, "Curl", FakeCurl)
+    monkeypatch.setattr(web_module.curl_requests, "Session", FakeSession)
+    entries = web_module._search_duckduckgo_impersonated_endpoint(
+        "https://html.duckduckgo.com/html/?q=browser",
+        browser_profile="chrome",
+        policy=WebToolPolicy(proxy="https://proxy.example:8443"),
+        trust_profile=SimpleNamespace(bundle_path="C:/certs/combined.pem"),
+    )
+
+    request = calls[1]
+    assert request["allow_redirects"] is False
+    assert request["proxy"] == "https://proxy.example:8443"
+    assert request["verify"] is True
+    assert request["impersonate"] == "chrome"
+    assert curl_options == [
+        (web_module.CurlOpt.CAINFO, b"C:/certs/combined.pem")
+    ]
+    assert closed is True
+    assert entries[0].title == "Browser result"
+    assert entries[0].snippet == "Safe snippet"
+
+
+def test_duckduckgo_browser_fallback_rejects_oversized_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeCurl:
+        def setopt(self, _option: object, _value: object) -> None:
+            return None
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "text/html; charset=utf-8"}
+
+    class FakeSession:
+        def __init__(self, *, curl: object) -> None:
+            del curl
+
+        def get(self, _url: str, **kwargs) -> FakeResponse:
+            callback = kwargs["content_callback"]
+            callback(b"123456")
+            callback(b"789012")
+            return FakeResponse()
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(web_module, "Curl", FakeCurl)
+    monkeypatch.setattr(web_module.curl_requests, "Session", FakeSession)
+    with pytest.raises(WebToolError) as captured:
+        web_module._search_duckduckgo_impersonated_endpoint(
+            "https://html.duckduckgo.com/html/?q=oversized",
+            browser_profile="chrome",
+            policy=WebToolPolicy(max_response_bytes=10),
+            trust_profile=SimpleNamespace(bundle_path=None),
+        )
+
+    assert captured.value.code == "response_too_large"
+
+
+@pytest.mark.asyncio
+async def test_duckduckgo_search_paces_parallel_request_starts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active_requests = 0
+    peak_active_requests = 0
+    request_count = 0
+    request_started_at: list[float] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal active_requests, peak_active_requests, request_count
+        request_count += 1
+        request_started_at.append(asyncio.get_running_loop().time())
+        active_requests += 1
+        peak_active_requests = max(peak_active_requests, active_requests)
+        await asyncio.sleep(0.05)
+        active_requests -= 1
+        query = request.url.params["q"]
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            text=(
+                f'<a class="result__a" href="https://example.com/{request_count}">'
+                f"{query}</a>"
+                '<div class="result__snippet">Result snippet</div>'
+            ),
+        )
+
+    monkeypatch.setattr(web_module, "_DUCKDUCKGO_MIN_REQUEST_INTERVAL_SECONDS", 0.02)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        results = await asyncio.gather(
+            *(
+                web_search(
+                    f"parallel query {index}",
+                    tool_execution_id=f"parallel-search-{index}",
+                    client=client,
+                    resolver=_public_resolver,
+                    policy=WebToolPolicy(max_retries=0),
+                )
+                for index in range(3)
+            )
+        )
+
+    assert request_count == 3
+    assert peak_active_requests > 1
+    assert all(
+        later - earlier >= 0.018
+        for earlier, later in zip(request_started_at, request_started_at[1:])
+    )
+    assert all(result.sources for result in results)
+
+
+@pytest.mark.asyncio
 async def test_web_search_uses_explicit_backend_boundary() -> None:
     class PlannedBackend:
         name = "planned_test_backend"

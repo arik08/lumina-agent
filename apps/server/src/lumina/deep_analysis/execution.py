@@ -539,7 +539,12 @@ def _node_output_mode(
     if node.node_type != "report":
         return "chat"
     settings = mission.execution_settings_json or {}
-    return cast(_OutputMode, str(settings.get("outputMode") or "auto"))
+    output_mode = cast(_OutputMode, str(settings.get("outputMode") or "auto"))
+    if output_mode == "auto" and _configured_output_format(mission) == "markdown":
+        # Deep Analysis persists Markdown node output as a Project file after
+        # the Run. Do not route that default through the chat Artifact contract.
+        return "chat"
+    return output_mode
 
 
 def _run_profile(

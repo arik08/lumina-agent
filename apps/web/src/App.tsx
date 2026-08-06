@@ -126,6 +126,7 @@ import { SidebarRecentItems } from "./components/SidebarRecentItems";
 import { type PendingCommandAction, type RunControlAction, useLuminaWorkspace } from "./use-lumina-workspace";
 import { useBackendConnectionState } from "./BackendConnectionGuard";
 import { useConversationAutoFollow } from "./streaming-ui";
+import { userFacingSystemText } from "./user-facing-system-text";
 import {
   AssistantTurn,
   cumulativeSessionUsageByTurnSet,
@@ -3911,7 +3912,7 @@ function App() {
                     <div className="progress-title"><Sparkles size={15} /><strong>작업 계획</strong></div>
                     {!progressOpen && (
                       <span className="current-step">
-                        {latestProgressSummary?.text ?? runStatusLabel(activeRun.status)}
+                        {latestProgressSummary ? userFacingSystemText(latestProgressSummary.text) : runStatusLabel(activeRun.status)}
                       </span>
                     )}
                     <span className="progress-count">{progress.filter((item) => item.status === "complete").length} / {progress.length} · {runStatusLabel(activeRun.status)}</span>

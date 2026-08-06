@@ -117,7 +117,7 @@
 | 저장 보상 | Attachment, Project File, Artifact version과 Agent가 생성한 파일은 storage write 뒤 DB commit·pointer 갱신이 실패하면 이번 시도에서 새로 만든 blob만 정리합니다. 기존 version과 다른 요청의 blob은 보존합니다. |
 | Project Workspace | Project Folder Context reference는 현재 ProjectFile·ProjectFileVersion query 결과에서 만들고 선택 시점의 folder content hash를 Run에서 다시 검증합니다. 파일 record 갱신과 논리 folder 갱신 경계를 분리하며, 손상·누락된 저장 원본은 빈 정상 응답으로 위장하지 않고 복구 가능한 오류 계약을 반환합니다. |
 | 대화 복원 | 최근 Turn Set을 먼저 열고 위쪽 경계 접근 전에 이전 묶음을 선행 로딩합니다. live event와 과거 page를 ID·sequence로 합치며, 아직 load하지 않은 대화를 신규 welcome으로 오인하지 않습니다. |
-| 확인 질문 | 계정 설정 `autonomous | balanced | confirming`을 Run snapshot에 고정하고, `request_user_input`은 한 Run에서 한 번의 질문 묶음으로만 호출합니다. Run은 `awaiting_input`에서 checkpoint를 보존하며 `submit_user_input` 후 Queue를 거쳐 재개합니다. |
+| 확인 질문 | 계정 설정 `autonomous | balanced | confirming`을 Run snapshot에 고정하고, `request_user_input`은 예상 가능한 인터뷰·접수 질문을 첫 묶음으로 호출하며 사전 예상이 불가능했던 차단 질문만 후속 묶음으로 호출합니다. Run은 `awaiting_input`에서 checkpoint를 보존하며 `submit_user_input` 후 Queue를 거쳐 재개합니다. |
 | 실행 Timeline | Plan은 실제 모델 계획과 Tool 순서에 맞춰 갱신하고 terminal 전에 완료로 보이지 않게 합니다. 모델 처리 시간과 Tool interval을 분리하며 보고서·`write_file` 진행은 실제 출력 시작과 누적량을 기준으로 표시합니다. |
 | Renderer | Mermaid는 label 문법을 안전하게 보정하고 authored style을 보존하며 fit·zoom·pan·drag scroll·keyboard close를 제공합니다. ECharts는 제한된 chart preset이 아니라 검증된 전체 option을 renderer 경계에서 처리합니다. |
 | Marketplace | 설치된 Skill은 frontmatter와 Markdown 본문을 구분한 기본 읽기 화면을 제공하고 browser history로 catalog/detail을 오갑니다. MCP의 `미사용`은 단순 표시가 아니라 해당 scope installation 해제로 이어지며 destructive action은 같은 버튼의 2단계 확인을 사용합니다. |
@@ -844,7 +844,7 @@ queued_message_promoted_to_run
 확인 질문은 일반 steer와 별도의 durable 입력 대기 흐름입니다.
 
 - 계정 설정은 `autonomous | balanced | confirming`이며 Run 생성 시 `clarification_mode`로 snapshot합니다.
-- Agent가 질문하기로 결정하면 visible assistant text에 질문을 흘리지 않고 `request_user_input` Tool을 단독 호출합니다. 한 Run에서 최대 한 묶음, 묶음당 1~10개 질문과 각 2~4개 객관식 선택지를 허용하고 UI가 직접 입력 선택지를 추가합니다.
+- Agent가 질문하기로 결정하면 visible assistant text에 질문을 흘리지 않고 `request_user_input` Tool을 단독 호출합니다. 독립적인 사실·결정은 각각 별도 질문으로 같은 묶음에 넣고 여러 사실을 한 질문에 합치지 않습니다. 인터뷰·접수에서는 현재 예상 가능한 고가치 질문을 첫 묶음에 모두 넣습니다. 묶음당 1~10개 질문과 각 2~4개 객관식 선택지를 허용하며, Run 전체 질문은 최대 10개이고 답변 전에는 합리적으로 예상할 수 없었던 차단 질문만 후속 묶음으로 요청합니다. UI는 직접 입력 선택지를 추가합니다.
 - Backend는 질문 묶음과 Tool checkpoint를 Run snapshot에 저장하고 `input_requested` event 뒤 상태를 `awaiting_input`으로 바꿉니다. 재시작·재접속에서도 질문 card와 이미 제출한 답을 복원합니다.
 - 사용자는 객관식, 직접 입력 또는 `AI가 판단`으로 답할 수 있습니다. `submit_user_input`은 모든 질문의 답과 중복을 검증하고 `input_submitted`를 저장한 뒤 Run을 Queue로 돌려 같은 checkpoint에서 재개합니다.
 - `awaiting_input` 동안 모델 작업 시간은 진행 중으로 누적하지 않고 pause·approval과 구분한 `Q&A` 상태를 표시합니다. Tool 승인은 이 흐름으로 대체하지 않습니다.
@@ -2568,7 +2568,7 @@ tests/evals     Agent quality, recovery and batch consistency
 - Tool Call마다 정확히 하나의 Tool Result
 - Session별 lock과 사용자별 병렬 한도
 - Queue action idempotency와 정확히 한 번 승격
-- `request_user_input` 단독 호출·질문 schema·한 Run 한 묶음 제한, `awaiting_input` snapshot/replay와 `submit_user_input` 후 정확한 checkpoint 재개
+- `request_user_input` 단독 호출·원자적 질문 schema·독립 질문 묶음·Run 전체 10개 제한, `awaiting_input` snapshot/replay와 `submit_user_input` 후 정확한 checkpoint 재개
 - snapshot·replay의 누락·중복 없음
 - Conversation·설정·Help·Skill Draft·Artifact의 stale revision/CAS 거부와 no-op·explicit null validation
 - Attachment·Project File·Artifact storage write 뒤 commit·pointer 경합 실패 시 새 unreferenced blob만 정리하고 기존 version은 보존

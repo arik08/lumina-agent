@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { runActivityOutcome, shouldCollapseRunWorkDetails } from "../src/run-status.ts";
@@ -9,6 +10,19 @@ test("work details collapse automatically only after a completed run", () => {
   for (const status of ["cancelled", "interrupted", "failed", "limit_reached"]) {
     assert.equal(shouldCollapseRunWorkDetails(status), false, `${status} should remain open`);
   }
+});
+
+test("a visible running timeline does not collapse underneath the viewport when the run completes", async () => {
+  const conversationTurn = await readFile(
+    new URL("../src/components/ConversationTurn.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    conversationTurn,
+    /useEffect\(\(\) => \{\s*if \(!collapseWorkDetails\) setWorkDetailsOpen\(true\);\s*\}, \[snapshot\?\.runId, collapseWorkDetails\]\);/,
+  );
+  assert.doesNotMatch(conversationTurn, /setWorkDetailsOpen\(!collapseWorkDetails\)/);
 });
 
 test("work details stay open while a run is active or has not started", () => {

@@ -293,8 +293,10 @@ _ARTIFACT_EMPTY_RESPONSE_FALLBACK = (
 )
 _MAX_ARTIFACT_COMPLETION_REMINDERS = 2
 _MAX_ARTIFACT_LENGTH_RETRIES = 2
-_ARTIFACT_PROGRESS_INTERVAL_SECONDS = 0.1
 _ARTIFACT_PROGRESS_CHECKPOINT_INTERVAL_SECONDS = 1.0
+_WRITE_FILE_NEW_DESTINATION_SENTINELS = frozenset(
+    {"new", "new-file", "new-artifact", "none", "null"}
+)
 _RUN_CANCELLATION_POLL_SECONDS = 0.2
 _RUN_CONTROL_CACHE_SECONDS = 1.0
 _EVENT_LOOP_LAG_SAMPLE_SECONDS = 0.5
@@ -2505,9 +2507,6 @@ class LocalRunExecutor:
                                 )
                                 tool_calls[call_id]["artifact_progress"] = (0, 0)
                                 tool_calls[call_id][
-                                    "artifact_progress_published_at"
-                                ] = time.monotonic()
-                                tool_calls[call_id][
                                     "artifact_progress_checkpointed_at"
                                 ] = time.monotonic()
                         elif event.type == "tool_call_delta":
@@ -2524,23 +2523,15 @@ class LocalRunExecutor:
                                 } and not call.get("blocked_error"):
                                     previous = call.get("artifact_progress")
                                     now = time.monotonic()
-                                    last_published_at = call.get(
-                                        "artifact_progress_published_at"
-                                    )
-                                    if previous != progress and _artifact_progress_due(
-                                        last_published_at,
-                                        now,
-                                    ):
+                                    if previous != progress:
                                         call["artifact_progress"] = progress
-                                        call["artifact_progress_published_at"] = now
-                                        checkpoint_due = _artifact_progress_due(
-                                            call.get(
-                                                "artifact_progress_checkpointed_at"
-                                            ),
-                                            now,
-                                            interval_seconds=(
-                                                _ARTIFACT_PROGRESS_CHECKPOINT_INTERVAL_SECONDS
-                                            ),
+                                        checkpoint_due = (
+                                            _artifact_progress_checkpoint_due(
+                                                call.get(
+                                                    "artifact_progress_checkpointed_at"
+                                                ),
+                                                now,
+                                            )
                                         )
                                         await self._publish_artifact_progress(
                                             run_id,
@@ -2583,20 +2574,28 @@ class LocalRunExecutor:
                                     progress = _artifact_argument_progress(
                                         call["arguments"]
                                     )
-                                    if call.get("artifact_progress") != progress:
-                                        call["artifact_progress"] = progress
-                                        await self._publish_artifact_progress(
-                                            run_id,
-                                            *progress,
-                                            model_output_tokens=(
-                                                estimated_model_output_tokens
-                                            ),
-                                            target_tokens=artifact_target_tokens,
+                                    progress_changed = (
+                                        call.get("artifact_progress") != progress
+                                    )
+                                    call["artifact_progress"] = progress
+                                    # The completed Tool call is the durable progress
+                                    # checkpoint. Streaming updates may be live-only, and
+                                    # the final counts can equal the last streamed counts.
+                                    await self._publish_artifact_progress(
+                                        run_id,
+                                        *progress,
+                                        model_output_tokens=(
+                                            estimated_model_output_tokens
+                                        ),
+                                        target_tokens=artifact_target_tokens,
+                                    )
+                                    if (
+                                        call["name"] == "write_file"
+                                        and progress_changed
+                                    ):
+                                        await self._update_streaming_write_file(
+                                            run_id, call, *progress
                                         )
-                                        if call["name"] == "write_file":
-                                            await self._update_streaming_write_file(
-                                                run_id, call, *progress
-                                            )
                                 call["provider_metadata"].update(
                                     _safe_provider_metadata(event.provider_metadata)
                                 )
@@ -5251,9 +5250,15 @@ class LocalRunExecutor:
             )
             + " If clarification is needed, call `request_user_input` by itself before visible "
             "answer text. Put independent, currently known questions together, normally up to "
-            "three. When the user explicitly requests an interview or an active Skill requires "
-            "answer-dependent follow-ups, ask one question at a time and call the same UI again "
-            "after each answer until the intent is actionable. Across the Run, never exceed ten "
+            "three for ordinary clarification. Represent each independent fact or decision as a "
+            "separate question object in "
+            "that bundle; never pack multiple facts into one prompt or its free-form answer "
+            "instruction. For an explicit interview or intake, put every currently foreseeable "
+            "high-value question in the first bundle, up to the Run limit; do not intentionally "
+            "split known questions across repeated submit-and-wait cycles. Request another bundle "
+            "only if an answer reveals a material blocking question that could not reasonably have "
+            "been anticipated. "
+            "Across the Run, never exceed ten "
             "questions or repeat a resolved question. Never use it for tool permission or "
             "approval. If the user "
             "explicitly asks you to interview them, ask follow-up or reverse questions, gather "
@@ -6120,9 +6125,9 @@ class LocalRunExecutor:
                 "instruction": (
                     "Continue the same task using these answers. For answers marked "
                     "AI judgment, choose the most reasonable option and state any material "
-                    "assumption briefly. Do not ask the same question again. If the task is an "
-                    "explicit interview and a later decision depends on this answer, you may "
-                    "request the next question through request_user_input."
+                    "assumption briefly. Do not ask the same question again. Do not request another "
+                    "question bundle unless these answers reveal a material blocking question that "
+                    "could not reasonably have been anticipated before the first bundle."
                 ),
             }
         analysis_depth = "auto"
@@ -6478,6 +6483,9 @@ class LocalRunExecutor:
                     ),
                     policy=_web_policy(),
                     trust_profile=self.trust_profile,
+                    progress_callback=lambda message: self._update_tool_execution_progress(
+                        run_id, tool_id, message
+                    ),
                 )
                 payload = search_result.to_dict()
                 raw_sources = payload.get("sources", [])
@@ -6938,6 +6946,27 @@ class LocalRunExecutor:
                             "Run context disappeared during Artifact creation"
                         )
                     self._require_execution_owner(workspace_run)
+                    if _write_file_destination_is_new_placeholder(
+                        destination_artifact_id
+                    ):
+                        destination_artifact_id = ""
+                        destination_base_version = 0
+                    elif destination_artifact_id:
+                        destination = db.get(Artifact, destination_artifact_id)
+                        conversation_has_artifacts = bool(
+                            db.scalar(
+                                select(
+                                    exists().where(
+                                        Artifact.conversation_id
+                                        == workspace_run.conversation_id,
+                                        Artifact.deleted_at.is_(None),
+                                    )
+                                )
+                            )
+                        )
+                        if destination is None and not conversation_has_artifacts:
+                            destination_artifact_id = ""
+                            destination_base_version = 0
                     if destination_artifact_id:
                         if destination_base_version < 1:
                             raise ApiProblem(
@@ -7984,6 +8013,32 @@ class LocalRunExecutor:
             "Codex OAuth 경로에서는 Lumina 이미지 생성 Tool을 아직 지원하지 않습니다. "
             "OPENAI_API_KEY로 자동 전환하지 않습니다."
         )
+
+    async def _update_tool_execution_progress(
+        self, run_id: str, tool_id: str, message: str
+    ) -> None:
+        changed = await self._run_database_mutation(
+            run_id,
+            self._update_tool_execution_progress_database,
+            run_id,
+            tool_id,
+            message,
+        )
+        if changed:
+            await event_broker.notify(run_id)
+
+    def _update_tool_execution_progress_database(
+        self, run_id: str, tool_id: str, message: str
+    ) -> bool:
+        with session_scope() as db:
+            run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
+            tool = db.get(ToolExecution, tool_id)
+            if run is None or tool is None or tool.status not in {"running", "streaming"}:
+                return False
+            self._require_execution_owner(run)
+            tool.result_summary = message
+            append_event(db, run, "tool_progress", {"execution": _tool_event(tool)})
+        return True
 
     async def _complete_tool_execution(
         self,
@@ -10383,6 +10438,11 @@ def _streamed_write_file_name(arguments: str) -> str | None:
     return normalized.rsplit("/", 1)[-1] or None
 
 
+def _write_file_destination_is_new_placeholder(value: str) -> bool:
+    normalized = re.sub(r"[\s_]+", "-", value.strip().casefold())
+    return normalized in _WRITE_FILE_NEW_DESTINATION_SENTINELS
+
+
 def _normalized_output_mode(requested_mode: object) -> str:
     return str(requested_mode) if requested_mode in {"auto", "chat", "file"} else "auto"
 
@@ -11581,14 +11641,13 @@ def _merge_partial_report_checkpoint(
     return False
 
 
-def _artifact_progress_due(
-    last_published_at: Any,
+def _artifact_progress_checkpoint_due(
+    last_checkpointed_at: Any,
     now: float,
-    *,
-    interval_seconds: float = _ARTIFACT_PROGRESS_INTERVAL_SECONDS,
 ) -> bool:
-    return not isinstance(last_published_at, (int, float)) or (
-        now - last_published_at + 1e-9 >= interval_seconds
+    return not isinstance(last_checkpointed_at, (int, float)) or (
+        now - last_checkpointed_at + 1e-9
+        >= _ARTIFACT_PROGRESS_CHECKPOINT_INTERVAL_SECONDS
     )
 
 

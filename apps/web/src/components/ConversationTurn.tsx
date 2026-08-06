@@ -77,8 +77,6 @@ import type {
   ClarificationMode,
   MemoryCitation,
   MessageCitation,
-  ProviderActivity,
-  ProviderRetry,
   RunActivity,
   RunCommand,
   RunSnapshot,
@@ -103,6 +101,7 @@ import { useStreamingMarkdownParts, type StreamingPendingKind } from "../streami
 import { SyntaxCode, SyntaxCodeContent } from "./SyntaxCode";
 import { BranchFromHereIcon, ShareActionIcon } from "./ActionIcons";
 import { UserInputRequestCard } from "./UserInputRequestCard";
+import { userFacingSystemText } from "../user-facing-system-text";
 
 const InlineMarkdownImage = lazy(() => import("./InteractiveResponse").then((module) => ({
   default: module.InlineMarkdownImage,
@@ -568,6 +567,7 @@ function httpStatusExplanation(text: string) {
 
 function ToolCallRow({
   execution,
+  liveWriteFileProgress,
   isOpen,
   runOutcome,
   terminalAtMs,
@@ -576,6 +576,7 @@ function ToolCallRow({
   onCopy,
 }: {
   execution: ToolExecution;
+  liveWriteFileProgress?: { tokens: number; lines: number } | null;
   isOpen: boolean;
   runOutcome: RunActivityOutcome;
   terminalAtMs: number;
@@ -645,8 +646,15 @@ function ToolCallRow({
   );
   const activeWriteFileName = writeFileName(execution);
   const liveStatus = running ? execution.resultSummary[0] : null;
-  const headerDetail = liveStatus ?? activeWriteFileName ?? webSearchQuery(execution) ?? webFetchSummary(execution) ?? createReportSummary(execution);
-  const writeProgress = tokenBucketProgress(execution.progress?.tokens ?? 0);
+  const headerDetail = (liveStatus ? userFacingSystemText(liveStatus) : null)
+    ?? activeWriteFileName
+    ?? webSearchQuery(execution)
+    ?? webFetchSummary(execution)
+    ?? createReportSummary(execution);
+  const activeWriteFileProgress = writeFileActive && liveWriteFileProgress
+    ? { ...execution.progress, ...liveWriteFileProgress }
+    : execution.progress;
+  const writeProgress = tokenBucketProgress(activeWriteFileProgress?.tokens ?? 0);
   const toolDetailText = useMemo(() => {
     if (!isOpen) return null;
     const requestText = execution.input
@@ -654,9 +662,9 @@ function ToolCallRow({
       : execution.inputSummary.length
         ? execution.inputSummary.join("\n")
         : "입력 없음";
-    const rawResultText = execution.result
+    const rawResultText = userFacingSystemText(execution.result
       ? JSON.stringify(execution.result, null, 2)
-      : execution.error || execution.resultSummary.join("\n") || (stoppedByRun ? "Run 중지로 도구 실행이 종료되었습니다." : running ? "실행 중입니다." : "결과 요약 없음");
+      : execution.error || execution.resultSummary.join("\n") || (stoppedByRun ? "Run 중지로 도구 실행이 종료되었습니다." : running ? "실행 중입니다." : "결과 요약 없음"));
     const statusExplanation = httpStatusExplanation(rawResultText);
     return {
       requestText,
@@ -692,11 +700,11 @@ function ToolCallRow({
         <span className="tool-call-duration" data-tooltip={execution.toolName === "write_file" ? "파일 내용 생성 시작부터 디스크 저장 완료까지의 시간" : "도구 실행 시간"}>{formatDuration(liveDurationMs, running)}</span>
         {isOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
       </button>
-      {writeFileActive && execution.progress && (
-        <div className={`write-file-stream-progress is-${writeProgress.stage}`} role="status" aria-live="polite" aria-label={`${activeWriteFileName ?? "파일"} 작성 중 ${execution.progress.tokens.toLocaleString()} 토큰 ${execution.progress.lines.toLocaleString()}줄`}>
+      {writeFileActive && activeWriteFileProgress && (
+        <div className={`write-file-stream-progress is-${writeProgress.stage}`} role="status" aria-live="polite" aria-label={`${activeWriteFileName ?? "파일"} 작성 중 ${activeWriteFileProgress.tokens.toLocaleString()} 토큰 ${activeWriteFileProgress.lines.toLocaleString()}줄`}>
           <div className="write-file-stream-heading">
             <strong data-tooltip={activeWriteFileName ?? undefined}>WRITE FILE · {activeWriteFileName ?? "파일명 확인 중"}</strong>
-            <span>{execution.progress.tokens.toLocaleString()} 토큰 · {execution.progress.lines.toLocaleString()}줄</span>
+            <span>{activeWriteFileProgress.tokens.toLocaleString()} 토큰 · {activeWriteFileProgress.lines.toLocaleString()}줄</span>
           </div>
           <div className="write-file-stream-meter" role="progressbar" aria-label="현재 5,000 토큰 구간의 생성량" aria-valuemin={0} aria-valuemax={TOKEN_PROGRESS_BUCKET_SIZE} aria-valuenow={writeProgress.bucketTokens}>
             <span style={{ width: `${writeProgress.percent}%` }} />
@@ -728,78 +736,29 @@ function ToolCallRow({
 type ModelExchangeItem = { label: string; value: unknown };
 
 function modelExchangeText(value: unknown) {
-  return formatModelExchangeValue(value);
+  return userFacingSystemText(formatModelExchangeValue(value));
 }
 
 type ModelProcessingState = RunActivityOutcome | "awaiting_input";
 
-function providerWaitReason(stage: string) {
-  if (stage === "first_output") return "첫 응답 없음";
-  if (stage === "stream") return "응답 스트림 중단";
-  if (stage === "rate_limit") return "Provider 사용량 제한";
-  if (stage === "authentication") return "Provider 인증 실패";
-  return "Provider 요청 일시 오류";
-}
-
-function ModelProcessingRow({ durationMs, state, sent, received, model, provider, reasoningTokens, providerActivity, providerRetries }: {
+function ModelProcessingRow({ durationMs, state, sent, received, model }: {
   durationMs: number;
   state: ModelProcessingState;
   sent: ModelExchangeItem[];
   received: ModelExchangeItem[];
   model?: string;
-  provider?: string;
-  reasoningTokens?: number;
-  providerActivity?: ProviderActivity | null;
-  providerRetries: ProviderRetry[];
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const contentId = useId();
   const running = state === "running";
   const awaitingInput = state === "awaiting_input";
-  const clockNow = useSharedNow(running);
-  const waitStartedAtMs = providerActivity ? Date.parse(providerActivity.startedAt) : Number.NaN;
-  const waitElapsedSeconds = Number.isFinite(waitStartedAtMs)
-    ? Math.max(0, (clockNow - waitStartedAtMs) / 1000)
-    : 0;
-  const waitRemainingSeconds = providerActivity
-    ? Math.max(0, providerActivity.timeoutSeconds - waitElapsedSeconds)
-    : 0;
-  const retrying = running && providerActivity?.status === "retry_waiting";
   const statusLabel = running
-    ? providerActivity?.status === "waiting_first_output"
-      ? "응답 대기"
-      : providerActivity?.status === "receiving"
-        ? "수신 중"
-        : retrying
-          ? "재시도 대기"
-          : "처리 중"
+    ? "처리 중"
     : awaitingInput ? "답변 대기" : state === "completed" ? "완료" : state === "failed" ? "실패" : "중지됨";
-  const providerDetail = running && providerActivity?.status === "waiting_first_output"
-    ? waitRemainingSeconds > 0
-      ? `Provider 첫 응답 대기 · 시도 ${providerActivity.attempt} · ${Math.ceil(waitRemainingSeconds)}초 남음 (${providerActivity.timeoutSeconds}초 제한)`
-      : "Provider 첫 응답 제한시간 도달 · 재시도 상태 확인 중"
-    : running && providerActivity?.status === "receiving"
-      ? waitRemainingSeconds > 0
-        ? `Provider 응답 수신 중 · 다음 이벤트 ${Math.ceil(waitRemainingSeconds)}초 남음 (무응답 시 자동 재시도)`
-        : "Provider 응답 무응답 제한시간 도달 · 재시도 상태 확인 중"
-      : retrying && providerActivity
-        ? waitRemainingSeconds > 0.05
-          ? `${providerWaitReason(providerActivity.stage)} · 재시도 ${providerActivity.attempt}/${providerActivity.maxAttempts} · ${waitRemainingSeconds.toFixed(1)}초 후`
-          : `${providerWaitReason(providerActivity.stage)} · 재시도 ${providerActivity.attempt}/${providerActivity.maxAttempts} 시작 중`
-        : !running && providerRetries.length > 0
-          ? `모델 처리 완료 · 자동 재시도 ${providerRetries.length}회 포함`
-          : null;
-  const providerHistoryItems: ModelExchangeItem[] = [
-    ...(providerActivity ? [{ label: "현재 Provider 상태", value: providerDetail ?? providerActivity.status }] : []),
-    ...providerRetries.map((retry, index) => ({
-      label: `자동 재시도 ${index + 1}`,
-      value: `${providerWaitReason(retry.stage)} · ${retry.attempt}/${retry.maxAttempts} · ${retry.delaySeconds.toFixed(2)}초 후`,
-    })),
-  ];
   const exchangeSections = [
-    { title: "Provider로 보냄", items: sent, empty: "이 단계에서 별도로 전달된 도구 결과가 없습니다." },
-    { title: "Provider에서 받음", items: [...providerHistoryItems, ...received], empty: running ? "응답을 수신하고 있습니다." : state === "stopped" ? "모델 응답이 완료되기 전에 작업을 중지했습니다." : "공개 가능한 응답 내용이 없습니다." },
+    { title: "모델에 전달한 내용", items: sent, empty: "이 단계에서 별도로 전달된 도구 결과가 없습니다." },
+    { title: "모델이 반환한 내용", items: received, empty: running ? "답변을 준비하고 있습니다." : state === "stopped" ? "답변 준비를 마치기 전에 작업을 중지했습니다." : "표시할 응답 내용이 없습니다." },
   ];
 
   useEffect(() => {
@@ -826,20 +785,20 @@ function ModelProcessingRow({ durationMs, state, sent, received, model, provider
           ? <MessageCircleQuestion className="tool-kind-icon is-model-processing" size={15} aria-hidden="true" />
           : <Brain className="tool-kind-icon is-model-processing" size={15} aria-hidden="true" />}
         <span className="tool-call-label-with-status model-processing-label">
-          <span className="tool-call-label">{awaitingInput ? "Q&A" : "Thinking"}</span>
+          <span className="tool-call-label">{awaitingInput ? "Q&A" : "답변 준비"}</span>
           {running ? <LoaderCircle className="status-icon is-running" size={15} aria-hidden="true" /> : null}
           {!running && !awaitingInput && state !== "completed" ? <AlertCircle className="status-icon status-warning" size={15} aria-hidden="true" /> : null}
         </span>
-        <span className="tool-call-detail">{awaitingInput ? "확인 질문 · 사용자 답변 대기" : state === "stopped" ? "사용자 요청으로 모델 처리를 중지했습니다." : providerDetail ?? `모델 판단 · 내부 실행 합계${reasoningTokens === undefined ? "" : ` · 내부 추론 ${reasoningTokens.toLocaleString()} 토큰`}`}</span>
-        <span className={`tool-call-status status-${retrying ? "warning" : running ? "running" : state === "completed" ? "complete" : "warning"}`} aria-live="polite">{statusLabel}</span>
+        <span className="tool-call-detail">{awaitingInput ? "확인 질문 · 사용자 답변 대기" : state === "stopped" ? "요청에 따라 답변 준비를 중지했습니다." : running ? "답변을 준비하고 있습니다." : state === "completed" ? "답변을 준비했습니다." : "답변을 준비하지 못했습니다."}</span>
+        <span className={`tool-call-status status-${running ? "running" : state === "completed" ? "complete" : "warning"}`} aria-live="polite">{statusLabel}</span>
         <span className="tool-call-duration" data-tooltip="여러 모델 호출과 Skill·계획 처리, 재시도 시간을 합산한 값(외부 도구 실행 제외)">{formatDuration(durationMs, running)}</span>
         {isOpen ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
       </button>
       {isOpen && (
         <div className="model-exchange" id={contentId}>
           <div className="model-exchange-heading">
-            <strong>실제 교환 정보</strong>
-            <span>{[provider, model].filter(Boolean).join(" · ") || "Provider"}</span>
+            <strong>처리 세부 정보</strong>
+            <span>{model || "모델"}</span>
           </div>
           <div className="model-exchange-columns">
             {exchangeSections.map((section) => (
@@ -868,7 +827,7 @@ function toolCallGroupSummary(activities: RunActivity[]) {
       && ["queued", "running", "streaming"].includes(activity.execution.status)
       && activity.execution.resultSummary[0]
     ) {
-      return activity.execution.resultSummary[0];
+      return userFacingSystemText(activity.execution.resultSummary[0]);
     }
   }
   const counts = new Map<string, number>();
@@ -964,6 +923,7 @@ function WorkDurationLabel({
 
 function RunActivityTimeline({
   activities,
+  liveWriteFileProgress,
   timelineStartedAtMs,
   timelineFinishedAtMs,
   timelineRunning,
@@ -973,10 +933,6 @@ function RunActivityTimeline({
   userRequest,
   assistantResponse,
   model,
-  provider,
-  reasoningTokens,
-  providerActivity,
-  providerRetries,
   openCalls,
   onToggleCall,
   onCopy,
@@ -986,6 +942,7 @@ function RunActivityTimeline({
   onClarificationModeChange,
 }: {
   activities: RunActivity[];
+  liveWriteFileProgress?: { tokens: number; lines: number } | null;
   timelineStartedAtMs: number;
   timelineFinishedAtMs: number | null;
   timelineRunning: boolean;
@@ -995,10 +952,6 @@ function RunActivityTimeline({
   userRequest: string;
   assistantResponse: string;
   model?: string;
-  provider?: string;
-  reasoningTokens?: number;
-  providerActivity?: ProviderActivity | null;
-  providerRetries: ProviderRetry[];
   openCalls: Set<string>;
   onToggleCall: (id: string) => void;
   onCopy: (execution: ToolExecution) => void;
@@ -1164,7 +1117,7 @@ function RunActivityTimeline({
             ? [{ label: "사용자 요청", value: userRequest }]
             : [];
         const received: ModelExchangeItem[] = [
-          ...(nextSummary ? [{ label: "다음 단계", value: nextSummary.text }] : []),
+          ...(nextSummary ? [{ label: "다음 단계", value: userFacingSystemText(nextSummary.text) }] : []),
           ...nextToolActivities.map((activity) => ({
             label: `${activity.execution.label || activity.execution.toolName} 호출`,
             value: activity.execution.input ?? activity.execution.inputSummary,
@@ -1190,20 +1143,22 @@ function RunActivityTimeline({
         const hasModelProcessingRow = modelProcessingDurationMs !== null && modelProcessingDurationMs >= 10;
         const timedChildCount = toolActivities.length + (hasModelProcessingRow ? 1 : 0);
         const showStageDuration = timedChildCount === 0;
-        const modelProcessingRunning = timelineRunning && summary?.id === latestProgressSummaryId;
+        const toolGroupRunning = timelineRunning && toolActivities.some((activity) =>
+          ["queued", "running", "streaming"].includes(activity.execution.status),
+        );
+        const modelProcessingRunning = timelineRunning
+          && summary?.id === latestProgressSummaryId
+          && !toolGroupRunning;
         const modelProcessingState: ModelProcessingState = awaitingInput && summary?.id === latestProgressSummaryId
           ? "awaiting_input"
           : modelProcessingRunning
           ? "running"
-          : summary?.id === latestProgressSummaryId
+          : !timelineRunning && summary?.id === latestProgressSummaryId
             ? runOutcome
             : "completed";
         const toolGroupDurationMs = stageTiming && toolActivities.some((activity) => activity.execution.startedAt)
           ? toolActiveDurationMs
           : toolCallGroupDuration(toolActivities);
-        const toolGroupRunning = timelineRunning && toolActivities.some((activity) =>
-          ["queued", "running", "streaming"].includes(activity.execution.status),
-        );
         const toolGroupId = summary ? `progress-tools-${summary.id}` : undefined;
         const toggleTools = (event: ReactMouseEvent<HTMLButtonElement>) => {
           preserveConversationScrollPosition(event.currentTarget, () => {
@@ -1249,7 +1204,7 @@ function RunActivityTimeline({
               <button className="progress-group-toggle" type="button" aria-controls={toolGroupId} aria-expanded={toolsOpen} onClick={toggleTools}>
                 <div className={`progress-summary phase-${summary.phase}`}>
                   <div className="progress-summary-text">
-                    <span>{summary.text}</span>
+                    <span>{userFacingSystemText(summary.text)}</span>
                   </div>
                 </div>
                 <div className="tool-call-group-summary">
@@ -1260,13 +1215,23 @@ function RunActivityTimeline({
                 </div>
               </button>
             ) : (
-              <div className={`progress-summary phase-${summary.phase}`}><div className="progress-summary-text"><span>{summary.text}</span>{showStageDuration && <span className="progress-summary-duration" data-tooltip="단계 전체 소요 시간">{formatDuration(stageDurationMs, modelProcessingRunning)}</span>}</div></div>
+              <div className={`progress-summary phase-${summary.phase}`}><div className="progress-summary-text"><span>{userFacingSystemText(summary.text)}</span>{showStageDuration && <span className="progress-summary-duration" data-tooltip="단계 전체 소요 시간">{formatDuration(stageDurationMs, modelProcessingRunning)}</span>}</div></div>
             ))}
             {toolsOpen && summary && (
               <div className={`progress-tools ${summary && collapsingSummaryIds.has(summary.id) ? "is-collapsing" : ""}`} id={toolGroupId}>
+                {hasModelProcessingRow && toolGroupRunning && (
+                  <ModelProcessingRow
+                    durationMs={modelProcessingDurationMs}
+                    state={modelProcessingState}
+                    sent={sent}
+                    received={received}
+                    model={model}
+                  />
+                )}
                 {toolActivities.map((activity) => (
                   <ToolCallRow
                     execution={activity.execution}
+                    liveWriteFileProgress={liveWriteFileProgress}
                     isOpen={openCalls.has(activity.execution.id)}
                     key={activity.id}
                     runOutcome={runOutcome}
@@ -1275,17 +1240,13 @@ function RunActivityTimeline({
                     onToggle={() => onToggleCall(activity.execution.id)}
                   />
                 ))}
-                {hasModelProcessingRow && (
+                {hasModelProcessingRow && !toolGroupRunning && (
                   <ModelProcessingRow
                     durationMs={modelProcessingDurationMs}
                     state={modelProcessingState}
                     sent={sent}
                     received={received}
                     model={model}
-                    provider={provider}
-                    providerActivity={providerActivity}
-                    providerRetries={providerRetries}
-                    reasoningTokens={!timelineRunning && groupIndex === activityGroups.length - 1 ? reasoningTokens : undefined}
                   />
                 )}
               </div>
@@ -1859,6 +1820,10 @@ export const AssistantTurn = memo(function AssistantTurn({
   const streaming = !finalMessage && Boolean(liveAssistantDraft);
   const { visibleText: displayedText, revealing, settling } = useStreamingText(sanitizedAssistantText, streaming);
   const terminalPresentationReady = terminal && displayedText === sanitizedAssistantText;
+  const mountedTerminalRef = useRef(terminalPresentationReady);
+  const terminalLayoutClass = terminalPresentationReady
+    ? mountedTerminalRef.current ? "is-terminal" : "is-live-terminal"
+    : "is-active";
   const [reportOpen, setReportOpen] = useState(false);
   const [markdownSaving, setMarkdownSaving] = useState(false);
   const [knowledgeSaving, setKnowledgeSaving] = useState(false);
@@ -1908,7 +1873,7 @@ export const AssistantTurn = memo(function AssistantTurn({
   const hasWorkDetails = activities.length > 0;
 
   useEffect(() => {
-    setWorkDetailsOpen(!collapseWorkDetails);
+    if (!collapseWorkDetails) setWorkDetailsOpen(true);
   }, [snapshot?.runId, collapseWorkDetails]);
 
   useEffect(() => {
@@ -2110,6 +2075,11 @@ export const AssistantTurn = memo(function AssistantTurn({
   const artifactProgress = artifactUsage
     ? tokenBucketProgress(artifactUsage.tokens, artifactUsage.targetTokens)
     : null;
+  const hasActiveWriteFileProgress = tools.some((execution) => (
+    execution.toolName === "write_file"
+    && ["queued", "running", "streaming"].includes(execution.status)
+    && Boolean(execution.progress)
+  ));
   const artifactUsageExecution = [...tools].reverse().find((execution) => (
     execution.artifactId
     && typeof execution.result?.version === "number"
@@ -2130,14 +2100,13 @@ export const AssistantTurn = memo(function AssistantTurn({
     ),
   }));
   const runUsage = finalMessage?.metadata?.usage ?? snapshot?.usage;
-  const reasoningTokens = optionalUsageNumber(runUsage, "reasoning_tokens");
   const modelOutputTokens = usageNumber(runUsage, "output_tokens");
   const liveModelOutputTokens = Math.max(
     modelOutputTokens,
     artifactUsage?.modelOutputTokens ?? 0,
   );
   return (
-    <div className={`turn-set ${terminalPresentationReady ? "is-terminal" : "is-active"}`} data-run-id={turnSet.runId ?? undefined}>
+    <div className={`turn-set ${terminalLayoutClass}`} data-run-id={turnSet.runId ?? undefined}>
       {userMessages.map((message) => (
         <div className="user-message-group" data-question-anchor={message.id} key={message.id}>
           {message.attachments?.length > 0 && (
@@ -2204,6 +2173,7 @@ export const AssistantTurn = memo(function AssistantTurn({
             <div className="turn-tool-activity" id={`turn-work-details-${turnSet.id}`}>
               <RunActivityTimeline
                 activities={activities}
+                liveWriteFileProgress={liveArtifactProgress}
                 timelineStartedAtMs={workStartedAtMs}
                 timelineFinishedAtMs={workFinishedAtMs}
                 timelineRunning={!terminal && !awaitingInput}
@@ -2213,10 +2183,6 @@ export const AssistantTurn = memo(function AssistantTurn({
                 userRequest={userMessages.at(-1)?.text ?? ""}
                 assistantResponse={sanitizedAssistantText}
                 model={snapshot?.execution.runtimeModelId}
-                provider={snapshot?.execution.providerId}
-                reasoningTokens={reasoningTokens}
-                providerActivity={snapshot?.providerActivity}
-                providerRetries={snapshot?.providerRetries ?? []}
                 openCalls={openCalls}
                 onCopy={onCopyTool}
                 onToggleCall={toggleOpenCall}
@@ -2239,7 +2205,7 @@ export const AssistantTurn = memo(function AssistantTurn({
                 최신성 또는 중요도가 높은 정보에 필요한 웹 본문을 확인하지 못했습니다. 답변의 관련 내용을 미검증 정보로 봐 주세요.
               </div>
             )}
-            {!terminal && artifactUsage && artifactUsage.tokens > 0 && artifactProgress && (
+            {!terminal && !hasActiveWriteFileProgress && artifactUsage && artifactUsage.tokens > 0 && artifactProgress && (
               <div className={`artifact-progress-count is-${artifactProgress.stage}`} role="status" aria-live={terminal ? undefined : "polite"} aria-label={`문서 ${artifactUsage.estimated === false ? "완성 분량" : "작성 중 추정 분량"} ${artifactUsage.tokens.toLocaleString()} 토큰 ${artifactUsage.lines.toLocaleString()}줄${liveModelOutputTokens > 0 ? `, 모델 출력 누계 ${liveModelOutputTokens.toLocaleString()} 토큰` : ""}`}>
                 <div className="artifact-progress-heading">
                   <span>{artifactUsage.estimated === false ? "문서 약" : "작성 중 약"} {artifactUsage.tokens.toLocaleString()}토큰 · {artifactUsage.lines.toLocaleString()}줄{artifactUsage.targetTokens ? <span className="artifact-progress-target"> · 목표 {artifactUsage.targetTokens.toLocaleString()}토큰</span> : null}</span>

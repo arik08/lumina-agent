@@ -666,9 +666,25 @@ def test_intermediate_node_output_contract_always_uses_chat_mode() -> None:
             "targetOutputTokens": None,
         },
     )
+    default_markdown_mission = DeepAnalysisMission(
+        title="기본 Markdown 출력",
+        objective="최종 분석 보고서를 작성합니다.",
+        execution_settings_json={
+            "outputMode": "auto",
+            "outputFormat": "markdown",
+            "targetOutputTokens": 10_000,
+        },
+    )
+    report = DeepAnalysisWorkflowNode(
+        node_key="N040",
+        node_type="report",
+        title="최종 보고서",
+        purpose="최종 결론을 작성합니다.",
+    )
 
     assert _node_output_mode(file_mission, analysis) == "chat"
     assert _node_output_mode(chat_mission, analysis) == "chat"
+    assert _node_output_mode(default_markdown_mission, report) == "chat"
     assert _run_profile(file_mission, analysis) == ("auto", "standard", None)
     assert _run_profile(chat_mission, analysis) == ("auto", "standard", None)
 

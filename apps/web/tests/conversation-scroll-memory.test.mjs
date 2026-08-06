@@ -14,8 +14,10 @@ test("conversation scroll position is restored per session without completed-run
   assert.match(streamingUi, /sessionStorage\.getItem\(`\$\{scrollPositionStoragePrefix\}\$\{conversationId\}`\)/);
   assert.match(streamingUi, /sessionStorage\.setItem\(`\$\{scrollPositionStoragePrefix\}\$\{conversationId\}`/);
   assert.match(streamingUi, /useLayoutEffect\(\(\) => \{[\s\S]*?setProgrammaticScrollTop\(container, targetTop,/);
-  assert.match(streamingUi, /\(!activeRef\.current && !force\)/);
-  assert.match(streamingUi, /const observer = new ResizeObserver\(\(\) => \{[\s\S]*?follow\(!activeRef\.current, false, !activeRef\.current\);/);
+  assert.match(streamingUi, /\(!activeRef\.current && !settlingTerminalFollow && !force\)/);
+  assert.match(streamingUi, /if \(previousHeight !== null && nextHeight < previousHeight && followingRef\.current\) \{[\s\S]*?cancelAnimationFrame\(animationRef\.current\)[\s\S]*?maximumTop - lastBottomDistanceRef\.current[\s\S]*?setProgrammaticScrollTop\(container, preservedTop,/);
+  assert.match(streamingUi, /terminalFollowUntilRef\.current = performance\.now\(\) \+ terminalFollowSettleMs;/);
+  assert.match(streamingUi, /follow\(!activeRef\.current && !settlingTerminalFollow, false, !activeRef\.current\);/);
   assert.doesNotMatch(streamingUi, /!activeRef\.current && conversationId && remembered\?\.atBottom/);
   assert.match(streamingUi, /setShowJumpToLatest\(!followingRef\.current && distance > jumpButtonThresholdPx\)/);
   assert.match(streamingUi, /if \(distance <= nearBottomPx\) \{[\s\S]*?followingRef\.current = true;[\s\S]*?setShowJumpToLatest\(false\);[\s\S]*?return;/);
@@ -41,7 +43,7 @@ test("streaming auto-follow smooths buffered reveal height changes", async () =>
 
   assert.match(streamingUi, /const streamScrollSmoothingMs = maxVisualLagMs;/);
   assert.match(streamingUi, /let smoothedTarget = container\.scrollTop;/);
-  assert.match(streamingUi, /const smoothingWeight = activeRef\.current\s*\? 1 - Math\.exp\(-elapsed \/ streamScrollSmoothingMs\)\s*: 1;/);
+  assert.match(streamingUi, /const smoothingWeight = activeRef\.current \|\| performance\.now\(\) <= terminalFollowUntilRef\.current\s*\? 1 - Math\.exp\(-elapsed \/ streamScrollSmoothingMs\)\s*: 1;/);
   assert.match(streamingUi, /smoothedTarget \+= \(target - smoothedTarget\) \* smoothingWeight;/);
   assert.match(streamingUi, /const distance = smoothedTarget - current\.scrollTop;/);
 });

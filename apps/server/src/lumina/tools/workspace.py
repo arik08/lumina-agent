@@ -50,7 +50,9 @@ ARTIFACT_WRITE_TOOL_SCHEMA: dict[str, Any] = {
                     "maxLength": 64,
                     "description": (
                         "Exact ID from the recent Artifact context when revising an existing "
-                        "file. Omit only when the user requested a separate new file."
+                        "file. Never invent this ID. When no recent Artifact context is "
+                        "available, omit both destination fields and create a new file. Do "
+                        "not pass placeholders such as 'new', 'new-file', 'none', or a zero ID."
                     ),
                 },
                 "destination_base_version": {

@@ -21,12 +21,14 @@ Turn the user's intent into an actionable execution contract, then complete and 
 4. Choose the question cadence from the decision structure:
    - If no Blocking item remains, proceed without asking.
    - If multiple Blocking items are independent and already known, ask them together, normally no more than three.
-   - If the next useful question depends on the previous answer, ask exactly one, incorporate the answer, and call the question UI again for the next unresolved branch.
+   - Represent each independent fact or decision as its own question in that bundle. Never combine several requested facts into one prompt or free-form answer instruction.
+   - For an explicit interview or intake, include every currently foreseeable high-value question in the first bundle, up to the ten-question Run limit. Do not intentionally split known questions across repeated submit-and-wait cycles.
+   - Open a later question bundle only if an answer reveals a material Blocking question that could not reasonably have been anticipated before the first bundle.
 5. Call `request_user_input` by itself for every user-facing question. Never place a question in ordinary response text.
 6. Give each question two or three distinct options. Put the recommended option first, suffix its label with ` (추천)`, and briefly explain its effect. Do not add custom-answer or AI-judgment options because the UI provides them.
 7. Stop questioning when the goal, material constraints, and success conditions are actionable, when the user asks to proceed, or when ten total questions have been asked. Never repeat a resolved question.
 8. Treat the answers as the execution contract. Execute the original task and verify the result against that contract.
-9. Re-enter the question UI only when execution reveals a new Blocking decision that cannot be resolved safely. Otherwise correct the work yourself and finish it.
+9. Re-enter the question UI only when execution reveals a new Blocking decision that could not reasonably have been anticipated and cannot be resolved safely. Otherwise correct the work yourself and finish it.
 
 ## Restraint
 
@@ -43,6 +45,6 @@ Turn the user's intent into an actionable execution contract, then complete and 
 - For broad research, ask about the decision the research must support only when it changes source selection or depth.
 - For an HTML report, ask about audience or required content only when the request does not already imply them; choose layout details yourself.
 - For a new Skill, ask about triggering behavior or allowed capabilities when those materially affect its contract; infer ordinary package structure and validation steps.
-- For a plan or design stress test, walk one unresolved decision branch at a time until dependencies and success conditions are clear, then execute the agreed work.
+- For an interview, intake, plan, or design stress test, gather all currently foreseeable high-value questions in one bundle; open another bundle only for a material branch that the answers newly reveal.
 - For personalized consequential guidance, first ask only for the facts that could change the recommended next action; do not answer with a forest of `if` branches in place of intake.
 - For a bare request such as `find a document`, ask what the document should be about or support before invoking retrieval; if the preceding conversation already identifies it, search directly.

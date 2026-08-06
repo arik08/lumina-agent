@@ -18,8 +18,12 @@ def test_ask_me_uses_the_existing_question_ui_without_over_questioning() -> None
 
     assert "name: ask-me" in skill
     assert "Call `request_user_input` by itself" in skill
-    assert "ask exactly one" in skill
     assert "normally no more than three" in skill
+    assert "each independent fact or decision as its own question" in skill
+    assert "Never combine several requested facts" in skill
+    assert "every currently foreseeable high-value question in the first bundle" in skill
+    assert "Do not intentionally split known questions" in skill
+    assert "could not reasonably have been anticipated" in skill
     assert "ten total questions" in skill
     assert "Never repeat a resolved question" in skill
     assert "verify the result against that contract" in skill
@@ -60,3 +64,10 @@ def test_request_user_input_allows_up_to_ten_questions() -> None:
     assert _MAX_USER_INPUT_QUESTIONS == 10
     assert questions_schema["minItems"] == 1
     assert questions_schema["maxItems"] == _MAX_USER_INPUT_QUESTIONS
+
+    description = _REQUEST_USER_INPUT_TOOL_SCHEMA["function"]["description"]
+    assert "exactly one fact or decision" in description
+    assert "separate question items in the same bundle" in description
+    assert "every currently foreseeable high-value question" in description
+    assert "repeated submit-and-wait cycles" in description
+    assert "could not reasonably have been anticipated" in description

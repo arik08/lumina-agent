@@ -12,6 +12,7 @@ const streamingRejoinPx = 360;
 const jumpButtonThresholdPx = 40;
 const instantJumpDistanceViewports = 4;
 const exactBottomPx = 2;
+const terminalFollowSettleMs = 800;
 const scrollPositionStoragePrefix = "lumina:conversation-scroll:";
 const rememberedScrollPositionLimit = 100;
 
@@ -242,9 +243,13 @@ export function useConversationAutoFollow(
   const animationRef = useRef<number | null>(null);
   const userIntentUntilRef = useRef(0);
   const activeRef = useRef(active);
+  const previousActiveRef = useRef(active);
+  const terminalFollowUntilRef = useRef(0);
   const conversationIdRef = useRef(conversationId);
   const programmaticScrollMarkerRef = useRef(0);
   const programmaticScrollUntilRef = useRef(0);
+  const lastScrollHeightRef = useRef<number | null>(null);
+  const lastBottomDistanceRef = useRef(0);
   const savedPositionsRef = useRef(new Map<string, ConversationScrollPosition>());
   const saveTimersRef = useRef(new Map<string, number>());
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
@@ -284,6 +289,7 @@ export function useConversationAutoFollow(
     programmaticScrollUntilRef.current = performance.now() + 80;
     container.dataset.programmaticScroll = "true";
     container.scrollTop = top;
+    lastBottomDistanceRef.current = Math.max(0, container.scrollHeight - container.clientHeight - container.scrollTop);
     const targetConversationId = conversationIdRef.current;
     if (targetConversationId) {
       rememberScrollPosition(savedPositionsRef.current, targetConversationId, { top, atBottom });
@@ -303,7 +309,8 @@ export function useConversationAutoFollow(
 
   const follow = useCallback((immediate = false, animateWhenHidden = false, force = false) => {
     const container = containerRef.current;
-    if (!container || (!activeRef.current && !force) || !followingRef.current) return;
+    const settlingTerminalFollow = performance.now() <= terminalFollowUntilRef.current;
+    if (!container || (!activeRef.current && !settlingTerminalFollow && !force) || !followingRef.current) return;
     if (animationRef.current !== null) return;
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
     if (immediate || reduceMotion || (document.hidden && !animateWhenHidden)) {
@@ -332,7 +339,7 @@ export function useConversationAutoFollow(
       } else {
         targetStableMs += elapsed;
       }
-      const smoothingWeight = activeRef.current
+      const smoothingWeight = activeRef.current || performance.now() <= terminalFollowUntilRef.current
         ? 1 - Math.exp(-elapsed / streamScrollSmoothingMs)
         : 1;
       smoothedTarget += (target - smoothedTarget) * smoothingWeight;
@@ -360,6 +367,15 @@ export function useConversationAutoFollow(
     };
     animationRef.current = window.requestAnimationFrame(step);
   }, [setProgrammaticScrollTop]);
+
+  useLayoutEffect(() => {
+    if (previousActiveRef.current && !active) {
+      terminalFollowUntilRef.current = performance.now() + terminalFollowSettleMs;
+    } else if (active) {
+      terminalFollowUntilRef.current = 0;
+    }
+    previousActiveRef.current = active;
+  }, [active]);
 
   useLayoutEffect(() => {
     if (animationRef.current !== null) window.cancelAnimationFrame(animationRef.current);
@@ -396,13 +412,27 @@ export function useConversationAutoFollow(
     const container = containerRef.current;
     const content = container?.firstElementChild;
     if (!container || !content || typeof ResizeObserver === "undefined") return;
+    lastScrollHeightRef.current = container.scrollHeight;
+    lastBottomDistanceRef.current = Math.max(0, container.scrollHeight - container.clientHeight - container.scrollTop);
     const observer = new ResizeObserver(() => {
+      const previousHeight = lastScrollHeightRef.current;
+      const nextHeight = container.scrollHeight;
+      if (previousHeight !== null && nextHeight < previousHeight && followingRef.current) {
+        if (animationRef.current !== null) window.cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
+        const maximumTop = Math.max(0, nextHeight - container.clientHeight);
+        const preservedTop = Math.max(0, maximumTop - lastBottomDistanceRef.current);
+        const distance = maximumTop - preservedTop;
+        setProgrammaticScrollTop(container, preservedTop, distance <= exactBottomPx);
+      }
+      lastScrollHeightRef.current = nextHeight;
       updateJumpVisibility();
-      follow(!activeRef.current, false, !activeRef.current);
+      const settlingTerminalFollow = performance.now() <= terminalFollowUntilRef.current;
+      follow(!activeRef.current && !settlingTerminalFollow, false, !activeRef.current);
     });
     observer.observe(content);
     return () => observer.disconnect();
-  }, [follow, updateJumpVisibility]);
+  }, [follow, setProgrammaticScrollTop, updateJumpVisibility]);
 
   useEffect(() => () => {
     if (animationRef.current !== null) window.cancelAnimationFrame(animationRef.current);
@@ -416,6 +446,7 @@ export function useConversationAutoFollow(
     if (container.dataset.programmaticScroll === "true" || performance.now() <= programmaticScrollUntilRef.current) return;
     const scrollTop = container.scrollTop;
     const distance = container.scrollHeight - container.clientHeight - scrollTop;
+    lastBottomDistanceRef.current = Math.max(0, distance);
     if (conversationId) rememberPosition(conversationId, scrollTop, distance);
     if (distance <= nearBottomPx) {
       followingRef.current = true;

@@ -14,7 +14,9 @@ test("completed chat turns keep stable props and skip offscreen rendering work",
 
   assert.match(turn, /export const AssistantTurn = memo\(function AssistantTurn/);
   assert.match(turn, /const terminalPresentationReady = terminal && displayedText === sanitizedAssistantText;/);
-  assert.match(turn, /className=\{`turn-set \$\{terminalPresentationReady \? "is-terminal" : "is-active"\}`\}/);
+  assert.match(turn, /const mountedTerminalRef = useRef\(terminalPresentationReady\);/);
+  assert.match(turn, /mountedTerminalRef\.current \? "is-terminal" : "is-live-terminal"/);
+  assert.match(turn, /className=\{`turn-set \$\{terminalLayoutClass\}`\}/);
   assert.match(turn, /terminalPresentationReady && researchVerification === "unverified"/);
   assert.match(turn, /\{terminalPresentationReady && \(/);
   assert.match(turn, /export function sessionUsageRevision/);

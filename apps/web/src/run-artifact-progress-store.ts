@@ -5,26 +5,6 @@ export type RunArtifactProgress = RunSnapshot["artifactProgress"];
 
 const progressByRun = new Map<string, RunArtifactProgress>();
 const listeners = new Map<string, Set<() => void>>();
-const pendingRunIds = new Set<string>();
-let pendingFrame: number | null = null;
-
-function flush() {
-  pendingFrame = null;
-  const runIds = [...pendingRunIds];
-  pendingRunIds.clear();
-  runIds.forEach((runId) => listeners.get(runId)?.forEach((listener) => listener()));
-}
-
-function schedule(runId: string) {
-  pendingRunIds.add(runId);
-  if (pendingFrame !== null) return;
-  if (typeof requestAnimationFrame === "function") {
-    pendingFrame = requestAnimationFrame(flush);
-  } else {
-    pendingFrame = -1;
-    queueMicrotask(flush);
-  }
-}
 
 function sameProgress(left: RunArtifactProgress, right: RunArtifactProgress) {
   return left?.tokens === right?.tokens
@@ -39,7 +19,7 @@ export function setRunArtifactProgress(runId: string, progress: RunArtifactProgr
   if (sameProgress(current, progress)) return;
   if (progress) progressByRun.set(runId, progress);
   else progressByRun.delete(runId);
-  schedule(runId);
+  listeners.get(runId)?.forEach((listener) => listener());
 }
 
 export function useRunArtifactProgress(

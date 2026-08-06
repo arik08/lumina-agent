@@ -21,8 +21,10 @@ test("artifact progress distinguishes document size, target, and model output us
   assert.match(app, /style=\{\{ width: `\$\{artifactProgress\.percent\}%` \}\}/);
   assert.match(app, /const liveArtifactProgress = useRunArtifactProgress\(/);
   assert.match(app, /const artifactUsage = liveArtifactProgress\s+\?\? snapshot\?\.artifactUsage\s+\?\? finalMessage\?\.metadata\?\.artifactUsage/);
-  assert.match(app, /\{!terminal && artifactUsage && artifactUsage\.tokens > 0 && artifactProgress && \(/);
-  assert.doesNotMatch(app, /hasArtifactWritingExecution/);
+  assert.match(app, /const hasActiveWriteFileProgress = tools\.some\(\(execution\) => \(/);
+  assert.match(app, /execution\.toolName === "write_file"/);
+  assert.match(app, /\["queued", "running", "streaming"\]\.includes\(execution\.status\)/);
+  assert.match(app, /\{!terminal && !hasActiveWriteFileProgress && artifactUsage && artifactUsage\.tokens > 0 && artifactProgress && \(/);
   assert.doesNotMatch(app, /문서 작성을 준비하고 있습니다\./);
   assert.doesNotMatch(app, /artifact-progress-meter \$\{artifactUsage\.tokens === 0 && !terminal \? "is-indeterminate"/);
   assert.match(app, /artifactUsage\.estimated === false \? "문서 약" : "작성 중 약"/);
@@ -41,7 +43,8 @@ test("artifact progress distinguishes document size, target, and model output us
   assert.match(workspace, /nextSnapshot\.artifactProgress = null/);
   assert.match(workspace, /nextSnapshot\.artifactUsage = null/);
   assert.match(store, /useSyncExternalStore/);
-  assert.match(store, /requestAnimationFrame\(flush\)/);
+  assert.match(store, /listeners\.get\(runId\)\?\.forEach\(\(listener\) => listener\(\)\)/);
+  assert.doesNotMatch(store, /requestAnimationFrame|queueMicrotask/);
   assert.match(store, /const progressByRun = new Map/);
 
   assert.match(stylesheet, /--artifact-progress-color: var\(--cobalt\)/);
@@ -54,7 +57,7 @@ test("artifact progress distinguishes document size, target, and model output us
   assert.match(stylesheet, /\.artifact-progress-count\.is-green \{ --artifact-progress-color: var\(--success\); \}/);
   assert.match(stylesheet, /\.artifact-progress-count\.is-orange \{ --artifact-progress-color: color-mix\(in srgb, #f46d43 55%, var\(--surface\)\); \}/);
   assert.match(stylesheet, /\.artifact-progress-count\.is-red \{ --artifact-progress-color: var\(--danger\); \}/);
-  assert.match(stylesheet, /\.artifact-progress-fill \{[^}]*transition: width 100ms linear/s);
+  assert.match(stylesheet, /\.artifact-progress-fill \{[^}]*transition: none/s);
   assert.doesNotMatch(stylesheet, /\.artifact-progress-meter\.is-indeterminate/);
   assert.match(stylesheet, /@container \(max-width: 560px\) \{\s*\.artifact-progress-target \{ display: none; \}\s*\}/);
   assert.doesNotMatch(stylesheet, /stream-meter-sweep/);
