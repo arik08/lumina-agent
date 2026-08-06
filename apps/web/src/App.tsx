@@ -854,7 +854,9 @@ function ArtifactLengthSlider({
     ? "danger"
     : selectedIndex >= 4
       ? "warning"
-      : "normal";
+      : selectedIndex <= 1
+        ? "muted"
+        : "normal";
   const ariaValueText = `${selected.label}${selected.warning ? `, ${selected.warning}` : ""}, 채팅 답변이 아닌 생성 파일의 목표 분량`;
 
   useEffect(() => {

@@ -30,7 +30,10 @@ test("simple selections use the shared rounded menu instead of native selects", 
   assert.match(component, /event\.key === "Escape"/);
   assert.match(component, /event\.key === "Enter" \|\| event\.key === " "/);
   assert.match(component, /"ArrowDown", "ArrowUp", "Home", "End"/);
-  assert.match(component, /lacksRoomBelow/);
+  assert.match(component, /createPortal\([\s\S]*document\.body/);
+  assert.match(component, /!menuRef\.current\?\.contains\(event\.target\)/);
+  assert.match(component, /window\.addEventListener\("scroll", reposition, true\)/);
   assert.match(styles, /\.lumina-select-menu\s*\{[\s\S]*?border-radius: var\(--radius-menu\);/);
+  assert.match(styles, /\.lumina-select-menu-global\s*\{[^}]*position: fixed;/);
   assert.match(styles, /\.lumina-select-menu > button\s*\{[\s\S]*?border-radius: var\(--radius-option\);/);
 });
