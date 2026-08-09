@@ -271,6 +271,27 @@ if ($null -eq $listeningPortsFunction -or $null -eq $lanAddressesFunction) {
 . ([scriptblock]::Create($listeningPortsFunction.Extent.Text))
 . ([scriptblock]::Create($lanAddressesFunction.Extent.Text))
 
+$coldStopFunctionNames = @(
+    "Get-ProcessStartTicks",
+    "Refresh-ManagedProcessTrees",
+    "Wait-LuminaRuntimeStopped",
+    "Stop-ManagedProcesses"
+)
+foreach ($functionName in $coldStopFunctionNames) {
+    $functionAst = $ast.Find(
+        {
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq $functionName
+        },
+        $true
+    )
+    if ($null -eq $functionAst) {
+        throw "$functionName was not found."
+    }
+    . ([scriptblock]::Create($functionAst.Extent.Text))
+}
+
 $cases = @(
     @{ Name = "lowercase r"; Character = [char]'r'; VirtualKeyCode = 0; Expected = $true },
     @{ Name = "uppercase R"; Character = [char]'R'; VirtualKeyCode = 0; Expected = $true },
@@ -597,16 +618,23 @@ $stopManagedProcessesFunction = $ast.Find(
     },
     $true
 )
-$usesNativeTreeKill = (
+$usesVerifiedColdStop = (
     $nativeTreeFunction.Extent.Text -match 'CreateToolhelp32Snapshot' -and
     $nativeTreeFunction.Extent.Text -notmatch 'Get-CimInstance' -and
     $stopTreesFunction.Extent.Text -match 'Get-LuminaNativeProcessTreeIds' -and
     $stopTreesFunction.Extent.Text -match 'taskkill\.exe' -and
-    $stopTreesFunction.Extent.Text.IndexOf('Get-LuminaNativeProcessTreeIds') -lt
-        $stopTreesFunction.Extent.Text.IndexOf('taskkill.exe') -and
+    ([regex]::Matches(
+        $stopTreesFunction.Extent.Text,
+        'Get-LuminaNativeProcessTreeIds'
+    )).Count -ge 2 -and
     $null -ne $stopManagedProcessesFunction -and
+    $stopManagedProcessesFunction.Extent.Text -match 'Refresh-ManagedProcessTrees' -and
+    $stopManagedProcessesFunction.Extent.Text -match 'ProcessStartTicks' -and
     $stopManagedProcessesFunction.Extent.Text -match
-        'Stop-ProcessTrees\s+-ProcessIds\s+\$processIds'
+        'Wait-LuminaRuntimeStopped\s+-ProcessIds\s+\$processIds\s+-Ports\s+\$stoppedPorts' -and
+    $startManagedProcessFunction.Extent.Text -match 'ProcessIds\s*=\s*@\(\$process\.Id\)' -and
+    $startManagedProcessFunction.Extent.Text -match 'ProcessStartTicks\s*=\s*\$processStartTicks' -and
+    $source -match '(?s)if \(Test-LuminaHealthy\) \{\s*Refresh-ManagedProcessTrees'
 )
 $waitReadyFunction = $ast.Find(
     {
@@ -638,12 +666,12 @@ $usesOneProcessSnapshot = (
     $rootLookupFunction.Extent.Text -notmatch 'Get-CimInstance'
 )
 if (
-    -not $usesNativeTreeKill -or
+    -not $usesVerifiedColdStop -or
     -not $warmsNativeSnapshotDuringProgress -or
     -not $usesFastSupervisorIdentity -or
     -not $usesOneProcessSnapshot
 ) {
-    throw "Process cleanup must use the fast native tree snapshot before fallback, a versioned supervisor identity, and one listener snapshot."
+    throw "Process cleanup must track process identities, kill the full tree, verify PID and port release, and retain safe supervisor/listener checks."
 }
 
 $startupResetRestartsBoth = $source -match
@@ -753,6 +781,74 @@ finally {
     foreach ($process in $managedFixtureProcesses) {
         Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
     }
+}
+
+$coldResetParent = $null
+$coldResetChildId = 0
+$originalManagedProcesses = $script:ManagedProcesses
+$originalBackendPort = $BackendPort
+$originalFrontendPort = $FrontendPort
+try {
+    $coldResetParent = Start-Process `
+        -FilePath $env:ComSpec `
+        -ArgumentList @('/d', '/c', 'ping.exe 127.0.0.1 -t > nul') `
+        -WindowStyle Hidden `
+        -PassThru
+    $childDeadline = [DateTime]::UtcNow.AddSeconds(5)
+    while ([DateTime]::UtcNow -lt $childDeadline -and $coldResetChildId -le 0) {
+        $child = Get-CimInstance `
+            Win32_Process `
+            -Filter "ParentProcessId = $($coldResetParent.Id)" `
+            -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($null -ne $child) {
+            $coldResetChildId = [int]$child.ProcessId
+            break
+        }
+        Start-Sleep -Milliseconds 50
+    }
+    if ($coldResetChildId -le 0) {
+        throw "The cold-reset fixture did not create a child process."
+    }
+
+    $processStartTicks = @{}
+    $processStartTicks[[int]$coldResetParent.Id] = Get-ProcessStartTicks `
+        -ProcessId $coldResetParent.Id
+    $script:ManagedProcesses = @(
+        [pscustomobject]@{
+            Name = "Backend"
+            Process = $coldResetParent
+            ProcessIds = @($coldResetParent.Id)
+            ProcessStartTicks = $processStartTicks
+            ErrorLog = ""
+        }
+    )
+    $BackendPort = 0
+    $FrontendPort = 0
+    Refresh-ManagedProcessTrees
+    if ($coldResetChildId -notin $script:ManagedProcesses[0].ProcessIds) {
+        throw "Managed process-tree refresh did not capture the child PID."
+    }
+
+    Stop-ManagedProcesses
+    if (
+        $null -ne (Get-Process -Id $coldResetParent.Id -ErrorAction SilentlyContinue) -or
+        $null -ne (Get-Process -Id $coldResetChildId -ErrorAction SilentlyContinue) -or
+        $script:ManagedProcesses.Count -ne 0
+    ) {
+        throw "Verified cold reset left a tracked process running."
+    }
+}
+finally {
+    if ($coldResetChildId -gt 0) {
+        Stop-Process -Id $coldResetChildId -Force -ErrorAction SilentlyContinue
+    }
+    if ($null -ne $coldResetParent) {
+        Stop-Process -Id $coldResetParent.Id -Force -ErrorAction SilentlyContinue
+    }
+    $script:ManagedProcesses = $originalManagedProcesses
+    $BackendPort = $originalBackendPort
+    $FrontendPort = $originalFrontendPort
 }
 
 $SupervisorPidPath = Join-Path $env:TEMP "lumina-supervisor-test-$([guid]::NewGuid()).pid"

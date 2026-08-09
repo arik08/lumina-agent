@@ -679,23 +679,9 @@ function Stop-ProcessTrees {
     }
 
     $treeIds = @(Get-LuminaNativeProcessTreeIds -RootIds $rootIds)
-    if ($treeIds.Count -gt 0) {
-        for ($index = $treeIds.Count - 1; $index -ge 0; $index--) {
-            Stop-Process -Id $treeIds[$index] -Force -ErrorAction SilentlyContinue
-        }
-    }
-
-    $remainingIds = @(
-        $(if ($treeIds.Count -gt 0) { $treeIds } else { $rootIds }) |
-            Where-Object { $null -ne (Get-Process -Id $_ -ErrorAction SilentlyContinue) }
-    )
-    if ($remainingIds.Count -eq 0) {
-        return
-    }
-
     $taskkillPath = Join-Path $env:SystemRoot "System32\taskkill.exe"
     if (Test-Path -LiteralPath $taskkillPath) {
-        foreach ($processId in $remainingIds) {
+        foreach ($processId in $rootIds) {
             try {
                 & $taskkillPath /PID ([string]$processId) /T /F 2>$null | Out-Null
             }
@@ -703,13 +689,25 @@ function Stop-ProcessTrees {
                 # Fall back to the PowerShell tree walk below.
             }
         }
-        $remainingIds = @(
-            $remainingIds |
-                Where-Object { $null -ne (Get-Process -Id $_ -ErrorAction SilentlyContinue) }
-        )
-        if ($remainingIds.Count -eq 0) {
-            return
-        }
+    }
+
+    # Re-snapshot after taskkill so a child created during shutdown is not missed.
+    $treeIds = @(
+        $treeIds +
+        @(Get-LuminaNativeProcessTreeIds -RootIds $rootIds) +
+        $rootIds |
+            Sort-Object -Unique
+    )
+    for ($index = $treeIds.Count - 1; $index -ge 0; $index--) {
+        Stop-Process -Id $treeIds[$index] -Force -ErrorAction SilentlyContinue
+    }
+
+    $remainingIds = @(
+        $treeIds |
+            Where-Object { $null -ne (Get-Process -Id $_ -ErrorAction SilentlyContinue) }
+    )
+    if ($remainingIds.Count -eq 0) {
+        return
     }
 
     $processes = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
@@ -798,6 +796,35 @@ function Get-LuminaListeningPorts {
     )
 }
 
+function Wait-LuminaRuntimeStopped {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [int[]]$ProcessIds,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [int[]]$Ports
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    do {
+        $runningProcessIds = @(
+            $ProcessIds |
+                Where-Object { $null -ne (Get-Process -Id $_ -ErrorAction SilentlyContinue) }
+        )
+        $listeningPorts = @(Get-LuminaListeningPorts -Ports $Ports)
+        if ($runningProcessIds.Count -eq 0 -and $listeningPorts.Count -eq 0) {
+            return
+        }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    throw (
+        "Lumina hard reset could not fully stop the previous runtime. " +
+        "Processes: $($runningProcessIds -join ', '); ports: $($listeningPorts -join ', ')."
+    )
+}
+
 function Stop-ExistingLuminaListeners {
     param([Parameter(Mandatory = $true)][int[]]$Ports)
 
@@ -835,13 +862,36 @@ function Stop-ExistingLuminaListeners {
 function Stop-ManagedProcesses {
     param([switch]$PreserveFrontend)
 
-    $processIds = @(
+    Refresh-ManagedProcessTrees
+    $stoppedProcesses = @(
         $script:ManagedProcesses |
-            Where-Object { -not $PreserveFrontend -or $_.Name -ne "Frontend" } |
-            ForEach-Object { $_.Process.Id } |
+            Where-Object { -not $PreserveFrontend -or $_.Name -ne "Frontend" }
+    )
+    $processIds = @(
+        $stoppedProcesses |
+            ForEach-Object {
+                $managed = $_
+                foreach ($processId in @($managed.ProcessIds) + @($managed.Process.Id)) {
+                    $expectedTicks = $managed.ProcessStartTicks[[int]$processId]
+                    $actualTicks = Get-ProcessStartTicks -ProcessId $processId
+                    if ($null -ne $actualTicks -and $actualTicks -eq $expectedTicks) {
+                        $processId
+                    }
+                }
+            } |
             Sort-Object -Unique
     )
     Stop-ProcessTrees -ProcessIds $processIds
+    if ($stoppedProcesses.Count -gt 0) {
+        $stoppedPorts = @(
+            $stoppedProcesses |
+                ForEach-Object {
+                    if ($_.Name -eq "Frontend") { $FrontendPort } else { $BackendPort }
+                } |
+                Sort-Object -Unique
+        )
+        Wait-LuminaRuntimeStopped -ProcessIds $processIds -Ports $stoppedPorts
+    }
     $script:ManagedProcesses = @(
         $script:ManagedProcesses |
             Where-Object { $PreserveFrontend -and $_.Name -eq "Frontend" }
@@ -985,10 +1035,55 @@ function Start-ManagedProcess {
             )
         }
     }
+    $processStartTicks = @{}
+    $startTicks = Get-ProcessStartTicks -ProcessId $process.Id
+    if ($null -ne $startTicks) {
+        $processStartTicks[[int]$process.Id] = $startTicks
+    }
     return [pscustomobject]@{
         Name = $Name
         Process = $process
+        ProcessIds = @($process.Id)
+        ProcessStartTicks = $processStartTicks
         ErrorLog = $ErrorLog
+    }
+}
+
+function Get-ProcessStartTicks {
+    param([Parameter(Mandatory = $true)][int]$ProcessId)
+
+    try {
+        $process = Get-Process -Id $ProcessId -ErrorAction Stop
+        return [long]$process.StartTime.ToUniversalTime().Ticks
+    }
+    catch {
+        return $null
+    }
+}
+
+function Refresh-ManagedProcessTrees {
+    foreach ($managed in $script:ManagedProcesses) {
+        $rootId = [int]$managed.Process.Id
+        $expectedRootTicks = $managed.ProcessStartTicks[$rootId]
+        $actualRootTicks = Get-ProcessStartTicks -ProcessId $rootId
+        $liveTreeIds = @()
+        if ($null -ne $actualRootTicks -and $actualRootTicks -eq $expectedRootTicks) {
+            $liveTreeIds = @(Get-LuminaNativeProcessTreeIds -RootIds @($rootId))
+        }
+        $processIds = @(
+            @($managed.ProcessIds) +
+            $liveTreeIds |
+                Sort-Object -Unique
+        )
+        foreach ($processId in $processIds) {
+            if (-not $managed.ProcessStartTicks.ContainsKey([int]$processId)) {
+                $startTicks = Get-ProcessStartTicks -ProcessId $processId
+                if ($null -ne $startTicks) {
+                    $managed.ProcessStartTicks[[int]$processId] = $startTicks
+                }
+            }
+        }
+        $managed.ProcessIds = $processIds
     }
 }
 
@@ -1209,6 +1304,7 @@ function Wait-LuminaReady {
             throw "$($exited.Name) exited during startup. See $($exited.ErrorLog)"
         }
         if (Test-LuminaHealthy) {
+            Refresh-ManagedProcessTrees
             return "ready"
         }
         Start-Sleep -Milliseconds $StartupPollIntervalMilliseconds
@@ -1342,7 +1438,7 @@ try {
             else {
                 Write-Host "[Lumina] Service: http://127.0.0.1:$BackendPort"
             }
-            Write-Host "[Lumina] Press R to hard reset. Press Q to stop Lumina."
+            Write-Host "[Lumina] Press R to fully stop and restart the entire runtime. Press Q to stop Lumina."
 
             $healthFailures = 0
             $nextHealthCheck = [DateTime]::UtcNow.AddSeconds($HealthCheckIntervalSeconds)
@@ -1373,6 +1469,7 @@ try {
                 if ([DateTime]::UtcNow -ge $nextHealthCheck) {
                     if (Test-LuminaHealthy) {
                         $healthFailures = 0
+                        Refresh-ManagedProcessTrees
                         if (
                             $automaticRestartCount -gt 0 -and
                             $null -ne $readyAt -and
@@ -1407,7 +1504,7 @@ try {
         }
         if ($manualResetRequested) {
             Clear-LuminaStartupProgress
-            Write-Host "[Lumina] Restarting..."
+            Write-Host "[Lumina] Previous runtime fully stopped. Starting from a clean process state..."
             $runtimePreparationRequired = $true
             Write-LuminaMonitoringEvent -Event "manual_restart" -Attempt $attemptNumber
             Write-LuminaStartupState `
