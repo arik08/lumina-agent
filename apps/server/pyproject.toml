@@ -35,9 +35,6 @@ dependencies = [
   "reportlab>=4.4,<5",
 ]
 
-[project.optional-dependencies]
-codex = ["openai-codex>=0.1.0b2,<0.2"]
-
 [dependency-groups]
 dev = [
   "httpx2>=2,<3",

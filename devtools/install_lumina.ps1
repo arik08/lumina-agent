@@ -3,8 +3,6 @@ param(
     [switch]$NonInteractive,
     [switch]$ConfigurePgpt,
     [switch]$SkipPgpt,
-    [switch]$InstallCodex,
-    [switch]$SkipCodex,
     [string]$CompanyCaPath,
     [switch]$RequireCompanyCa,
     [switch]$PgptNetworkCheck,
@@ -207,9 +205,6 @@ function Read-LuminaYesNoChoice {
 if ($ConfigurePgpt -and $SkipPgpt) {
     throw "ConfigurePgpt and SkipPgpt cannot be used together."
 }
-if ($InstallCodex -and $SkipCodex) {
-    throw "InstallCodex and SkipCodex cannot be used together."
-}
 if ($PgptNetworkCheck -and $NoNetwork) {
     throw "PgptNetworkCheck and NoNetwork cannot be used together."
 }
@@ -294,12 +289,6 @@ if (-not $ConfigurePgpt -and -not $SkipPgpt -and -not $NonInteractive) {
         -Prompt "Configure the optional P-GPT provider now?"
 }
 
-$enableCodex = [bool]$InstallCodex
-if (-not $InstallCodex -and -not $SkipCodex -and -not $NonInteractive) {
-    $choice = Read-Host "Install the optional Codex Provider support? [y/N]"
-    $enableCodex = $choice -match '^(?i)y(?:es)?$'
-}
-
 if ($enablePgpt) {
     Write-Host "[Lumina] Configuring P-GPT credentials without displaying their values..."
     $pgptApiKey = Get-RequiredSecretSetting -Key "PGPT_API_KEY" -Prompt "P-GPT API key"
@@ -362,9 +351,6 @@ elseif ($RequireCompanyCa) {
 if (-not $SkipDependencyInstall) {
     Write-Host "[Lumina] Installing Python dependencies..."
     $pythonInstallArguments = @("sync", "--project", $ServerRoot, "--python", "3.13")
-    if ($enableCodex) {
-        $pythonInstallArguments += @("--extra", "codex")
-    }
     if ($NoNetwork) {
         $pythonInstallArguments += "--offline"
     }

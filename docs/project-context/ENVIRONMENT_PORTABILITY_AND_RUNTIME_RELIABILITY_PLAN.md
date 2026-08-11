@@ -259,7 +259,7 @@ corporate에서 home으로 조용히 fallback하거나, stale CA 경로 오류�
 
 **증상 연결**
 
-P-GPT만 사용하는 회사 환경이나 다른 Provider를 선택한 환경도 Codex App Server/model discovery 지연을 함께 부담한다. cache hit와 실제 startup latency가 다르게 보이는 이유가 된다.
+과거에는 P-GPT만 사용하는 회사 환경이나 다른 Provider를 선택한 환경도 Codex App Server/model discovery 지연을 함께 부담했다. 현재 Codex는 auth 파일 검증과 Direct Responses만 사용하므로 별도 subprocess startup 지연이 없다.
 
 **목표 계약**
 
@@ -268,7 +268,7 @@ P-GPT만 사용하는 회사 환경이나 다른 Provider를 선택한 환경도
 - optional warmup은 global readiness를 막지 않고 startup phase/metric에 별도로 보인다.
 - required Provider의 warmup 실패만 해당 capability 또는 profile readiness를 막는다.
 
-현재 Worker recovery가 완료된 뒤 Codex warmup을 background task로 시작하므로 optional Codex 초기화는 Backend readiness를 막지 않는다. required Provider를 profile로 선언하고 capability readiness에 연결하는 작업은 Slice 2에 남아 있다.
+현재 Worker recovery가 완료된 뒤 Codex warmup을 background task로 시작하며, warmup은 로컬 OAuth 파일 검증만 수행하므로 Backend readiness나 회사 P-GPT 실행 경로에 Codex subprocess를 추가하지 않는다. required Provider를 profile로 선언하고 capability readiness에 연결하는 작업은 Slice 2에 남아 있다.
 
 ### P1-1. installer 성공 여부를 다음 실행이 증명할 manifest가 없다
 

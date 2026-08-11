@@ -25,30 +25,12 @@ from lumina.providers import (
     ProviderMessage,
     ProviderUsage,
 )
-from lumina.providers.codex.adapter import _CodexToolCallStream
 from lumina.tools.web import (
     SearchInvocation,
     SourceEvidence,
     WebFetchResult,
     WebSearchResult,
 )
-
-
-def test_codex_structured_final_text_streams_before_envelope_completion() -> None:
-    expected = "첫 문장부터 보여야 합니다. 두 번째 문장도 이어집니다."
-    envelope = json.dumps(
-        {"kind": "final", "text": expected, "tool_calls": []},
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    stream = _CodexToolCallStream()
-    events = []
-    for index in range(0, len(envelope), 7):
-        events.extend(stream.feed(envelope[index : index + 7]))
-
-    text_deltas = [event.text or "" for event in events if event.type == "text_delta"]
-    assert len(text_deltas) > 1
-    assert "".join(text_deltas) == expected
 
 
 def test_progress_control_extracts_llm_authored_summary_across_chunks() -> None:

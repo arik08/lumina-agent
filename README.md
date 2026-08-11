@@ -139,7 +139,7 @@ Office/PDF Artifact를 실제 페이지로 렌더링해 검증하려면 LibreOff
 installer.bat
 ```
 
-설치기는 Codex Provider 지원을 설치할지 묻습니다. 기본값은 `N`이며, 선택하지 않으면 대용량 Codex CLI 바이너리를 설치하지 않습니다. 집처럼 Codex를 사용하는 환경에서는 질문에 `y`로 답하거나 `installer.bat -InstallCodex`를 사용합니다. 회사처럼 사용하지 않는 환경이나 비대화형 설치에서는 기본적으로 제외되며, `-SkipCodex`로 명시할 수도 있습니다.
+Codex Provider는 별도 Codex CLI/App Server 패키지 없이 Lumina의 공통 Direct Responses 경로를 사용합니다. 집에서 Codex OAuth를 사용할 때는 서버 사용자 계정에서 `codex login`을 실행해 `~/.codex/auth.json`을 준비하면 됩니다. 회사 설치에는 Codex 전용 Python 패키지나 CLI 바이너리가 추가되지 않습니다.
 
 설치기는 다음 작업을 수행합니다.
 
@@ -259,7 +259,7 @@ $사내검색 최근 관련 규정을 찾아 주세요.
 
 | Provider | 주요 설정 |
 |---|---|
-| Codex | 로컬 Codex App Server의 ChatGPT OAuth (`codex login`) |
+| Codex | 로컬 `auth.json`의 ChatGPT OAuth (`codex login`) |
 | OpenAI | `OPENAI_API_KEY` |
 | Anthropic | `ANTHROPIC_API_KEY` |
 | Gemini | `GOOGLE_API_KEY` |
@@ -269,7 +269,7 @@ $사내검색 최근 관련 규정을 찾아 주세요.
 
 P-GPT의 기본 endpoint는 코드에 정의된 사내 profile을 사용하며, `PGPT_BASE_URL`은 관리자 override가 필요할 때만 설정합니다. 새로 발견한 Provider 모델은 자동으로 활성화하지 않고 관리자가 검증한 카탈로그 항목만 사용자에게 노출합니다.
 
-Codex는 ChatGPT 구독 사용량을 쓰며 `OPENAI_API_KEY`로 자동 전환하지 않습니다. 현재 공개 Codex App Server에서 검증된 초기 모델은 `GPT-5.5`와 `GPT-5.4`입니다. Provider credential을 설정하지 않은 개발 환경에서는 deterministic Mock Provider를 사용해 대화, Tool, Plan과 Artifact 흐름을 검증할 수 있습니다.
+Codex는 ChatGPT 구독 사용량을 쓰며 `OPENAI_API_KEY`로 자동 전환하지 않습니다. 사용할 수 있는 모델은 Lumina의 검토된 Codex 모델 카탈로그로 제한합니다. Provider credential을 설정하지 않은 개발 환경에서는 deterministic Mock Provider를 사용해 대화, Tool, Plan과 Artifact 흐름을 검증할 수 있습니다.
 
 ## 개발과 검증
 
@@ -277,7 +277,7 @@ Backend 테스트:
 
 ```powershell
 $env:PYTHONPYCACHEPREFIX = "$PWD\.cache\pycache"
-uv run --project apps/server --extra codex pytest -c apps/server/pyproject.toml
+uv run --project apps/server pytest -c apps/server/pyproject.toml
 ```
 
 Frontend 단위 테스트, typecheck와 build:

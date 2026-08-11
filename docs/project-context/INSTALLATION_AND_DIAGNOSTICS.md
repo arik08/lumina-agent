@@ -14,7 +14,7 @@
 installer.bat
 ```
 
-Codex Provider는 선택 설치입니다. 대화형 설치의 `Install the optional Codex Provider support? [y/N]` 질문은 기본값이 `N`이므로, 사용하지 않으면 `openai-codex`와 Codex CLI 바이너리를 설치하지 않습니다. Codex를 사용하는 개발 PC에서는 `installer.bat -InstallCodex`, 사용하지 않는 회사 PC나 자동 설치에서는 `installer.bat -SkipCodex`를 사용할 수 있습니다. `-NonInteractive`에서 별도 옵션이 없으면 Codex를 설치하지 않습니다.
+Codex Provider는 별도 `openai-codex` 또는 Codex CLI 바이너리 dependency 없이 Lumina의 공통 Direct Responses transport를 사용합니다. 집에서 Codex OAuth를 사용하는 경우 서버 사용자 계정에서 `codex login`으로 `~/.codex/auth.json`을 준비합니다. 회사와 비대화형 설치도 동일한 Python dependency 집합을 사용하며, Codex 사용 여부에 따른 설치 분기는 없습니다.
 
 설치기는 dependency, data directory, `.env`, Alembic migration과 Frontend build를 준비합니다. 기존 `.env`는 통째로 덮어쓰지 않으며 사용자가 P-GPT 설정을 명시적으로 선택한 경우에만 해당 key를 갱신합니다. API Key, employee number와 company code는 숨김 입력으로 받고 완료 메시지나 오류에 값을 다시 표시하지 않습니다.
 
@@ -123,7 +123,7 @@ Backend 회귀 테스트는 저장소 루트에서 다음 명령으로 실행합
 
 ```powershell
 $env:PYTHONPYCACHEPREFIX = "$PWD\.cache\pycache"
-uv run --project apps/server --extra codex pytest -c apps/server/pyproject.toml
+uv run --project apps/server pytest -c apps/server/pyproject.toml
 uv run --project apps/server mypy apps/server/src
 uv run --project apps/server ruff check apps/server/src tests/backend
 ```

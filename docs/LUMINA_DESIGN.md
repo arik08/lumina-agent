@@ -67,7 +67,7 @@
 |---|---|---|
 | 가입 신청·관리자 승인 | Implemented | `POST /api/auth/register`, `invited` 상태, 관리자 알림·승인 UI와 Backend test가 존재 |
 | Skill 사용자별 WorkingDraft·복수 Owner | Implemented | migration `0019`, `SkillOwnership`, Draft 생성·저장·활성화 API와 회귀 test가 존재 |
-| 동적 업무 계획·Codex OAuth·prompt cache | Implemented | `update_plan`, `work_plan_updated`, Codex App Server catalog와 Provider별 cache payload test가 존재 |
+| 동적 업무 계획·Codex OAuth·prompt cache | Implemented | `update_plan`, `work_plan_updated`, Direct Responses 기반 Codex catalog와 Provider별 cache payload test가 존재 |
 | 대화 좋아요·Composer 중단·예약 작업 삭제·복원 loading | Implemented | 현재 Backend·Frontend와 UI 계약 test에 반영되어 있으며 삭제는 물리 삭제가 아닌 보관 처리 |
 | 일반 문서 RAG MCP | Target | 새 설계는 일반 문서·자연 위치 계약이지만 현재 `vector_db` source와 Skill은 아직 Markdown 조직 문서·`explore_org` 계약 |
 | 심층분석 Mission Workflow | 구현 | 독립 메뉴와 Workspace Frontend, Project 귀속 Mission·Workflow revision·Node·Edge, 즉시 생성되는 빈 수동 Workflow와 선택적 AI 재생성, 정상 상하 경로가 있는 검증 Node의 제한된 좌우 `loop_back`, Node별 채팅 세션과 Run, Canvas·Inspector·실제 프롬프트·Markdown 출력·누적 비용·event replay·export를 제공합니다. Pattern·실행 중 임의 재계획·Claim·Evidence·별도 Quality Gate는 계약에서 제외합니다. |
@@ -1117,7 +1117,7 @@ apps/server/src/lumina/providers/
 
 OpenAI 항목은 [공식 최신 모델 가이드](https://developers.openai.com/api/docs/guides/latest-model.md), Anthropic 항목은 [공식 모델 개요](https://platform.claude.com/docs/en/about-claude/models/overview)와 [모델 선택 가이드](https://platform.claude.com/docs/en/about-claude/models/choosing-a-model)를 기준으로 선정했습니다. 외부 Provider의 `latest` alias는 실행 결과가 예고 없이 바뀔 수 있으므로 Run 재현용 ID로 저장하지 않습니다. 구현 직전과 catalog 갱신 시 공식 문서를 다시 확인하고, 변경은 관리자 검토를 거쳐 catalog revision으로 배포합니다.
 
-Codex text Provider는 OpenAI API Key가 아니라 로컬 Codex App Server의 `chatgpt` 인증 모드만 사용합니다. Backend는 Codex 자식 프로세스에서 `OPENAI_API_KEY`를 제거하여 API 과금 경로로 자동 fallback하지 못하게 합니다. 원칙적으로 OAuth runtime의 공개 model discovery를 따르되, discovery 반영보다 먼저 실호출 검증을 마친 versioned Codex catalog 모델은 명시적 allowlist로 실행할 수 있습니다. `OpenAI` Provider의 API Key와 사용량은 Codex 구독 사용량과 분리합니다. Codex OAuth 경로에서 지원하지 않는 Lumina 전용 Tool은 API Key로 우회하지 않고 명시적으로 unavailable 처리합니다.
+Codex text Provider는 OpenAI API Key가 아니라 로컬 `~/.codex/auth.json`의 ChatGPT OAuth access token만 사용합니다. Lumina의 공통 Direct Responses transport가 요청을 수행하므로 Codex CLI/App Server package나 자식 process는 필요하지 않습니다. 실행 모델은 관리자가 검토한 versioned Codex catalog allowlist로 제한합니다. `OpenAI` Provider의 API Key와 사용량은 Codex 구독 사용량과 분리하며, OAuth가 만료되면 API Key로 우회하지 않고 `codex login` 재실행을 안내합니다.
 
 Codex OAuth의 실제 과금 방식은 모델명 옆에 ChatGPT 구독으로 표시하되, 운영·관리 목적의 비용 비교를 위해 동일 토큰을 공개 단가표로 환산한 `예상비용`을 다른 Provider와 같은 짧은 원화 열로 표시합니다.
 
