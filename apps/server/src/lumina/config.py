@@ -161,7 +161,7 @@ class Settings(DotenvFirstSettings):
     user_concurrency_limit: int = Field(default=3, ge=1)
     server_concurrency_limit: int = Field(default=12, ge=1)
     tool_concurrency_limit: int = Field(default=4, ge=1, le=16)
-    codex_cache_prewarm_enabled: bool = False
+    codex_cache_prewarm_enabled: bool = True
     run_timeout_seconds: float | None = Field(default=None, gt=0, le=86_400)
     run_token_limit: int | None = Field(default=None, ge=1)
     run_cost_limit_usd: float | None = Field(default=None, gt=0)

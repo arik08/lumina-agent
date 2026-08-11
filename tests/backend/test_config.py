@@ -90,15 +90,15 @@ def test_launcher_storage_overrides_dotenv_without_changing_api_key_precedence(
     assert settings.openai_api_key.get_secret_value() == "dotenv-key"
 
 
-def test_codex_cache_prewarm_is_opt_in(monkeypatch, tmp_path: Path) -> None:
+def test_codex_cache_prewarm_is_enabled_by_default(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("LUMINA_CODEX_CACHE_PREWARM_ENABLED", raising=False)
     assert (
-        Settings(_env_file=None, data_dir=tmp_path).codex_cache_prewarm_enabled is False
+        Settings(_env_file=None, data_dir=tmp_path).codex_cache_prewarm_enabled is True
     )
 
-    monkeypatch.setenv("LUMINA_CODEX_CACHE_PREWARM_ENABLED", "true")
+    monkeypatch.setenv("LUMINA_CODEX_CACHE_PREWARM_ENABLED", "false")
     assert (
-        Settings(_env_file=None, data_dir=tmp_path).codex_cache_prewarm_enabled is True
+        Settings(_env_file=None, data_dir=tmp_path).codex_cache_prewarm_enabled is False
     )
 
 
