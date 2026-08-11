@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from typing import Any
 
 import httpx
@@ -19,23 +20,33 @@ from lumina.providers.codex import CodexResponsesAdapter, codex_oauth_available
 from lumina.providers.codex import adapter as codex_adapter
 
 
-def _test_codex_token(account_id: str = "acct-test") -> str:
+def _test_codex_token(
+    account_id: str = "acct-test", *, expires_at: float | None = None
+) -> str:
     header = base64.urlsafe_b64encode(b"{}").decode().rstrip("=")
+    payload: dict[str, Any] = {
+        "https://api.openai.com/auth": {"chatgpt_account_id": account_id}
+    }
+    if expires_at is not None:
+        payload["exp"] = expires_at
     claims = base64.urlsafe_b64encode(
-        json.dumps(
-            {
-                "https://api.openai.com/auth": {
-                    "chatgpt_account_id": account_id
-                }
-            }
-        ).encode()
+        json.dumps(payload).encode()
     ).decode().rstrip("=")
     return f"{header}.{claims}.signature"
 
 
-def _write_codex_auth(codex_home, *, token: str | None = None) -> None:
-    codex_home.mkdir()
-    payload = {"tokens": {"access_token": token or _test_codex_token()}}
+def _write_codex_auth(
+    codex_home,
+    *,
+    token: str | None = None,
+    refresh_token: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    codex_home.mkdir(exist_ok=True)
+    tokens = {"access_token": token or _test_codex_token()}
+    if refresh_token is not None:
+        tokens["refresh_token"] = refresh_token
+    payload = {"tokens": tokens, **(extra or {})}
     (codex_home / "auth.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
@@ -71,6 +82,26 @@ def test_codex_oauth_availability_rejects_missing_or_invalid_auth(
     _write_codex_auth(codex_home, token="not-a-jwt")
     assert codex_oauth_available() is False
 
+    _write_codex_auth(
+        codex_home,
+        extra={"auth_mode": "apikey"},
+    )
+    assert codex_oauth_available() is False
+
+
+def test_codex_oauth_availability_requires_usable_or_refreshable_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    codex_home = tmp_path / "codex-home"
+    expired = _test_codex_token(expires_at=time.time() - 60)
+    _write_codex_auth(codex_home, token=expired)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    assert codex_oauth_available() is False
+
+    _write_codex_auth(codex_home, token=expired, refresh_token="refresh-old")
+    assert codex_oauth_available() is True
+
 
 @pytest.mark.asyncio
 async def test_codex_warmup_validates_auth_without_starting_subprocess(
@@ -93,6 +124,66 @@ async def test_codex_warmup_reports_missing_login(
 
     with pytest.raises(ProviderConfigurationError, match="codex login"):
         await CodexResponsesAdapter().warmup()
+
+
+@pytest.mark.asyncio
+async def test_codex_proactively_refreshes_expiring_token_and_preserves_auth_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    codex_home = tmp_path / "codex-home"
+    expired = _test_codex_token(expires_at=time.time() - 60)
+    fresh = _test_codex_token(expires_at=time.time() + 3600)
+    _write_codex_auth(
+        codex_home,
+        token=expired,
+        refresh_token="refresh-old",
+        extra={"auth_mode": "chatgpt", "custom": {"preserve": True}},
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("CODEX_REFRESH_TOKEN_URL_OVERRIDE", "https://auth.test/oauth/token")
+    calls: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.host == "auth.test":
+            assert json.loads(request.content) == {
+                "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
+                "grant_type": "refresh_token",
+                "refresh_token": "refresh-old",
+            }
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": fresh,
+                    "refresh_token": "refresh-new",
+                },
+            )
+        assert request.headers["authorization"] == f"Bearer {fresh}"
+        response = {
+            "type": "response.completed",
+            "response": {"output": [], "usage": {}},
+        }
+        return httpx.Response(200, content=f"data: {json.dumps(response)}\n\n".encode())
+
+    adapter = CodexResponsesAdapter()
+    adapter._responses_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    _events = [
+        event
+        async for event in adapter.stream(
+            ProviderRequest(
+                model="gpt-5.6-luna",
+                messages=(ProviderMessage(role="user", content="hello"),),
+            )
+        )
+    ]
+
+    saved = json.loads((codex_home / "auth.json").read_text(encoding="utf-8"))
+    assert calls == ["/oauth/token", "/backend-api/codex/responses"]
+    assert saved["tokens"]["access_token"] == fresh
+    assert saved["tokens"]["refresh_token"] == "refresh-new"
+    assert saved["custom"] == {"preserve": True}
+    assert saved["last_refresh"].endswith("Z")
+    await adapter.close()
 
 
 @pytest.mark.asyncio
@@ -246,4 +337,169 @@ async def test_codex_direct_401_requests_fresh_login(
     assert captured.value.retryable is False
     assert captured.value.stage == "authentication"
     assert captured.value.status_code == 401
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_codex_direct_401_reloads_token_refreshed_by_another_process(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    codex_home = tmp_path / "codex-home"
+    stale = _test_codex_token(expires_at=time.time() + 3600)
+    fresh = _test_codex_token(expires_at=time.time() + 7200)
+    _write_codex_auth(codex_home, token=stale, refresh_token="refresh-old")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    seen_tokens: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen_tokens.append(request.headers["authorization"])
+        if len(seen_tokens) == 1:
+            _write_codex_auth(
+                codex_home,
+                token=fresh,
+                refresh_token="refresh-new",
+            )
+            return httpx.Response(401, json={"error": "stale"})
+        response = {
+            "type": "response.completed",
+            "response": {"output": [], "usage": {}},
+        }
+        return httpx.Response(200, content=f"data: {json.dumps(response)}\n\n".encode())
+
+    adapter = CodexResponsesAdapter()
+    adapter._responses_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    events = [
+        event
+        async for event in adapter.stream(
+            ProviderRequest(
+                model="gpt-5.6-luna",
+                messages=(ProviderMessage(role="user", content="hello"),),
+            )
+        )
+    ]
+
+    assert seen_tokens == [f"Bearer {stale}", f"Bearer {fresh}"]
+    assert events[-1].type == "completed"
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_codex_direct_401_refreshes_and_retries_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    codex_home = tmp_path / "codex-home"
+    stale = _test_codex_token(expires_at=time.time() + 3600)
+    fresh = _test_codex_token(expires_at=time.time() + 7200)
+    _write_codex_auth(codex_home, token=stale, refresh_token="refresh-old")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("CODEX_REFRESH_TOKEN_URL_OVERRIDE", "https://auth.test/oauth/token")
+    calls: list[tuple[str, str | None]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        authorization = request.headers.get("authorization")
+        calls.append((request.url.host or "", authorization))
+        if request.url.host == "auth.test":
+            return httpx.Response(200, json={"access_token": fresh})
+        if authorization == f"Bearer {stale}":
+            return httpx.Response(401, json={"error": "expired"})
+        response = {
+            "type": "response.completed",
+            "response": {"output": [], "usage": {}},
+        }
+        return httpx.Response(200, content=f"data: {json.dumps(response)}\n\n".encode())
+
+    adapter = CodexResponsesAdapter()
+    adapter._responses_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    events = [
+        event
+        async for event in adapter.stream(
+            ProviderRequest(
+                model="gpt-5.6-luna",
+                messages=(ProviderMessage(role="user", content="hello"),),
+            )
+        )
+    ]
+
+    assert calls == [
+        ("chatgpt.com", f"Bearer {stale}"),
+        ("auth.test", None),
+        ("chatgpt.com", f"Bearer {fresh}"),
+    ]
+    assert events[-1].type == "completed"
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_codex_direct_retries_stream_failure_only_before_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    codex_home = tmp_path / "codex-home"
+    _write_codex_auth(codex_home)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    attempts = 0
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            failed = {"type": "response.failed", "response": {"status": "failed"}}
+            return httpx.Response(
+                200, content=f"data: {json.dumps(failed)}\n\n".encode()
+            )
+        completed = {
+            "type": "response.completed",
+            "response": {"output": [], "usage": {}},
+        }
+        return httpx.Response(
+            200, content=f"data: {json.dumps(completed)}\n\n".encode()
+        )
+
+    adapter = CodexResponsesAdapter()
+    adapter._responses_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    events = [
+        event
+        async for event in adapter.stream(
+            ProviderRequest(
+                model="gpt-5.6-luna",
+                messages=(ProviderMessage(role="user", content="hello"),),
+            )
+        )
+    ]
+
+    assert attempts == 2
+    assert events[-1].type == "completed"
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_codex_direct_does_not_retry_after_output_started(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    codex_home = tmp_path / "codex-home"
+    _write_codex_auth(codex_home)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    attempts = 0
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        delta = {"type": "response.output_text.delta", "delta": "partial"}
+        failed = {"type": "response.failed", "response": {"status": "failed"}}
+        body = f"data: {json.dumps(delta)}\n\ndata: {json.dumps(failed)}\n\n"
+        return httpx.Response(200, content=body.encode())
+
+    adapter = CodexResponsesAdapter()
+    adapter._responses_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with pytest.raises(ProviderRequestError, match="unknown"):
+        _events = [
+            event
+            async for event in adapter.stream(
+                ProviderRequest(
+                    model="gpt-5.6-luna",
+                    messages=(ProviderMessage(role="user", content="hello"),),
+                )
+            )
+        ]
+
+    assert attempts == 1
     await adapter.close()

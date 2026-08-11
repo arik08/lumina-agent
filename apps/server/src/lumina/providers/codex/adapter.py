@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import hashlib
-import json
-import os
 import platform
 from collections.abc import AsyncIterator, Mapping
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -17,11 +13,16 @@ from ..constants import CODEX_PROVIDER_ID
 from ..errors import ProviderConfigurationError, ProviderRequestError
 from ..openai import OpenAIResponsesAdapter
 from ..types import ProviderCapabilities, ProviderEvent, ProviderRequest, ProviderUsage
+from .auth import (
+    CodexAuthCredentials,
+    codex_oauth_available,
+    ready_codex_auth,
+    refresh_codex_auth,
+)
 
 
 PROVIDER_ID = CODEX_PROVIDER_ID
 _CODEX_RESPONSES_BASE_URL = "https://chatgpt.com/backend-api/codex"
-_CODEX_JWT_AUTH_CLAIM = "https://api.openai.com/auth"
 _CODEX_OAUTH_MODELS = frozenset(
     item.runtime_model_id for item in initial_model_catalog(PROVIDER_ID)
 )
@@ -29,16 +30,6 @@ _CODEX_OAUTH_MODELS = frozenset(
 
 def _oauth_model_available(model: str) -> bool:
     return model in _CODEX_OAUTH_MODELS
-
-
-def codex_oauth_available() -> bool:
-    """Return whether a readable local ChatGPT OAuth token is available."""
-
-    try:
-        _codex_account_id(_codex_access_token())
-    except ProviderConfigurationError:
-        return False
-    return True
 
 
 class CodexResponsesAdapter:
@@ -63,9 +54,9 @@ class CodexResponsesAdapter:
                 await client.aclose()
 
     async def warmup(self) -> None:
-        """Validate the local Codex OAuth file without starting a subprocess."""
+        """Validate and, when needed, refresh local Codex OAuth."""
 
-        _codex_account_id(_codex_access_token())
+        await ready_codex_auth(await self._ready_responses_client())
 
     async def prewarm(self, request: ProviderRequest) -> ProviderUsage | None:
         """Populate the Direct Responses prefix cache without exposing output."""
@@ -97,94 +88,66 @@ class CodexResponsesAdapter:
                 f"Codex OAuth에서 사용할 수 없는 모델입니다: {request.model}"
             )
 
-        token = _codex_access_token()
-        headers = _codex_responses_headers(token, request)
         responses_client = await self._ready_responses_client()
+        credentials = await ready_codex_auth(responses_client)
+        for attempt in range(2):
+            emitted_event = False
+            try:
+                async for event in self._stream_with_auth(
+                    request, responses_client, credentials
+                ):
+                    emitted_event = True
+                    yield event
+                return
+            except ProviderRequestError as exc:
+                if emitted_event or attempt > 0:
+                    raise
+                if exc.status_code == 401:
+                    credentials = await refresh_codex_auth(
+                        responses_client,
+                        observed_access_token=credentials.access_token,
+                        trigger_status_code=401,
+                    )
+                    continue
+                if exc.stage != "stream" or exc.status_code is not None:
+                    raise
+
+        raise AssertionError("Codex OAuth retry loop exhausted")
+
+    async def _stream_with_auth(
+        self,
+        request: ProviderRequest,
+        responses_client: httpx.AsyncClient,
+        credentials: CodexAuthCredentials,
+    ) -> AsyncIterator[ProviderEvent]:
         delegate = OpenAIResponsesAdapter(
-            api_key=token,
+            api_key=credentials.access_token,
             base_url=_CODEX_RESPONSES_BASE_URL,
             client=responses_client,
-            additional_headers=headers,
+            additional_headers=_codex_responses_headers(credentials, request),
             payload_transform=_codex_responses_payload,
             service_name="Codex Responses",
         )
-        try:
-            async for event in delegate.stream(request):
-                if event.type == "usage" and event.usage is not None:
-                    usage = event.usage
-                    event = ProviderEvent(
-                        type="usage",
-                        usage=ProviderUsage(
-                            input_tokens=usage.input_tokens,
-                            cached_input_tokens=usage.cached_input_tokens,
-                            cache_write_tokens=usage.cache_write_tokens,
-                            uncached_input_tokens=usage.uncached_input_tokens,
-                            output_tokens=usage.output_tokens,
-                            reasoning_tokens=usage.reasoning_tokens,
-                            raw={
-                                **dict(usage.raw),
-                                "auth_mode": "chatgpt",
-                                "billing": "subscription_usage",
-                            },
-                        ),
-                    )
-                yield event
-        except ProviderRequestError as exc:
-            if exc.status_code == 401:
-                raise ProviderRequestError(
-                    "Codex ChatGPT OAuth 인증이 만료되었습니다. `codex login`을 다시 실행해 주세요.",
-                    retryable=False,
-                    stage="authentication",
-                    status_code=401,
-                ) from exc
-            raise
-
-
-def _codex_auth_path() -> Path:
-    return Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser() / "auth.json"
-
-
-def _codex_access_token() -> str:
-    path = _codex_auth_path()
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ProviderConfigurationError(
-            "Codex ChatGPT OAuth 인증 파일을 읽을 수 없습니다. "
-            "서버 사용자 계정에서 `codex login`을 실행해 주세요."
-        ) from exc
-    tokens = payload.get("tokens")
-    token = tokens.get("access_token") if isinstance(tokens, Mapping) else None
-    if not isinstance(token, str) or not token:
-        fallback = payload.get("OPENAI_API_KEY")
-        token = fallback if isinstance(fallback, str) else None
-    if not token:
-        raise ProviderConfigurationError(
-            "Codex ChatGPT OAuth access token을 찾을 수 없습니다."
-        )
-    return token
-
-
-def _codex_account_id(token: str) -> str:
-    parts = token.split(".")
-    if len(parts) != 3:
-        raise ProviderConfigurationError(
-            "Codex OAuth access token 형식이 올바르지 않습니다."
-        )
-    try:
-        encoded = parts[1] + "=" * (-len(parts[1]) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(encoded).decode("utf-8"))
-    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ProviderConfigurationError(
-            "Codex OAuth access token의 계정 정보를 읽을 수 없습니다."
-        ) from exc
-    auth = payload.get(_CODEX_JWT_AUTH_CLAIM)
-    account_id = auth.get("chatgpt_account_id") if isinstance(auth, Mapping) else None
-    if not isinstance(account_id, str) or not account_id:
-        raise ProviderConfigurationError(
-            "Codex OAuth access token에 ChatGPT 계정 정보가 없습니다."
-        )
-    return account_id
+        async for event in delegate.stream(request):
+            if event.type == "usage" and event.usage is not None:
+                usage = event.usage
+                event = ProviderEvent(
+                    type="usage",
+                    usage=ProviderUsage(
+                        input_tokens=usage.input_tokens,
+                        cached_input_tokens=usage.cached_input_tokens,
+                        cache_write_tokens=usage.cache_write_tokens,
+                        uncached_input_tokens=usage.uncached_input_tokens,
+                        output_tokens=usage.output_tokens,
+                        reasoning_tokens=usage.reasoning_tokens,
+                        raw={
+                            **dict(usage.raw),
+                            "auth_mode": "chatgpt",
+                            "billing": "subscription_usage",
+                        },
+                    ),
+                )
+            yield event
 
 
 def _codex_cache_session_id(request: ProviderRequest) -> str | None:
@@ -195,9 +158,11 @@ def _codex_cache_session_id(request: ProviderRequest) -> str | None:
     return f"lumina-cache-{digest}"
 
 
-def _codex_responses_headers(token: str, request: ProviderRequest) -> dict[str, str]:
+def _codex_responses_headers(
+    credentials: CodexAuthCredentials, request: ProviderRequest
+) -> dict[str, str]:
     headers = {
-        "chatgpt-account-id": _codex_account_id(token),
+        "chatgpt-account-id": credentials.account_id,
         "originator": "lumina_agent",
         "User-Agent": (
             f"lumina-agent ({platform.system().lower()} "
