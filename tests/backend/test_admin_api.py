@@ -152,7 +152,7 @@ def test_admin_runtime_statistics_reports_queue_and_capacity(tmp_path: Path) -> 
             "activeUsers": 0,
             "limit": 32,
         }
-        assert payload["executor"]["codexCachePrewarmEnabled"] is False
+        assert payload["executor"]["codexCachePrewarmEnabled"] is True
         assert payload["queue"]["depth"] == 1
         assert payload["queue"]["oldestWaitMs"] >= 1_500
         assert payload["runStatusCounts"]["queued"] == 1
