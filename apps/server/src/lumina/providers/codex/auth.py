@@ -132,6 +132,9 @@ async def refresh_codex_auth(
             ) from exc
 
         if not response.is_success:
+            concurrent = _credentials_refreshed_by_another_process(credentials)
+            if concurrent is not None:
+                return concurrent
             if response.status_code in {400, 401, 403}:
                 raise _login_required_error(status_code=response.status_code)
             raise ProviderRequestError(
@@ -209,6 +212,24 @@ def _token_needs_refresh(credentials: CodexAuthCredentials) -> bool:
     )
 
 
+def _credentials_refreshed_by_another_process(
+    previous: CodexAuthCredentials,
+) -> CodexAuthCredentials | None:
+    try:
+        current = load_codex_auth()
+    except ProviderConfigurationError:
+        return None
+    if current.access_token == previous.access_token:
+        return None
+    if current.account_id != previous.account_id:
+        raise ProviderRequestError(
+            "Codex 로그인 계정이 요청 도중 변경되었습니다. 요청을 다시 실행해 주세요.",
+            retryable=True,
+            stage="authentication",
+        )
+    return current
+
+
 def _persist_refreshed_auth(
     previous: CodexAuthCredentials, refreshed: Mapping[str, Any]
 ) -> CodexAuthCredentials:
@@ -226,13 +247,8 @@ def _persist_refreshed_auth(
         raise _login_required_error()
     current_access_token = tokens.get("access_token")
     if current_access_token != previous.access_token:
-        current = load_codex_auth()
-        if current.account_id != previous.account_id:
-            raise ProviderRequestError(
-                "Codex 로그인 계정이 요청 도중 변경되었습니다. 요청을 다시 실행해 주세요.",
-                retryable=True,
-                stage="authentication",
-            )
+        current = _credentials_refreshed_by_another_process(previous)
+        assert current is not None
         return current
 
     candidate = dict(tokens)

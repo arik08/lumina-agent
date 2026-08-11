@@ -187,6 +187,58 @@ async def test_codex_proactively_refreshes_expiring_token_and_preserves_auth_fil
 
 
 @pytest.mark.asyncio
+async def test_codex_uses_token_refreshed_while_its_refresh_request_was_in_flight(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    codex_home = tmp_path / "codex-home"
+    expired = _test_codex_token(expires_at=time.time() - 60)
+    fresh = _test_codex_token(expires_at=time.time() + 3600)
+    _write_codex_auth(codex_home, token=expired, refresh_token="refresh-old")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("CODEX_REFRESH_TOKEN_URL_OVERRIDE", "https://auth.test/oauth/token")
+    calls: list[tuple[str, str | None]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        authorization = request.headers.get("authorization")
+        calls.append((request.url.host or "", authorization))
+        if request.url.host == "auth.test":
+            _write_codex_auth(
+                codex_home,
+                token=fresh,
+                refresh_token="refresh-new",
+            )
+            return httpx.Response(
+                400,
+                json={"error": {"code": "refresh_token_reused"}},
+            )
+        assert authorization == f"Bearer {fresh}"
+        response = {
+            "type": "response.completed",
+            "response": {"output": [], "usage": {}},
+        }
+        return httpx.Response(200, content=f"data: {json.dumps(response)}\n\n".encode())
+
+    adapter = CodexResponsesAdapter()
+    adapter._responses_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    events = [
+        event
+        async for event in adapter.stream(
+            ProviderRequest(
+                model="gpt-5.6-luna",
+                messages=(ProviderMessage(role="user", content="hello"),),
+            )
+        )
+    ]
+
+    assert calls == [
+        ("auth.test", None),
+        ("chatgpt.com", f"Bearer {fresh}"),
+    ]
+    assert events[-1].type == "completed"
+    await adapter.close()
+
+
+@pytest.mark.asyncio
 async def test_codex_direct_routes_same_prefix_across_new_run_sessions(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
