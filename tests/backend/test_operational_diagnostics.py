@@ -851,8 +851,8 @@ def test_installer_uses_npm_cmd_instead_of_npm_ps1_on_windows(tmp_path: Path) ->
     assert "uv sync --project" in invocation
     assert "--python 3.13 --extra codex" in invocation
     assert invocation.count("npm.cmd ci --prefix") == 2
-    assert "extensions\\mcp\\korea_weather" in invocation
-    assert "national_assembly_bootstrap.py --install-only" in invocation
+    assert "extensions\\mcp\\korea-weather\\runtime" in invocation
+    assert "national-assembly\\runtime\\bootstrap.py --install-only" in invocation
 
 
 def test_national_assembly_bootstrap_pins_upstream_revision() -> None:
@@ -860,7 +860,9 @@ def test_national_assembly_bootstrap_pins_upstream_revision() -> None:
         Path(__file__).resolve().parents[2]
         / "extensions"
         / "mcp"
-        / "national_assembly_bootstrap.py"
+        / "national-assembly"
+        / "runtime"
+        / "bootstrap.py"
     ).read_text(encoding="utf-8")
 
     assert 'REPO_REVISION = "f74c6b452c59d87e2fa7265fd985b90e4057a8ef"' in bootstrap

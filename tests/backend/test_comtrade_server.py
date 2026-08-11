@@ -8,7 +8,12 @@ import pytest
 
 
 MCP_SERVER_PATH = (
-    Path(__file__).resolve().parents[2] / "extensions" / "mcp" / "comtrade_server.py"
+    Path(__file__).resolve().parents[2]
+    / "extensions"
+    / "mcp"
+    / "comtrade"
+    / "runtime"
+    / "server.py"
 )
 SPEC = importlib.util.spec_from_file_location("test_comtrade_server_module", MCP_SERVER_PATH)
 assert SPEC is not None and SPEC.loader is not None

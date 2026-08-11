@@ -50,3 +50,6 @@ metadata:
 
 Do not expose the same capability as unrelated duplicate Skill and MCP entries. Keep the
 Skill's source link and the MCP definition synchronized and snapshot both sides for a Run.
+For a repository-bundled MCP, keep both in one
+`extensions/mcp/<mcp-slug>/` package: `mcp.json`, optional `runtime/`, and
+`skills/<wrapper>/SKILL.md`. Do not place that wrapper under `extensions/skills/`.

@@ -11,10 +11,6 @@
     "description": "사용자가 아이디어·대안·콘셉트·창의적 해결책의 발산이나 구조화된 아이데이션을 요청할 때만, TRIZ·SIT·SCAMPER·JTBD 등 2~3개 방법론으로 아이디어를 생성·통합·평가합니다. 사실 조사, 기사·트렌드 분석, 요약 또는 탐색이 필요 없는 단일 해법 요청에는 사용하지 않습니다.",
     "tags": ["경영기획", "아이디어"]
   },
-  "national-assembly": {
-    "description": "열린국회정보 OpenAPI와 국민참여입법센터 API를 함께 사용하는 대한민국 국회 MCP 라우팅 Skill입니다.",
-    "tags": ["경영기획", "공공데이터"]
-  },
   "openweb": {
     "description": "지원되는 웹 플랫폼에 구조적으로 접근합니다. 사용자가 X, Reddit, YouTube, GitHub, Stack Overflow, Medium, Substack, LinkedIn, Wikipedia, arXiv, npm, PyPI, Google 검색·학술검색 또는 쇼핑·여행·소셜 플랫폼의 URL, 계정, 프로필, 페이지, 저장소·패키지, 논문이나 플랫폼 한정 검색을 요청할 때 사용합니다. 대상 플랫폼이 명확하면 일반 web_search나 web_fetch보다 우선합니다. 특정 플랫폼이 없는 일반 검색이나 YouTube 자막 추출에는 사용하지 않습니다.",
     "tags": ["리서치", "웹검색"]
@@ -50,10 +46,6 @@
   "ui-ux-pro-max": {
     "description": "웹과 모바일 UI·UX 설계를 지원하는 디자인 지식 Skill입니다. 다양한 스타일, 색상 팔레트, 글꼴 조합, 제품 유형, UX 지침과 차트 유형을 React, Next.js, Vue, Svelte, SwiftUI, React Native, Flutter, Tailwind, shadcn/ui 및 HTML·CSS 환경에 적용합니다. 웹사이트, 대시보드, 관리자 화면, 전자상거래, SaaS, 포트폴리오와 모바일 앱의 설계·구현·검토·개선에 사용합니다.",
     "tags": ["디자인", "UIUX"]
-  },
-  "vector-db-rag": {
-    "description": "로컬 Markdown 조직 업무 문서를 SQLite GraphRAG MCP로 검색합니다. 회사 조직별 업무, 조직 계층, 부서별 역할, 두 문서 간 업무 비교, 특정 조직 산하 업무 조회가 필요할 때 사용합니다.",
-    "tags": ["지식검색", "데이터분석"]
   },
   "visual-artifact": {
     "description": "사용자가 브라우저에서 열 재사용 가능한 시각 파일, 단일 HTML, 대시보드, 인포그래픽, 원페이지 문서, 슬라이드형 페이지, 스크린샷·PDF·PPT용 페이지를 요청할 때만 사용합니다. 시각 파일이나 브라우저용 산출물을 요구하지 않은 일반 채팅 분석·리서치 요약·설명에는 사용하지 않습니다.",

@@ -7,7 +7,7 @@ This folder stores a local SQLite GraphRAG index for Markdown organization-work 
 Put Markdown files in:
 
 ```powershell
-extensions/mcp/vector_db/documents/
+extensions/mcp/vector-db/runtime/documents/
 ```
 
 Recommended document header:
@@ -31,13 +31,13 @@ document_name: 조직업무문서 A
 Run from the MyHarness repo root:
 
 ```powershell
-python extensions/mcp/vector_db/ingest.py index
+python extensions/mcp/vector-db/runtime/ingest.py index
 ```
 
 The generated SQLite DB is:
 
 ```powershell
-extensions/mcp/vector_db/data/vector_graph.sqlite
+extensions/mcp/vector-db/runtime/data/vector_graph.sqlite
 ```
 
 The indexer updates changed files, keeps unchanged files, and removes DB records for deleted source files.
@@ -45,19 +45,19 @@ The indexer updates changed files, keeps unchanged files, and removes DB records
 ## 3. Management Commands
 
 ```powershell
-python extensions/mcp/vector_db/ingest.py status
-python extensions/mcp/vector_db/ingest.py sources
-python extensions/mcp/vector_db/ingest.py search "마케팅본부 캠페인 업무"
-python extensions/mcp/vector_db/ingest.py explore-org "마케팅본부"
-python extensions/mcp/vector_db/ingest.py clear
+python extensions/mcp/vector-db/runtime/ingest.py status
+python extensions/mcp/vector-db/runtime/ingest.py sources
+python extensions/mcp/vector-db/runtime/ingest.py search "마케팅본부 캠페인 업무"
+python extensions/mcp/vector-db/runtime/ingest.py explore-org "마케팅본부"
+python extensions/mcp/vector-db/runtime/ingest.py clear
 ```
 
 Useful filters:
 
 ```powershell
-python extensions/mcp/vector_db/ingest.py search "계약 정산" --document-name "조직업무문서 A"
-python extensions/mcp/vector_db/ingest.py search "브랜드팀" --org-unit "마케팅본부" --mode hybrid
-python extensions/mcp/vector_db/ingest.py explore-org "마케팅본부" --document-name "조직업무문서 A" --depth 3
+python extensions/mcp/vector-db/runtime/ingest.py search "계약 정산" --document-name "조직업무문서 A"
+python extensions/mcp/vector-db/runtime/ingest.py search "브랜드팀" --org-unit "마케팅본부" --mode hybrid
+python extensions/mcp/vector-db/runtime/ingest.py explore-org "마케팅본부" --document-name "조직업무문서 A" --depth 3
 ```
 
 ## 4. MyHarness MCP Usage
@@ -65,7 +65,7 @@ python extensions/mcp/vector_db/ingest.py explore-org "마케팅본부" --docume
 The MCP config is registered in:
 
 ```powershell
-extensions/mcp/vector-db.json
+extensions/mcp/vector-db/mcp.json
 ```
 
 In MyHarness, select the wrapped MCP skill:
@@ -87,8 +87,8 @@ MCP tool results include `source_label`, `citation`, `source_chip`, `excerpt`, `
 The source documents and generated DB are local-only and ignored by git:
 
 ```powershell
-extensions/mcp/vector_db/documents/*
-extensions/mcp/vector_db/data/*
+extensions/mcp/vector-db/runtime/documents/*
+extensions/mcp/vector-db/runtime/data/*
 ```
 
 Only the program files and `.gitkeep` placeholders are tracked.

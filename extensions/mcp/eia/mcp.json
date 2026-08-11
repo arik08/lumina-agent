@@ -5,7 +5,7 @@
       "description": "U.S. EIA Open Data API MCP입니다. WTI, Brent, Henry Hub 천연가스 등 에너지 가격 시계열과 EIA seriesid 데이터를 조회합니다.",
       "command": "python",
       "args": [
-        "extensions/mcp/eia_server.py"
+        "runtime/server.py"
       ],
       "cwd": ".",
       "tools": [

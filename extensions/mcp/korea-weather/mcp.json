@@ -5,7 +5,7 @@
       "description": "기상청 API 허브 기반 한국 날씨 MCP입니다. 현재 관측, 초단기·단기·중기 예보, 기상특보, 영향예보와 구역코드 검색을 제공합니다.",
       "command": "node",
       "args": [
-        "extensions/mcp/korea_weather/dist/index.js",
+        "runtime/dist/index.js",
         "--stdio"
       ],
       "cwd": ".",

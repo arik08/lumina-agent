@@ -95,6 +95,27 @@ v3.2.7
 
 MCP 항목은 서버 정의와 사용자가 실제로 연결하는 credential binding을 분리합니다.
 
+#### Repository MCP package
+
+Repository에 기본 제공하는 MCP는 다음 자체 완결 구조만 사용합니다.
+
+```text
+extensions/mcp/<mcp-slug>/
+├─ mcp.json
+├─ runtime/                       # local stdio code, dependency manifest, 전용 자료 (선택)
+└─ skills/
+   └─ <wrapper>/
+      ├─ SKILL.md
+      └─ references|scripts|assets/  # wrapper 전용 자료 (선택)
+```
+
+- package directory 이름은 `mcp.json`의 단일 `mcpServers` key를 정규화한 slug와 같아야 합니다. 한 package는 MCP server 하나와 wrapper 하나만 소유합니다.
+- manifest의 `cwd`는 `.`이고 package 안의 local entrypoint는 `runtime/...` 상대 경로로 선언합니다. Backend repository sync가 실행 snapshot에는 repository-relative command로 고정합니다.
+- wrapper는 같은 package의 `skills/<wrapper>/SKILL.md`에 두고 `metadata.lumina-source: skill-mcp:<mcp-slug>`를 선언합니다. `extensions/skills/`나 전역 `catalog.json`에 wrapper나 전용 metadata를 중복 저장하지 않습니다.
+- runtime source, dependency manifest, patch, license, README, fixture와 전용 data directory는 해당 package 안에 둡니다. credential 값, `.env`, 설치된 dependency, build output과 runtime data는 Git에 넣지 않습니다.
+- package를 제거하면 watcher sync가 wrapper를 archive하고 MCP definition과 활성 installation을 disable하여 신규 catalog와 Run에서 제외합니다. 과거 configuration revision, version과 Run snapshot은 감사·재현을 위해 보존합니다.
+- 추가·이름 변경·삭제 후 `tests/backend/test_mcp_manifests.py`와 repository sync 회귀 test를 실행합니다. 설치가 필요한 runtime은 격리 환경에서 `tools/list`까지 확인합니다.
+
 - 카탈로그: 이름, transport, command 또는 URL template, 제공 Tool, 필요 권한, 네트워크 대상과 검증 상태
 - 설치: 범위, 활성 revision, 허용 Tool, timeout, 승인 정책
 - Secret binding: 사용자 또는 Organization의 Secret Store 참조만 저장하며 값은 manifest, 로그와 Run event에 넣지 않음

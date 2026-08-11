@@ -133,6 +133,10 @@ metadata:
   lumina-source: skill-mcp:company-calculator
 ```
 
+Repository에 함께 제공하는 MCP wrapper는 일반 Skill 위치에 만들지 않습니다. MCP의
+`extensions/mcp/<mcp-slug>/skills/<wrapper>/SKILL.md`에 두고 같은 package의
+`mcp.json`, 선택적 `runtime/`과 함께 이동·검증·삭제할 수 있게 유지합니다.
+
 Keep a large application, model, or runtime image outside the Skill. The Skill may contain
 the input contract, question sequence, validation rules, tool-call procedure, and result
 interpretation guidance. This separation supports a 200 MB or larger company program without

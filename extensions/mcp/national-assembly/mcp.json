@@ -5,7 +5,7 @@
       "description": "대한민국 국회 MCP입니다. 열린국회정보 OpenAPI와 국민참여입법센터 API를 함께 조회합니다.",
       "command": "python",
       "args": [
-        "extensions/mcp/national_assembly_bootstrap.py"
+        "runtime/bootstrap.py"
       ],
       "env": {
         "MCP_PROFILE": "full",

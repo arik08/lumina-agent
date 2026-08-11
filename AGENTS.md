@@ -34,7 +34,7 @@
 - P-GPT가 지원하지 않는 Tool JSON Schema keyword가 있으면 `PgptAdapter`의 payload 생성 경계에서만 호환 변환합니다. 원본 Tool schema와 Lumina 서버 내부 입력 검증은 약화하거나 Provider 공용 경로에 맞춰 변경하지 않습니다.
 - P-GPT Agent 호환성은 `Reply with OK` 같은 Tool 없는 요청만으로 판정하지 않습니다. 실제 Agent와 같은 Tool 목록, 특히 `PYTHON_EXECUTION_TOOL_SCHEMA`를 포함한 요청으로 HTTP 응답과 streaming 완료를 검증합니다.
 - 회사 P-GPT에 직접 접속할 수 없으면 실제 Tool schema를 포함한 deterministic mock transport 회귀 test를 추가하고, 로컬 통과와 회사 환경 검증 대기를 완료 보고에서 분리합니다.
-- MCP definition과 `extensions/skills/<wrapper>/SKILL.md`의 `metadata.lumina-source: skill-mcp:<mcp-slug>`를 함께 관리하고 Skill과 MCP로 중복 노출하지 않습니다.
+- MCP는 `extensions/mcp/<mcp-slug>/` 하나가 `mcp.json`, 선택적 `runtime/`, `skills/<wrapper>/SKILL.md`와 전용 자료를 모두 소유하는 자체 완결 package로 관리합니다. wrapper의 `metadata.lumina-source: skill-mcp:<mcp-slug>`를 manifest와 함께 갱신하고 `extensions/skills/`에 중복 배치하지 않습니다. 세부 계약과 삭제 규칙은 `docs/project-context/EXTENSION_MARKETPLACE.md`의 `Repository MCP package`를 따릅니다.
 
 ## UI 변경
 

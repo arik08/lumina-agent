@@ -18,7 +18,7 @@ $ErrorActionPreference = "Stop"
 $RepositoryRoot = Split-Path -Parent $PSScriptRoot
 $ServerRoot = Join-Path $RepositoryRoot "apps/server"
 $WebRoot = Join-Path $RepositoryRoot "apps/web"
-$WeatherMcpRoot = Join-Path $RepositoryRoot "extensions/mcp/korea_weather"
+$WeatherMcpRoot = Join-Path $RepositoryRoot "extensions/mcp/korea-weather/runtime"
 $EnvFile = Join-Path $RepositoryRoot ".env"
 . (Join-Path $PSScriptRoot "LuminaCache.Env.ps1") -RepositoryRoot $RepositoryRoot
 . (Join-Path $PSScriptRoot "LuminaInstall.Env.ps1")
@@ -448,7 +448,7 @@ if (-not $SkipDependencyInstall) {
     Write-Host "[Lumina] Installing the pinned National Assembly MCP server..."
     $assemblyInstallArguments = @(
         "run", "--project", $ServerRoot,
-        "python", (Join-Path $RepositoryRoot "extensions/mcp/national_assembly_bootstrap.py"),
+        "python", (Join-Path $RepositoryRoot "extensions/mcp/national-assembly/runtime/bootstrap.py"),
         "--install-only"
     )
     if ($NoNetwork) {

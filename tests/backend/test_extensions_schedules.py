@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import shutil
 import time
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
@@ -37,6 +38,7 @@ from lumina.models import (
     ExtensionDraftRevision,
     ExtensionInstallation,
     ExtensionVersion,
+    McpConfigurationRevision,
     McpDefinition,
     McpInstallation,
     Organization,
@@ -333,9 +335,13 @@ def test_repository_mcp_wrapper_is_classified_and_attached_to_mcp_snapshot(
     with TestClient(app) as client:
         csrf = _login(client)
         project_id = client.get("/api/projects").json()[0]["id"]
-        wrapper_root = skills_root / "internal-search"
-        wrapper_root.mkdir()
-        (wrapper_root / "SKILL.md").write_text(
+        package_root = mcp_root / "internal-search"
+        wrapper_root = package_root / "skills" / "internal-search"
+        runtime_root = package_root / "runtime"
+        wrapper_root.mkdir(parents=True)
+        runtime_root.mkdir()
+        skill_path = wrapper_root / "SKILL.md"
+        skill_path.write_text(
             "---\n"
             "name: internal-search\n"
             "description: 승인된 사내 문서를 검색합니다.\n"
@@ -345,14 +351,16 @@ def test_repository_mcp_wrapper_is_classified_and_attached_to_mcp_snapshot(
             "# Internal Search\n\n반드시 MCP 검색 결과만 근거로 답합니다.\n",
             encoding="utf-8",
         )
-        (mcp_root / "internal-search.json").write_text(
+        (runtime_root / "server.py").write_text("", encoding="utf-8")
+        manifest_path = package_root / "mcp.json"
+        manifest_path.write_text(
             json.dumps(
                 {
                     "mcpServers": {
                         "internal-search": {
                             "type": "stdio",
                             "command": "python",
-                            "args": ["internal_search.py"],
+                            "args": ["runtime/server.py"],
                             "cwd": ".",
                             "description": "승인된 사내 문서를 검색합니다.",
                             "tools": [
@@ -394,6 +402,15 @@ def test_repository_mcp_wrapper_is_classified_and_attached_to_mcp_snapshot(
             assert version is not None
             assert version.manifest_json["classification"] == "mcp"
             assert version.manifest_json["mcpSlug"] == "internal-search"
+            assert version.manifest_json["sourcePath"] == (
+                "extensions/mcp/internal-search/skills/internal-search"
+            )
+            revision = db.get(McpConfigurationRevision, definition.current_revision_id)
+            assert revision is not None
+            assert revision.command_json == [
+                "python",
+                "extensions/mcp/internal-search/runtime/server.py",
+            ]
             installation = install_definition(
                 db,
                 user=admin,
@@ -411,12 +428,12 @@ def test_repository_mcp_wrapper_is_classified_and_attached_to_mcp_snapshot(
             assert snapshot["skill_wrapper"]["extension_id"] == extension.id
             assert "반드시 MCP 검색 결과만" in snapshot["skill_wrapper"]["instructions"]
         manifest = json.loads(
-            (mcp_root / "internal-search.json").read_text(encoding="utf-8")
+            manifest_path.read_text(encoding="utf-8")
         )
         manifest["mcpServers"]["internal-search"]["tools"][0]["description"] = (
             "updated repository schema"
         )
-        (mcp_root / "internal-search.json").write_text(
+        manifest_path.write_text(
             json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
         )
         upgraded = client.post(
@@ -456,6 +473,30 @@ def test_repository_mcp_wrapper_is_classified_and_attached_to_mcp_snapshot(
             assert (
                 installation.configuration_revision_id == definition.current_revision_id
             )
+
+        shutil.rmtree(package_root)
+        removed = client.post(
+            "/api/extensions/repository-sync",
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert removed.status_code == 200, removed.text
+        assert removed.json()["skillsChanged"] == 1
+        assert removed.json()["mcpChanged"] == 1
+
+        with SessionLocal() as db:
+            extension = db.scalar(
+                select(Extension).where(Extension.slug == "internal-search")
+            )
+            definition = db.scalar(
+                select(McpDefinition).where(McpDefinition.slug == "internal-search")
+            )
+            installation = db.get(McpInstallation, installation_id)
+            admin = db.scalar(select(User).where(User.login_id == "admin@posco.com"))
+            assert extension is not None and extension.archived_at is not None
+            assert definition is not None and definition.status == "disabled"
+            assert installation is not None and not installation.enabled
+            assert admin is not None
+            assert resolve_mcp_snapshot(db, user=admin, project_id=project_id) == []
 
 
 def test_selected_mcp_wrapper_guidance_enters_the_run_context(tmp_path: Path) -> None:

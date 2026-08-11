@@ -362,7 +362,7 @@ apps/server/                      Backend and worker code
 apps/server/src/lumina/providers/ Provider implementations
 extensions/plugins/               Plugin packages
 extensions/skills/                Skill packages
-extensions/mcp/                   MCP definitions
+extensions/mcp/<slug>/            Self-contained MCP packages
 data/                             Local development runtime data
 infra/                            Container and Kubernetes assets
 devtools/                         Maintenance and validation tools
@@ -1388,7 +1388,7 @@ Skill의 `creator_user_id`는 최초 기여 기록으로 고정합니다. 현재
 - 현재 stdio runtime은 shell 문자열이 아니라 argument 배열로 process를 실행하고 repository-relative `cwd`, command allowlist, environment template와 Secret resolver를 검증합니다. literal Secret이 manifest에 있거나 선언한 Tool schema가 runtime `tools/list`와 달라지면 호출 전에 실패합니다.
 - streamable HTTP runtime은 session header와 SSE response를 지원하되 exact scheme·host·port, redirect, DNS 결과와 실제 socket address를 검증합니다. loopback·link-local은 금지하고 private range는 관리자가 명시한 범위만 허용하며 request 직전 재해석으로 DNS rebinding을 막습니다.
 - 설치 snapshot은 definition revision, configuration digest, Tool allowlist, transport와 Secret binding reference를 고정합니다. runtime 결과·오류에는 Secret 원문, 전체 remote body와 내부 header를 넣지 않습니다.
-- 모든 MCP definition은 `extensions/skills/<wrapper>/SKILL.md`의 표준 `metadata` 아래 `lumina-source: skill-mcp:<mcp-slug>`와 1:1로 대응해야 합니다. Backend catalog payload는 wrapper 적용 여부와 이름을 반환하고 상세 UI는 `적용 | 누락`을 표시합니다. 누락 상태에서는 Tool 연결 자체를 성공처럼 설명하지 않고 Run Context에 사용 지침이 주입되지 않는다는 경고를 제공합니다.
+- 모든 repository MCP는 `extensions/mcp/<mcp-slug>/mcp.json`과 같은 package의 `skills/<wrapper>/SKILL.md`가 1:1로 대응해야 합니다. wrapper는 표준 `metadata` 아래 `lumina-source: skill-mcp:<mcp-slug>`를 선언하며 `extensions/skills/`에 중복 배치하지 않습니다. Backend catalog payload는 wrapper 적용 여부와 이름을 반환하고 상세 UI는 `적용 | 누락`을 표시합니다. 누락 상태에서는 Tool 연결 자체를 성공처럼 설명하지 않고 Run Context에 사용 지침이 주입되지 않는다는 경고를 제공합니다.
 - 실제 endpoint·Tool schema·운영 책임이 정해지지 않은 placeholder manifest, 성공만 반환하는 stub process와 빈 wrapper 묶음은 builtin MCP로 배포하지 않습니다. 삭제하더라도 DB의 과거 revision·Run snapshot은 감사 원본으로 보존하고 신규 catalog seed와 설치 후보에서만 제외합니다.
 
 ### 14.6 Skill Folder 계층

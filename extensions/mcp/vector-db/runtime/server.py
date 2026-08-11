@@ -92,7 +92,7 @@ def overview() -> str:
                 "list_sources",
                 "store_status",
             ],
-            "index_command": "python extensions/mcp/vector_db/ingest.py index",
+            "index_command": "python extensions/mcp/vector-db/runtime/ingest.py index",
             "documents_dir": str(Path(__file__).resolve().parent / "documents"),
             "notes": [
                 "Markdown heading hierarchy is stored as graph nodes and edges.",

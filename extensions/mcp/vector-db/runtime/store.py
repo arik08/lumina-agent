@@ -1243,7 +1243,7 @@ def _not_indexed_response(db_path: Path) -> dict[str, Any]:
     return {
         "ok": False,
         "db_path": str(db_path),
-        "message": "Vector GraphRAG database has not been indexed yet. Run `python extensions/mcp/vector_db/ingest.py index` first.",
+        "message": "Vector GraphRAG database has not been indexed yet. Run `python extensions/mcp/vector-db/runtime/ingest.py index` first.",
         "results": [],
     }
 

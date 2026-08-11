@@ -82,12 +82,30 @@ def _skill_package(folder: Path) -> dict[str, str]:
     return normalize_package(files)
 
 
+def _repository_skill_folders(repository_root: Path) -> list[Path]:
+    folders: list[Path] = []
+    skills_root = repository_root / "extensions" / "skills"
+    if skills_root.is_dir():
+        folders.extend(path for path in skills_root.iterdir() if path.is_dir())
+
+    mcp_root = repository_root / "extensions" / "mcp"
+    if mcp_root.is_dir():
+        for package_root in sorted(path for path in mcp_root.iterdir() if path.is_dir()):
+            if not (package_root / "mcp.json").is_file():
+                continue
+            package_skills_root = package_root / "skills"
+            if package_skills_root.is_dir():
+                folders.extend(
+                    path for path in package_skills_root.iterdir() if path.is_dir()
+                )
+    return sorted(folders)
+
+
 def sync_repository_skills(
     db: Session, *, admin: User, root: Path | None = None
 ) -> int:
-    skills_root = (root or REPOSITORY_ROOT) / "extensions" / "skills"
-    if not skills_root.is_dir():
-        return 0
+    repository_root = root or REPOSITORY_ROOT
+    skills_root = repository_root / "extensions" / "skills"
     catalog_path = skills_root / "catalog.json"
     catalog = (
         json.loads(catalog_path.read_text(encoding="utf-8"))
@@ -95,7 +113,8 @@ def sync_repository_skills(
         else {}
     )
     changed = 0
-    for folder in sorted(path for path in skills_root.iterdir() if path.is_dir()):
+    source_paths: set[str] = set()
+    for folder in _repository_skill_folders(repository_root):
         skill_md = folder / "SKILL.md"
         if not skill_md.is_file():
             continue
@@ -124,9 +143,11 @@ def sync_repository_skills(
             if wrapper_source.startswith("skill-mcp:")
             else None
         )
+        source_path = folder.relative_to(repository_root).as_posix()
+        source_paths.add(source_path)
         manifest = {
             "source": "repository",
-            "sourcePath": folder.relative_to(root or REPOSITORY_ROOT).as_posix(),
+            "sourcePath": source_path,
             "category": "기본 제공",
             "tags": tags,
             "publisher": "Lumina",
@@ -174,6 +195,8 @@ def sync_repository_skills(
         extension.description = description
         extension.tags_json = tags
         extension.kind = "mcp" if mcp_slug is not None else "skill"
+        restored = extension.archived_at is not None
+        extension.archived_at = None
         extension.visibility = "organization"
         extension.publisher_user_id = admin.id
         version_changed = not (
@@ -230,16 +253,66 @@ def sync_repository_skills(
                         dict(installation.settings_json) if installation is not None else {}
                     ),
                 )
-        if version_changed or activation_changed:
+        if version_changed or activation_changed or restored:
             changed += 1
+
+    for extension, version in db.execute(
+        select(Extension, ExtensionVersion)
+        .join(
+            ExtensionVersion,
+            ExtensionVersion.id == Extension.latest_published_version_id,
+        )
+        .where(
+            Extension.organization_id == admin.organization_id,
+            Extension.owner_user_id == admin.id,
+        )
+    ):
+        manifest = version.manifest_json
+        source_path = str(manifest.get("sourcePath", ""))
+        if (
+            manifest.get("source") != "repository"
+            or not source_path.startswith(("extensions/skills/", "extensions/mcp/"))
+            or source_path in source_paths
+            or extension.archived_at is not None
+        ):
+            continue
+        extension.archived_at = utc_now()
+        changed += 1
     db.flush()
     return changed
 
 
-def _mcp_configuration(raw: dict[str, Any]) -> dict[str, Any]:
+def _package_command_argument(
+    value: Any, *, package_root: Path, repository_root: Path
+) -> str:
+    argument = str(value)
+    normalized = argument.replace("\\", "/")
+    if normalized != "runtime" and not normalized.startswith("runtime/"):
+        return argument
+    candidate = (package_root / normalized).resolve()
+    try:
+        candidate.relative_to(package_root.resolve())
+    except ValueError as exc:
+        raise ValueError(f"MCP runtime path escapes its package: {argument}") from exc
+    return candidate.relative_to(repository_root.resolve()).as_posix()
+
+
+def _mcp_configuration(
+    raw: dict[str, Any], *, package_root: Path, repository_root: Path
+) -> dict[str, Any]:
     transport = "streamable_http" if raw.get("type") == "streamable_http" else "stdio"
     command = (
-        [str(raw.get("command", "")), *[str(item) for item in raw.get("args", [])]]
+        [
+            str(raw.get("command", "")),
+            *[
+                _package_command_argument(
+                    item,
+                    package_root=package_root,
+                    repository_root=repository_root,
+                )
+                for item in raw.get("args", [])
+            ],
+        ]
         if transport == "stdio"
         else []
     )
@@ -259,14 +332,18 @@ def _mcp_configuration(raw: dict[str, Any]) -> dict[str, Any]:
 def sync_repository_mcp(db: Session, *, admin: User, root: Path | None = None) -> int:
     repository_root = root or REPOSITORY_ROOT
     mcp_root = repository_root / "extensions" / "mcp"
-    if not mcp_root.is_dir():
-        return 0
     changed = 0
-    for path in sorted(mcp_root.glob("*.json")):
+    active_slugs: set[str] = set()
+    for path in sorted(mcp_root.glob("*/mcp.json")):
         payload = json.loads(path.read_text(encoding="utf-8"))
         for slug, raw in payload.get("mcpServers", {}).items():
             catalog_slug = normalize_slug(slug)
-            configuration = _mcp_configuration(raw)
+            active_slugs.add(catalog_slug)
+            configuration = _mcp_configuration(
+                raw,
+                package_root=path.parent,
+                repository_root=repository_root,
+            )
             if not configuration["tools"]:
                 continue
             _, digest = validate_configuration(configuration)
@@ -302,7 +379,7 @@ def sync_repository_mcp(db: Session, *, admin: User, root: Path | None = None) -
                         configuration=configuration,
                     )
                     revision_changed = True
-            if revision_changed:
+            if revision_changed or definition.status != "approved":
                 approve_revision(
                     db,
                     user=admin,
@@ -329,6 +406,45 @@ def sync_repository_mcp(db: Session, *, admin: User, root: Path | None = None) -
                 ]
                 if not installation.tool_allowlist_json:
                     installation.enabled = False
+
+    managed_slugs = {
+        str(version.manifest_json.get("mcpSlug", "")).strip()
+        for extension, version in db.execute(
+            select(Extension, ExtensionVersion)
+            .join(
+                ExtensionVersion,
+                ExtensionVersion.id == Extension.latest_published_version_id,
+            )
+            .where(
+                Extension.organization_id == admin.organization_id,
+                Extension.kind == "mcp",
+            )
+        )
+        if version.manifest_json.get("source") == "repository"
+        and str(version.manifest_json.get("sourcePath", "")).startswith(
+            "extensions/mcp/"
+        )
+    }
+    stale_slugs = managed_slugs - active_slugs
+    if stale_slugs:
+        for definition in db.scalars(
+            select(McpDefinition).where(
+                McpDefinition.organization_id == admin.organization_id,
+                McpDefinition.slug.in_(stale_slugs),
+            )
+        ):
+            if definition.status != "revoked" and definition.status != "disabled":
+                definition.status = "disabled"
+                definition.disabled_at = utc_now()
+                changed += 1
+            for installation in db.scalars(
+                select(McpInstallation).where(
+                    McpInstallation.definition_id == definition.id,
+                    McpInstallation.removed_at.is_(None),
+                    McpInstallation.enabled.is_(True),
+                )
+            ):
+                installation.enabled = False
     db.flush()
     return changed
 
