@@ -162,6 +162,66 @@ def test_conversation_appearance_settings_are_persisted_per_user(tmp_path: Path)
         assert restored["conversationFontSize"] == 16
 
 
+def test_menu_visibility_is_persisted_per_user_and_allows_an_empty_selection(
+    tmp_path: Path,
+) -> None:
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        csrf = _login(client)
+        current = client.get("/api/settings/current").json()
+        assert current["menuVisibility"] == [
+            "chat",
+            "deep-analysis",
+            "marketplace",
+            "knowledge",
+            "library",
+            "files",
+            "schedules",
+            "memory",
+        ]
+
+        changed = client.patch(
+            "/api/settings/current",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "menuVisibility": ["chat", "files", "memory"],
+                "expectedRevision": current["revision"],
+            },
+        )
+        assert changed.status_code == 200, changed.text
+        assert changed.json()["menuVisibility"] == ["chat", "files", "memory"]
+
+        restored = client.get("/api/settings/current").json()
+        assert restored["menuVisibility"] == ["chat", "files", "memory"]
+
+        hidden = client.patch(
+            "/api/settings/current",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "menuVisibility": [],
+                "expectedRevision": restored["revision"],
+            },
+        )
+        assert hidden.status_code == 200, hidden.text
+        assert hidden.json()["menuVisibility"] == []
+
+
+def test_menu_visibility_rejects_unknown_or_duplicate_menu_ids(tmp_path: Path) -> None:
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        csrf = _login(client)
+        current = client.get("/api/settings/current").json()
+
+        for menu_visibility in (["chat", "unknown"], ["chat", "chat"]):
+            response = client.patch(
+                "/api/settings/current",
+                headers={"X-CSRF-Token": csrf},
+                json={
+                    "menuVisibility": menu_visibility,
+                    "expectedRevision": current["revision"],
+                },
+            )
+            assert response.status_code == 422
+
+
 def test_composer_work_settings_are_persisted_per_user(tmp_path: Path) -> None:
     with TestClient(create_app(_settings(tmp_path))) as client:
         csrf = _login(client)

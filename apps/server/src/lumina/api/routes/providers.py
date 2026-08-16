@@ -28,6 +28,7 @@ _USER_SETTINGS_FIELDS = {
     "theme",
     "conversation_width",
     "conversation_font_size",
+    "menu_visibility",
     "analysis_depth",
     "answer_length",
     "prompt_enhancement_instruction",
@@ -35,6 +36,17 @@ _USER_SETTINGS_FIELDS = {
     "clarification_mode",
 }
 _PROJECT_SETTINGS_FIELDS = {"output_mode", "execution"}
+
+_DEFAULT_MENU_VISIBILITY = [
+    "chat",
+    "deep-analysis",
+    "marketplace",
+    "knowledge",
+    "library",
+    "files",
+    "schedules",
+    "memory",
+]
 
 PROVIDER_NAMES = {
     "mock": "Lumina Mock",
@@ -396,6 +408,7 @@ def _resolved_settings(
     theme = theme_setting.value_json if theme_setting else "light"
     conversation_width_setting = _setting(db, user.id, "ui.conversation_width")
     conversation_font_size_setting = _setting(db, user.id, "ui.conversation_font_size")
+    menu_visibility_setting = _setting(db, user.id, "ui.menu_visibility")
     conversation_width = (
         conversation_width_setting.value_json if conversation_width_setting else 900
     )
@@ -403,6 +416,11 @@ def _resolved_settings(
         conversation_font_size_setting.value_json
         if conversation_font_size_setting
         else 14
+    )
+    menu_visibility = (
+        menu_visibility_setting.value_json
+        if menu_visibility_setting
+        else _DEFAULT_MENU_VISIBILITY
     )
     output_mode_key = "composer.output_mode"
     output_mode_setting = (
@@ -466,6 +484,13 @@ def _resolved_settings(
             if isinstance(conversation_font_size, int)
             and 14 <= conversation_font_size <= 24
             else 14
+        ),
+        "menuVisibility": (
+            menu_visibility
+            if isinstance(menu_visibility, list)
+            and len(menu_visibility) == len(set(menu_visibility))
+            and all(item in _DEFAULT_MENU_VISIBILITY for item in menu_visibility)
+            else _DEFAULT_MENU_VISIBILITY
         ),
         "outputMode": output_mode
         if output_mode in {"auto", "chat", "file"}
@@ -679,6 +704,7 @@ def patch_current_settings(
     for field_name, key in (
         ("conversation_width", "ui.conversation_width"),
         ("conversation_font_size", "ui.conversation_font_size"),
+        ("menu_visibility", "ui.menu_visibility"),
         ("analysis_depth", "composer.analysis_depth"),
         ("answer_length", "composer.answer_length"),
         (

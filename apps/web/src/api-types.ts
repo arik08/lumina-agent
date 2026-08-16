@@ -934,6 +934,7 @@ export interface CurrentSettings {
   theme: Theme;
   conversationWidth: number;
   conversationFontSize: number;
+  menuVisibility: MenuVisibilityId[];
   outputMode: OutputMode;
   analysisDepth: AnalysisDepth;
   answerLength: AnswerLength;
@@ -952,10 +953,13 @@ export interface CurrentSettings {
   }>;
 }
 
+export type MenuVisibilityId = "chat" | "deep-analysis" | "marketplace" | "knowledge" | "library" | "files" | "schedules" | "memory";
+
 export interface UpdateCurrentSettingsRequest {
   theme?: Theme;
   conversationWidth?: number;
   conversationFontSize?: number;
+  menuVisibility?: MenuVisibilityId[];
   outputMode?: OutputMode;
   analysisDepth?: AnalysisDepth;
   answerLength?: AnswerLength;

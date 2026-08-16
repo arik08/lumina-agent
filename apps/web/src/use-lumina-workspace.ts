@@ -55,6 +55,7 @@ type CurrentSettingsPatch = Partial<Pick<
   | "theme"
   | "conversationWidth"
   | "conversationFontSize"
+  | "menuVisibility"
   | "outputMode"
   | "analysisDepth"
   | "answerLength"
@@ -1246,6 +1247,10 @@ export function useLuminaWorkspace() {
     await persistSettings({ conversationFontSize });
   }, [persistSettings]);
 
+  const selectMenuVisibility = useCallback(async (menuVisibility: CurrentSettings["menuVisibility"]) => {
+    await persistSettings({ menuVisibility });
+  }, [persistSettings]);
+
   const selectClarificationMode = useCallback(async (
     clarificationMode: CurrentSettings["clarificationMode"],
   ) => persistSettings({ clarificationMode }), [persistSettings]);
@@ -1805,6 +1810,7 @@ export function useLuminaWorkspace() {
     resetWarningComposerSettings,
     selectConversationWidth,
     selectConversationFontSize,
+    selectMenuVisibility,
     selectClarificationMode,
     toggleTheme,
     sendMessage,

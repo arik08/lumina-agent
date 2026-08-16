@@ -741,6 +741,8 @@ const navigation = [
   { id: "memory", label: "Memory", icon: Brain },
 ] satisfies Array<{ id: MainView; label: string; icon: typeof Bot }>;
 
+type NavigationId = (typeof navigation)[number]["id"];
+
 function isUntitledConversation(title: string) {
   return title === "제목 없음" || title === "새 작업";
 }
@@ -911,6 +913,7 @@ function App() {
   const [projectSettingsReturnView, setProjectSettingsReturnView] = useState<MainView>("chat");
   const sidebarView = mainView === "project-settings" ? projectSettingsReturnView : mainView;
   const [settingsSection, setSettingsSection] = useState<"personal" | "admin">("personal");
+  const [menuVisibilitySaving, setMenuVisibilitySaving] = useState(false);
   const [progressOpen, setProgressOpen] = useState(false);
   const progressRunIdRef = useRef<string | null>(null);
   const progressPlanIdRef = useRef<string | null>(null);
@@ -1296,6 +1299,8 @@ function App() {
   const theme = workspace.settings?.theme ?? "light";
   const conversationWidth = workspace.settings?.conversationWidth ?? 900;
   const conversationFontSize = workspace.settings?.conversationFontSize ?? 14;
+  const menuVisibility = workspace.settings?.menuVisibility ?? navigation.map(({ id }) => id);
+  const visibleNavigation = navigation.filter(({ id }) => menuVisibility.includes(id));
   const conversationLayoutStyle = {
     "--conversation-content-width": `${conversationWidth}px`,
     "--conversation-font-size": `${conversationFontSize}px`,
@@ -3461,7 +3466,7 @@ function App() {
           {sidebarView === "deep-analysis"
             ? <button type="button" aria-label="새 분석" data-tooltip="새 분석" disabled={activeProject?.role === "viewer"} onClick={startNewDeepAnalysis}><SquarePen size={18} /></button>
             : <button type="button" aria-label="새 채팅" data-tooltip="새 채팅" onClick={startNewConversation}><SquarePen size={18} /></button>}
-          {navigation.map(({ id, label, icon: Icon }) => (
+          {visibleNavigation.map(({ id, label, icon: Icon }) => (
             <button className={sidebarView === id ? "is-active" : ""} type="button" aria-label={label} data-tooltip={label} key={id} onPointerEnter={() => void preloadAppView(id)} onFocus={() => void preloadAppView(id)} onClick={() => {
               if (id === "files") setRequestedProjectFileId(null);
               setMainView(id);
@@ -3489,7 +3494,7 @@ function App() {
         </header>
 
         <nav className="primary-navigation" aria-label="주요 메뉴">
-          {navigation.map(({ id, label, icon: Icon }) => <button className={sidebarView === id ? "is-active" : ""} type="button" key={id} onPointerEnter={() => void preloadAppView(id)} onFocus={() => void preloadAppView(id)} onClick={() => {
+          {visibleNavigation.map(({ id, label, icon: Icon }) => <button className={sidebarView === id ? "is-active" : ""} type="button" key={id} onPointerEnter={() => void preloadAppView(id)} onFocus={() => void preloadAppView(id)} onClick={() => {
             if (id === "files") setRequestedProjectFileId(null);
             setMainView(id);
             setSidebarOpen(false);
@@ -4366,6 +4371,29 @@ function App() {
                   <div className="settings-row"><span><strong>테마</strong><small>앱 화면의 밝기를 선택합니다.</small></span><button className="settings-value-button" type="button" onClick={() => void workspace.toggleTheme()}>{theme === "dark" ? "다크" : "라이트"}</button></div>
                   <div className="settings-row"><span><strong>대화 영역 폭</strong><small>대화, 작업 진행, 입력 영역의 공통 최대 폭입니다.</small></span><div className="settings-stepper" role="group" aria-label="대화 영역 폭"><button type="button" aria-label="대화 영역 폭 줄이기" disabled={conversationWidth <= 600} onClick={() => void workspace.selectConversationWidth(Math.max(600, conversationWidth - 20))}>−</button><output>{conversationWidth}px</output><button type="button" aria-label="대화 영역 폭 늘리기" disabled={conversationWidth >= 1400} onClick={() => void workspace.selectConversationWidth(Math.min(1400, conversationWidth + 20))}>+</button></div></div>
                   <div className="settings-row"><span><strong>대화 글꼴 크기</strong><small>현재 크기를 최솟값으로 하며 1px 단위로 조절합니다.</small></span><div className="settings-stepper" role="group" aria-label="대화 글꼴 크기"><button type="button" aria-label="대화 글꼴 크기 줄이기" disabled={conversationFontSize <= 14} onClick={() => void workspace.selectConversationFontSize(Math.max(14, conversationFontSize - 1))}>−</button><output>{conversationFontSize}px</output><button type="button" aria-label="대화 글꼴 크기 늘리기" disabled={conversationFontSize >= 24} onClick={() => void workspace.selectConversationFontSize(Math.min(24, conversationFontSize + 1))}>+</button></div></div>
+                </section>
+                <section className="settings-card" aria-labelledby="menu-settings-title">
+                  <header><h2 id="menu-settings-title">메뉴 표시</h2><small>{menuVisibility.length}개 표시</small></header>
+                  <fieldset className="settings-menu-visibility" aria-describedby="menu-settings-description">
+                    <legend className="sr-only">표시할 주요 메뉴</legend>
+                    <p id="menu-settings-description">사이드바에 표시할 기능만 선택합니다. 숨긴 기능도 설정에서 다시 표시할 수 있습니다.</p>
+                    <div>
+                      {navigation.map(({ id, label, icon: Icon }) => {
+                        const checked = menuVisibility.includes(id);
+                        return <label key={id}><input type="checkbox" checked={checked} disabled={menuVisibilitySaving} onChange={async () => {
+                          const next = checked
+                            ? menuVisibility.filter((item) => item !== id)
+                            : navigation.map(({ id: candidate }) => candidate).filter((candidate) => candidate === id || menuVisibility.includes(candidate));
+                          setMenuVisibilitySaving(true);
+                          try {
+                            await workspace.selectMenuVisibility(next as NavigationId[]);
+                          } finally {
+                            setMenuVisibilitySaving(false);
+                          }
+                        }} /><Icon size={16} aria-hidden="true" /><span>{label}</span></label>;
+                      })}
+                    </div>
+                  </fieldset>
                 </section>
                 <section className="settings-card" aria-labelledby="clarification-settings-title">
                   <header><h2 id="clarification-settings-title">대화 방식</h2></header>

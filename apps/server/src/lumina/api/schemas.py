@@ -393,6 +393,18 @@ class SettingsPatch(ApiModel):
     theme: Literal["light", "dark"] | None = None
     conversation_width: int | None = Field(default=None, ge=600, le=1400)
     conversation_font_size: int | None = Field(default=None, ge=14, le=24)
+    menu_visibility: list[
+        Literal[
+            "chat",
+            "deep-analysis",
+            "marketplace",
+            "knowledge",
+            "library",
+            "files",
+            "schedules",
+            "memory",
+        ]
+    ] | None = None
     output_mode: Literal["auto", "chat", "file"] | None = None
     analysis_depth: Literal["auto", "brief", "standard", "deep"] | None = None
     answer_length: Literal["auto", "brief", "standard", "detailed"] | None = None
@@ -416,6 +428,10 @@ class SettingsPatch(ApiModel):
         )
         if null_fields:
             raise ValueError(f"setting fields cannot be null: {', '.join(null_fields)}")
+        if self.menu_visibility is not None and len(set(self.menu_visibility)) != len(
+            self.menu_visibility
+        ):
+            raise ValueError("menu_visibility entries must be unique")
         return self
 
 
