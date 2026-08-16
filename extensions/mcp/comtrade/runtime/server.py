@@ -9,6 +9,7 @@ import re
 import ssl
 import threading
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -32,22 +33,18 @@ _last_public_request_at = 0.0
 
 def _httpx_verify_argument() -> bool | ssl.SSLContext:
     """Return the SSL verification config for UN Comtrade requests."""
+    bundle = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
+    if not bundle:
+        return True
+    context = ssl.create_default_context()
     try:
-        from myharness.utils.certificates import httpx_verify_argument
-    except ImportError:
-        bundle = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
-        if not bundle:
-            return True
-        context = ssl.create_default_context()
-        try:
-            context.set_ciphers("DEFAULT@SECLEVEL=1")
-        except ssl.SSLError:
-            pass
-        if hasattr(ssl, "VERIFY_X509_STRICT"):
-            context.verify_flags &= ~ssl.VERIFY_X509_STRICT
-        context.load_verify_locations(cafile=bundle)
-        return context
-    return httpx_verify_argument()
+        context.set_ciphers("DEFAULT@SECLEVEL=1")
+    except ssl.SSLError:
+        pass
+    if hasattr(ssl, "VERIFY_X509_STRICT"):
+        context.verify_flags &= ~ssl.VERIFY_X509_STRICT
+    context.load_verify_locations(cafile=bundle)
+    return context
 
 
 def _env_value(*names: str) -> str | None:
@@ -81,7 +78,7 @@ def _request_headers(*, api_key: str | None = None) -> dict[str, str]:
     headers = {
         "Accept": "application/json",
         "User-Agent": _env_value("UN_COMTRADE_API_USER_AGENT", "COMTRADE_API_USER_AGENT")
-        or "MyHarness UN Comtrade MCP/0.1",
+        or "Lumina UN Comtrade MCP/0.1",
     }
     if api_key:
         headers["Ocp-Apim-Subscription-Key"] = api_key
@@ -157,7 +154,7 @@ def _network_failure_message(base_url: str) -> str:
     return (
         "UN Comtrade API request failed. If this is a company network, check HTTPS proxy "
         "and corporate CA settings such as HTTPS_PROXY and SSL_CERT_FILE. "
-        "MyHarness will pass the configured corporate SSL context to httpx. "
+        "Lumina will pass the configured corporate SSL context to httpx. "
         "If HTTPS inspection blocks this endpoint, set UN_COMTRADE_API_PROTOCOL=http "
         f"or UN_COMTRADE_API_BASE_URL to an approved proxy. Current base URL: {base_url}"
     )
@@ -295,6 +292,67 @@ def _limit_comtrade_payload(payload: object, limit: int) -> object:
     return payload
 
 
+def _csv_tokens(value: str) -> list[str]:
+    return [token.strip() for token in value.split(",") if token.strip()]
+
+
+def _trade_query_diagnostics(
+    payload: object,
+    *,
+    reporter_code: str,
+    period: str,
+) -> object:
+    """Add explicit reporter/period coverage so empty rows cannot be mistaken for an outage."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        return payload
+
+    requested_reporters = _csv_tokens(reporter_code)
+    requested_periods = _csv_tokens(period)
+    coverage: dict[str, set[str]] = {code: set() for code in requested_reporters}
+    for row in payload["data"]:
+        if not isinstance(row, dict):
+            continue
+        row_reporter = str(row.get("reporterCode", "")).strip()
+        row_period = str(row.get("period", "")).strip()
+        if row_reporter in coverage and row_period:
+            coverage[row_reporter].add(row_period)
+
+    missing_reporters = [code for code in requested_reporters if not coverage[code]]
+    incomplete_reporters = [
+        code
+        for code in requested_reporters
+        if coverage[code] and any(item not in coverage[code] for item in requested_periods)
+    ]
+    copied = dict(payload)
+    copied["queryDiagnostics"] = {
+        "requestedReporterCodes": requested_reporters,
+        "requestedPeriods": requested_periods,
+        "returnedPeriodsByReporter": {
+            code: sorted(values) for code, values in coverage.items()
+        },
+        "missingReporterCodes": missing_reporters,
+        "incompleteReporterCodes": incomplete_reporters,
+        "complete": not missing_reporters and not incomplete_reporters,
+    }
+    warnings: list[str] = []
+    if missing_reporters:
+        warnings.append(
+            "No rows were returned for reporter code(s) "
+            + ", ".join(missing_reporters)
+            + " under this exact query. This does not mean the MCP connection failed or that "
+            "all requested reporters have no data. Check each reporter and use a common available period."
+        )
+    if incomplete_reporters:
+        warnings.append(
+            "Some requested periods are missing for reporter code(s) "
+            + ", ".join(incomplete_reporters)
+            + ". Do not compare reporters across different period coverage."
+        )
+    if warnings:
+        copied["warnings"] = warnings
+    return copied
+
+
 def _reference_results(payload: object) -> list[dict[str, Any]]:
     if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
         raise ValueError("UN Comtrade reference endpoint returned an unexpected JSON shape.")
@@ -332,7 +390,10 @@ def preview_trade_data(
             include_desc=include_desc,
         ),
     )
-    return _to_json(_limit_comtrade_payload(payload, limit))
+    diagnosed = _trade_query_diagnostics(payload, reporter_code=reporter_code, period=period)
+    return _to_json(
+        _limit_comtrade_payload(diagnosed, limit)
+    )
 
 
 @server.tool()
@@ -373,7 +434,103 @@ def get_trade_data(
         ),
         api_key=api_key,
     )
-    return _to_json(_limit_comtrade_payload(payload, limit))
+    diagnosed = _trade_query_diagnostics(payload, reporter_code=reporter_code, period=period)
+    return _to_json(
+        _limit_comtrade_payload(diagnosed, limit)
+    )
+
+
+@server.tool()
+def latest_common_annual_trade_data(
+    reporter_codes: list[str],
+    cmd_code: str = "TOTAL",
+    flow_code: str = "M",
+    partner_code: str = "0",
+    latest_year: int | None = None,
+    lookback_years: int = 5,
+    type_code: str = "C",
+    classification_code: str = "HS",
+    partner2_code: str = "0",
+    customs_code: str = "C00",
+    mot_code: str = "0",
+    include_desc: bool = True,
+    limit: int = 1000,
+) -> str:
+    """Fetch the latest annual period that has rows for every requested reporter.
+
+    Use this for cross-country comparisons where all reporters must share one period. The
+    returned selectedPeriod is the newest common year found, not necessarily the latest
+    calendar year.
+    """
+    api_key = _api_key()
+    if not api_key:
+        raise ValueError(
+            "UN_COMTRADE_API_KEY is required for latest_common_annual_trade_data."
+        )
+    cleaned_reporters = list(
+        dict.fromkeys(str(code).strip() for code in reporter_codes if str(code).strip())
+    )
+    if len(cleaned_reporters) < 2:
+        raise ValueError("reporter_codes must contain at least two reporter codes.")
+    if any(not code.isdigit() for code in cleaned_reporters):
+        raise ValueError("reporter_codes must contain numeric UN Comtrade reporter codes.")
+    years_to_check = max(1, min(int(lookback_years), 10))
+    start_year = int(latest_year) if latest_year is not None else datetime.now(UTC).year - 1
+    reporter_csv = ",".join(cleaned_reporters)
+    path = _trade_path("data/v1/get", type_code, "A", classification_code)
+    attempted_periods: list[str] = []
+
+    for year in range(start_year, start_year - years_to_check, -1):
+        period = str(year)
+        attempted_periods.append(period)
+        params = _trade_params(
+            reporter_code=reporter_csv,
+            period=period,
+            cmd_code=cmd_code,
+            flow_code=flow_code,
+            partner_code=partner_code,
+            partner2_code=partner2_code,
+            customs_code=customs_code,
+            mot_code=mot_code,
+            include_desc=include_desc,
+        )
+        payload = _limit_comtrade_payload(
+            _trade_query_diagnostics(
+                _request_json(path, params, api_key=api_key),
+                reporter_code=reporter_csv,
+                period=period,
+            ),
+            limit,
+        )
+        if not isinstance(payload, dict):
+            continue
+        diagnostics = payload.get("queryDiagnostics")
+        if not isinstance(diagnostics, dict) or not diagnostics.get("complete"):
+            continue
+        copied = dict(payload)
+        copied["selectedPeriod"] = period
+        copied["attemptedPeriods"] = attempted_periods
+        copied["selectionReason"] = (
+            "Latest annual period with data for every requested reporter under the exact query."
+        )
+        return _to_json(copied)
+
+    return _to_json(
+        {
+            "count": 0,
+            "data": [],
+            "selectedPeriod": None,
+            "attemptedPeriods": attempted_periods,
+            "queryDiagnostics": {
+                "requestedReporterCodes": cleaned_reporters,
+                "complete": False,
+            },
+            "warnings": [
+                "No common annual period was found for every requested reporter. "
+                "Do not construct a cross-country comparison from mixed periods."
+            ],
+        }
+    )
 
 
 @server.tool()
@@ -456,6 +613,7 @@ def overview() -> str:
             "tools": [
                 "preview_trade_data",
                 "get_trade_data",
+                "latest_common_annual_trade_data",
                 "list_reporters",
                 "search_reporters",
                 "check_connection",
@@ -471,9 +629,10 @@ def overview() -> str:
             "authentication": [
                 "preview_trade_data uses public/v1/preview and does not require a key.",
                 "get_trade_data uses data/v1/get and requires UN_COMTRADE_API_KEY or COMTRADE_API_KEY.",
+                "latest_common_annual_trade_data finds one annual period shared by every reporter.",
             ],
             "company_network_notes": [
-                "Corporate SSL bundles are passed to httpx through MyHarness certificate support.",
+                "Corporate SSL bundles are passed to httpx through Lumina certificate support.",
                 "Set UN_COMTRADE_API_PROTOCOL=http if HTTPS inspection blocks comtradeapi.un.org.",
                 "Set UN_COMTRADE_API_BASE_URL to an approved proxy or mirror if required.",
             ],

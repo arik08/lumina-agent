@@ -1,0 +1,118 @@
+diff --git a/src/api/client.ts b/src/api/client.ts
+index 0d65ef2..85b6d4f 100644
+--- a/src/api/client.ts
++++ b/src/api/client.ts
+@@ -129,7 +129,10 @@ export function createApiClient(config: AppConfig) {
+
+    const promise = doFetchInner(apiCode, queryParams, cacheKey, cacheable);
+     inflight.set(dedupeKey, promise);
+-    promise.finally(() => { inflight.delete(dedupeKey); });
++    void promise.then(
++      () => { inflight.delete(dedupeKey); },
++      () => { inflight.delete(dedupeKey); },
++    );
+     return promise;
+   }
+
+@@ -333,9 +336,6 @@ async function resolveHost(hostname: string): Promise<string | undefined> {
+  *  URL은 변경하지 않고 OS DNS 캐시를 활용합니다.)
+  */
+ async function fetchWithErrorHandling(url: string): Promise<unknown> {
+-  const controller = new AbortController();
+-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+-
+   // DNS 프리워밍: OS DNS 캐시를 미리 채움 (URL은 변경하지 않음)
+   try {
+     const parsed = new URL(url);
+@@ -345,22 +345,30 @@ async function fetchWithErrorHandling(url: string): Promise<unknown> {
+   }
+
+  let response: Response;
+-  try {
+-    response = await fetch(url, {
+-      signal: controller.signal,
+-      keepalive: true,
+-      headers: {
+-        "User-Agent": "assembly-api-mcp/0.7.0",
+-      },
+-    });
+-  } catch (err: unknown) {
+-    if (err instanceof Error && err.name === "AbortError") {
+-      throw new Error(`API 요청 시간 초과 (${FETCH_TIMEOUT_MS / 1000}초). 잠시 후 다시 시도하세요.`);
++  for (let attempt = 0; ; attempt += 1) {
++    const controller = new AbortController();
++    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
++    try {
++      response = await fetch(url, {
++        signal: controller.signal,
++        keepalive: true,
++        headers: {
++          "User-Agent": "assembly-api-mcp/0.7.0",
++        },
++      });
++      break;
++    } catch (err: unknown) {
++      if (err instanceof Error && err.name === "AbortError") {
++        throw new Error(`API 요청 시간 초과 (${FETCH_TIMEOUT_MS / 1000}초). 잠시 후 다시 시도하세요.`);
++      }
++      if (attempt === 0) {
++        continue;
++      }
++      const message = err instanceof Error ? err.message : String(err);
++      throw new Error(`네트워크 오류: ${message}`);
++    } finally {
++      clearTimeout(timer);
+     }
+-    const message = err instanceof Error ? err.message : String(err);
+-    throw new Error(`네트워크 오류: ${message}`);
+-  } finally {
+-    clearTimeout(timer);
+   }
+
+  if (!response.ok) {
+diff --git a/tests/unit/client.test.ts b/tests/unit/client.test.ts
+index 6bcb19f..dd32552 100644
+--- a/tests/unit/client.test.ts
++++ b/tests/unit/client.test.ts
+@@ -77,7 +77,7 @@ describe("createApiClient", () => {
+     });
+
+    it("네트워크 오류를 처리한다", async () => {
+-      vi.spyOn(globalThis, "fetch").mockRejectedValue(
++      const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(
+         new Error("Connection refused"),
+       );
+
+@@ -85,6 +85,32 @@ describe("createApiClient", () => {
+       await expect(client.fetchOpenAssembly("TEST_API")).rejects.toThrow(
+         "네트워크 오류",
+       );
++      expect(fetchMock).toHaveBeenCalledTimes(2);
++    });
++
++    it("일시적인 네트워크 오류는 한 번 재시도한다", async () => {
++      const mockResponse = {
++        TEST_API: [
++          {
++            head: [
++              { list_total_count: 0 },
++              { RESULT: { CODE: "INFO-000", MESSAGE: "정상 처리되었습니다." } },
++            ],
++          },
++          { row: [] },
++        ],
++      };
++      const fetchMock = vi.spyOn(globalThis, "fetch")
++        .mockRejectedValueOnce(new Error("fetch failed"))
++        .mockResolvedValueOnce(
++          new Response(JSON.stringify(mockResponse), { status: 200 }),
++        );
++
++      const client = createApiClient(createTestConfig());
++      const result = await client.fetchOpenAssembly("TEST_API");
++
++      expect(result.totalCount).toBe(0);
++      expect(fetchMock).toHaveBeenCalledTimes(2);
+     });
+
+    it("XML 응답을 에러로 처리한다", async () => {

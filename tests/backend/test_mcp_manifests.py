@@ -17,7 +17,9 @@ def _package_roots() -> list[Path]:
     return sorted(
         path
         for path in MCP_ROOT.iterdir()
-        if path.is_dir() and not path.name.startswith((".", "__"))
+        if path.is_dir()
+        and not path.name.startswith((".", "__"))
+        and (path / "mcp.json").is_file()
     )
 
 

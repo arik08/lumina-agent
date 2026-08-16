@@ -1,0 +1,150 @@
+{
+  "mcpServers": {
+    "trade-market": {
+      "type": "stdio",
+      "description": "한국 관세청, U.S. Census, WTO, Eurostat COMEXT의 HS·국가·기간별 공식 무역 데이터를 조회합니다.",
+      "command": "python",
+      "args": [
+        "runtime/server.py"
+      ],
+      "cwd": ".",
+      "auto_connect": false,
+      "tools": [
+        {
+          "name": "search_catalog",
+          "description": "Inspect supported source variables, indicators, and fixed dataset identifiers.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "query": {
+                "default": "",
+                "title": "Query",
+                "type": "string"
+              },
+              "limit": {
+                "default": 50,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "source"
+            ],
+            "title": "search_catalogArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "query_trade",
+          "description": "Query bilateral or reporter trade values using source-native official classifications.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "flow": {
+                "title": "Flow",
+                "type": "string"
+              },
+              "start_period": {
+                "title": "Start Period",
+                "type": "string"
+              },
+              "end_period": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "End Period"
+              },
+              "product": {
+                "default": "TOTAL",
+                "title": "Product",
+                "type": "string"
+              },
+              "reporter": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reporter"
+              },
+              "partner": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Partner"
+              },
+              "frequency": {
+                "default": "M",
+                "title": "Frequency",
+                "type": "string"
+              },
+              "indicator": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Indicator"
+              },
+              "limit": {
+                "default": 100,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "source",
+              "flow",
+              "start_period"
+            ],
+            "title": "query_tradeArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_source_health",
+          "description": "Check a trade source or report that its required credential is not configured.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source"
+            ],
+            "title": "get_source_healthArguments",
+            "type": "object"
+          }
+        }
+      ]
+    }
+  }
+}

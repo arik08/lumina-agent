@@ -14,7 +14,6 @@ from mcp.server.fastmcp import FastMCP
 
 
 DEFAULT_API_HOST = "ecos.bok.or.kr/api"
-DEFAULT_API_KEY = "sample"
 MAX_ROWS = 1000
 MAX_REQUEST_ATTEMPTS = 3
 TRANSIENT_STATUS_CODES = {408, 429, 500, 502, 503, 504}
@@ -33,22 +32,18 @@ server = FastMCP("ecos")
 
 def _httpx_verify_argument() -> bool | ssl.SSLContext:
     """Return the SSL verification config for ECOS requests."""
+    bundle = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
+    if not bundle:
+        return True
+    context = ssl.create_default_context()
     try:
-        from myharness.utils.certificates import httpx_verify_argument
-    except ImportError:
-        bundle = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
-        if not bundle:
-            return True
-        context = ssl.create_default_context()
-        try:
-            context.set_ciphers("DEFAULT@SECLEVEL=1")
-        except ssl.SSLError:
-            pass
-        if hasattr(ssl, "VERIFY_X509_STRICT"):
-            context.verify_flags &= ~ssl.VERIFY_X509_STRICT
-        context.load_verify_locations(cafile=bundle)
-        return context
-    return httpx_verify_argument()
+        context.set_ciphers("DEFAULT@SECLEVEL=1")
+    except ssl.SSLError:
+        pass
+    if hasattr(ssl, "VERIFY_X509_STRICT"):
+        context.verify_flags &= ~ssl.VERIFY_X509_STRICT
+    context.load_verify_locations(cafile=bundle)
+    return context
 
 
 def _env_value(*names: str) -> str | None:
@@ -60,7 +55,10 @@ def _env_value(*names: str) -> str | None:
 
 
 def _api_key() -> str:
-    return _env_value("ECOS_API_KEY", "BOK_ECOS_API_KEY") or DEFAULT_API_KEY
+    key = _env_value("ECOS_API_KEY", "BOK_ECOS_API_KEY")
+    if not key:
+        raise ValueError("ECOS_API_KEY is required for the Bank of Korea ECOS MCP.")
+    return key
 
 
 def _api_base_url() -> str:
@@ -94,7 +92,7 @@ def _request_json(path: str) -> object:
                 url,
                 timeout=30,
                 verify=_httpx_verify_argument(),
-                headers={"Accept": "application/json", "User-Agent": "MyHarness ECOS MCP/0.1"},
+                headers={"Accept": "application/json", "User-Agent": "Lumina ECOS MCP/0.1"},
                 follow_redirects=True,
             )
             if (
@@ -265,7 +263,7 @@ def overview() -> str:
             "exchange_rate_table": "731Y001",
             "exchange_rate_items": EXCHANGE_RATE_ITEMS,
             "company_network_notes": [
-                "Corporate SSL bundles are passed to httpx through MyHarness certificate support.",
+                "Corporate SSL bundles are passed to httpx through Lumina certificate support.",
                 "Set ECOS_API_PROTOCOL=http or ECOS_API_BASE_URL if company HTTPS inspection requires it.",
             ],
         }

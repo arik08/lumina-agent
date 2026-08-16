@@ -238,6 +238,7 @@ export function ArtifactLengthSlider({
   onOutputModeChange,
   controlRef,
   attention = false,
+  attentionDescriptionId = "file-mode-nudge",
 }: {
   value: number | null;
   onChange: (value: number | null) => void;
@@ -245,6 +246,7 @@ export function ArtifactLengthSlider({
   onOutputModeChange: (value: OutputMode) => void;
   controlRef?: RefObject<HTMLButtonElement | null>;
   attention?: boolean;
+  attentionDescriptionId?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [popoverStyle, setPopoverStyle] = useState<CSSProperties>({ left: 0, top: 0, visibility: "hidden" });
@@ -330,7 +332,7 @@ export function ArtifactLengthSlider({
         className={`artifact-length-trigger${attention ? " is-file-mode-nudged" : ""}`}
         type="button"
         aria-label={`출력 방식 ${outputModeLabel}, 문서 출력 토큰 ${selected.label}${selected.warning ? `, ${selected.warning}` : ""}`}
-        aria-describedby={attention ? "file-mode-nudge" : undefined}
+        aria-describedby={attention ? attentionDescriptionId : undefined}
         aria-expanded={open}
         aria-controls={popoverId}
         onClick={() => setOpen((current) => !current)}

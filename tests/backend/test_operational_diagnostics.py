@@ -868,23 +868,27 @@ def test_installer_silently_skips_codegraph_when_cli_is_unavailable(
     assert "CodeGraph" not in output
 
 
-def test_national_assembly_bootstrap_pins_upstream_revision() -> None:
-    bootstrap = (
+def test_national_assembly_bootstrap_uses_bundled_pinned_runtime() -> None:
+    runtime = (
         Path(__file__).resolve().parents[2]
         / "extensions"
         / "mcp"
         / "national-assembly"
         / "runtime"
-        / "bootstrap.py"
-    ).read_text(encoding="utf-8")
+    )
+    bootstrap = (runtime / "bootstrap.py").read_text(encoding="utf-8")
+    readme = (runtime / "README.md").read_text(encoding="utf-8")
 
-    assert 'REPO_REVISION = "f74c6b452c59d87e2fa7265fd985b90e4057a8ef"' in bootstrap
-    assert 'Path(".cache") / "mcp" / "assembly-api-mcp"' in bootstrap
-    assert '["git", "clone", "--depth", "1", REPO_URL' in bootstrap
-    assert '["git", "checkout", "--detach", REPO_REVISION]' in bootstrap
-    assert 'install_only = "--install-only" in sys.argv[1:]' in bootstrap
+    assert 'BUNDLED_INDEX = Path(__file__).with_name("index.js")' in bootstrap
+    assert 'COMPATIBILITY_PATCH = Path(__file__).with_name(' in bootstrap
+    assert 'os.environ.get("NATIONAL_ASSEMBLY_MCP_DIR"' in bootstrap
+    assert 'REPO_URL =' not in bootstrap
+    assert 'git", "clone"' not in bootstrap
+    assert (runtime / "index.js").is_file()
+    assert (runtime / "UPSTREAM_LICENSE.txt").is_file()
+    assert "f74c6b452c59d87e2fa7265fd985b90e4057a8ef" in readme
 
     installer = (
         Path(__file__).resolve().parents[2] / "devtools" / "install_lumina.ps1"
     ).read_text(encoding="utf-8")
-    assert 'Assert-Command "git"' in installer
+    assert "National Assembly MCP server" not in installer

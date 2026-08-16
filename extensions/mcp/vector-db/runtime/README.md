@@ -28,7 +28,7 @@ document_name: 조직업무문서 A
 
 ## 2. Build Or Update The DB
 
-Run from the MyHarness repo root:
+Run from the Lumina repository root:
 
 ```powershell
 python extensions/mcp/vector-db/runtime/ingest.py index
@@ -60,7 +60,7 @@ python extensions/mcp/vector-db/runtime/ingest.py search "브랜드팀" --org-un
 python extensions/mcp/vector-db/runtime/ingest.py explore-org "마케팅본부" --document-name "조직업무문서 A" --depth 3
 ```
 
-## 4. MyHarness MCP Usage
+## 4. Lumina MCP Usage
 
 The MCP config is registered in:
 
@@ -68,7 +68,7 @@ The MCP config is registered in:
 extensions/mcp/vector-db/mcp.json
 ```
 
-In MyHarness, select the wrapped MCP skill:
+In Lumina, select the wrapped MCP skill:
 
 ```text
 $mcp:vector-db-rag 마케팅본부 산하 업무 정리해줘

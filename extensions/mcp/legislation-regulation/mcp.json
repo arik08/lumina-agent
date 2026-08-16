@@ -1,0 +1,184 @@
+{
+  "mcpServers": {
+    "legislation-regulation": {
+      "type": "stdio",
+      "description": "미국·EU·영국의 법안, 입법절차, 행정규정, 법령 메타데이터를 공식 구조화 API로 조회합니다.",
+      "command": "python",
+      "args": [
+        "runtime/server.py"
+      ],
+      "cwd": ".",
+      "auto_connect": false,
+      "tools": [
+        {
+          "name": "search_catalog",
+          "description": "Describe supported record types or list a small source-native catalog.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "query": {
+                "default": "",
+                "title": "Query",
+                "type": "string"
+              },
+              "limit": {
+                "default": 20,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "source"
+            ],
+            "title": "search_catalogArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "search_records",
+          "description": "Search official legislative or regulatory records using source-native filters.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "query": {
+                "default": "",
+                "title": "Query",
+                "type": "string"
+              },
+              "limit": {
+                "default": 20,
+                "title": "Limit",
+                "type": "integer"
+              },
+              "congress": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Congress"
+              },
+              "bill_type": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Bill Type"
+              },
+              "start_date": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Start Date"
+              },
+              "end_date": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "End Date"
+              }
+            },
+            "required": [
+              "source"
+            ],
+            "title": "search_recordsArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_record",
+          "description": "Get one record plus optional actions, events, stages, or publications.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "record_id": {
+                "title": "Record Id",
+                "type": "string"
+              },
+              "record_type": {
+                "default": "detail",
+                "title": "Record Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source",
+              "record_id"
+            ],
+            "title": "get_recordArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_document_link",
+          "description": "Return an official HTML viewer link; never download or OCR PDFs.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "record_id": {
+                "title": "Record Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source",
+              "record_id"
+            ],
+            "title": "get_document_linkArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_source_health",
+          "description": "Perform a lightweight official endpoint check and report credential presence safely.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source"
+            ],
+            "title": "get_source_healthArguments",
+            "type": "object"
+          }
+        }
+      ]
+    }
+  }
+}

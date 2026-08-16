@@ -1,0 +1,211 @@
+{
+  "mcpServers": {
+    "company-disclosure": {
+      "type": "stdio",
+      "description": "OpenDART, SEC EDGAR, Companies House의 기업·공시·구조화 재무 데이터를 조회합니다.",
+      "command": "python",
+      "args": [
+        "runtime/server.py"
+      ],
+      "cwd": ".",
+      "auto_connect": false,
+      "tools": [
+        {
+          "name": "search_catalog",
+          "description": "Search company identifiers before requesting filings or financial data.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "query": {
+                "title": "Query",
+                "type": "string"
+              },
+              "limit": {
+                "default": 20,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "source",
+              "query"
+            ],
+            "title": "search_catalogArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "search_records",
+          "description": "Search disclosure records; identifier means corp code, CIK, or company number by source.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "query": {
+                "default": "",
+                "title": "Query",
+                "type": "string"
+              },
+              "identifier": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Identifier"
+              },
+              "start_date": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Start Date"
+              },
+              "end_date": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "End Date"
+              },
+              "limit": {
+                "default": 50,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "source"
+            ],
+            "title": "search_recordsArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_record",
+          "description": "Get one company profile, filing collection, or structured financial statement.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "record_id": {
+                "title": "Record Id",
+                "type": "string"
+              },
+              "record_type": {
+                "default": "company",
+                "title": "Record Type",
+                "type": "string"
+              },
+              "business_year": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Business Year"
+              },
+              "report_code": {
+                "default": "11011",
+                "title": "Report Code",
+                "type": "string"
+              },
+              "financial_statement": {
+                "default": "CFS",
+                "title": "Financial Statement",
+                "type": "string"
+              },
+              "limit": {
+                "default": 1000,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "source",
+              "record_id"
+            ],
+            "title": "get_recordArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_document_link",
+          "description": "Return an official viewer or registry link without downloading PDF documents.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "record_id": {
+                "title": "Record Id",
+                "type": "string"
+              },
+              "auxiliary_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Auxiliary Id"
+              }
+            },
+            "required": [
+              "source",
+              "record_id"
+            ],
+            "title": "get_document_linkArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_source_health",
+          "description": "Perform a lightweight official endpoint check and report credential presence safely.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source"
+            ],
+            "title": "get_source_healthArguments",
+            "type": "object"
+          }
+        }
+      ]
+    }
+  }
+}

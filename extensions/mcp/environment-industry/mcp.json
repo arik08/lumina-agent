@@ -1,0 +1,149 @@
+{
+  "mcpServers": {
+    "environment-industry": {
+      "type": "stdio",
+      "description": "Eurostat PRODCOM 산업생산, EPA ECHO 환경준수, USDA ERS 농업경영 데이터를 조회합니다.",
+      "command": "python",
+      "args": [
+        "runtime/server.py"
+      ],
+      "cwd": ".",
+      "auto_connect": false,
+      "tools": [
+        {
+          "name": "search_catalog",
+          "description": "Search product/variable catalogs or return supported official dataset identifiers.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "query": {
+                "default": "",
+                "title": "Query",
+                "type": "string"
+              },
+              "limit": {
+                "default": 50,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "source"
+            ],
+            "title": "search_catalogArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "query_industry",
+          "description": "Query filtered PRODCOM JSON-stat or USDA ERS ARMS survey data.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "dataset": {
+                "default": "DS-059358",
+                "title": "Dataset",
+                "type": "string"
+              },
+              "filters_json": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Filters Json"
+              },
+              "limit": {
+                "default": 100,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "source"
+            ],
+            "title": "query_industryArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "search_facilities",
+          "description": "Search EPA-regulated facilities and return compliance/enforcement summary fields.",
+          "inputSchema": {
+            "properties": {
+              "facility_name": {
+                "title": "Facility Name",
+                "type": "string"
+              },
+              "state": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "State"
+              },
+              "registry_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Registry Id"
+              },
+              "limit": {
+                "default": 20,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "facility_name"
+            ],
+            "title": "search_facilitiesArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_source_health",
+          "description": "Perform a lightweight official endpoint check and safely report credential needs.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source"
+            ],
+            "title": "get_source_healthArguments",
+            "type": "object"
+          }
+        }
+      ]
+    }
+  }
+}

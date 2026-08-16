@@ -15,7 +15,6 @@ from mcp.server.fastmcp import FastMCP
 
 
 DEFAULT_API_HOST = "api.eia.gov/v2"
-DEFAULT_API_KEY = "DEMO_KEY"
 MAX_ROWS = 5000
 MAX_REQUEST_ATTEMPTS = 3
 TRANSIENT_STATUS_CODES = {408, 429, 500, 502, 503, 504}
@@ -35,22 +34,18 @@ server = FastMCP("eia")
 
 def _httpx_verify_argument() -> bool | ssl.SSLContext:
     """Return the SSL verification config for EIA requests."""
+    bundle = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
+    if not bundle:
+        return True
+    context = ssl.create_default_context()
     try:
-        from myharness.utils.certificates import httpx_verify_argument
-    except ImportError:
-        bundle = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
-        if not bundle:
-            return True
-        context = ssl.create_default_context()
-        try:
-            context.set_ciphers("DEFAULT@SECLEVEL=1")
-        except ssl.SSLError:
-            pass
-        if hasattr(ssl, "VERIFY_X509_STRICT"):
-            context.verify_flags &= ~ssl.VERIFY_X509_STRICT
-        context.load_verify_locations(cafile=bundle)
-        return context
-    return httpx_verify_argument()
+        context.set_ciphers("DEFAULT@SECLEVEL=1")
+    except ssl.SSLError:
+        pass
+    if hasattr(ssl, "VERIFY_X509_STRICT"):
+        context.verify_flags &= ~ssl.VERIFY_X509_STRICT
+    context.load_verify_locations(cafile=bundle)
+    return context
 
 
 def _env_value(*names: str) -> str | None:
@@ -62,7 +57,10 @@ def _env_value(*names: str) -> str | None:
 
 
 def _api_key() -> str:
-    return _env_value("EIA_API_KEY") or DEFAULT_API_KEY
+    key = _env_value("EIA_API_KEY")
+    if not key:
+        raise ValueError("EIA_API_KEY is required for the EIA MCP.")
+    return key
 
 
 def _api_base_url() -> str:
@@ -106,7 +104,7 @@ def _request_json(path: str, params: dict[str, Any] | None = None) -> object:
                 params=query,
                 timeout=45,
                 verify=_httpx_verify_argument(),
-                headers={"Accept": "application/json", "User-Agent": "MyHarness EIA MCP/0.1"},
+                headers={"Accept": "application/json", "User-Agent": "Lumina EIA MCP/0.1"},
                 follow_redirects=True,
             )
             if (
@@ -227,7 +225,7 @@ def overview() -> str:
             "tools": ["get_series", "get_energy_price", "list_price_series", "check_connection"],
             "price_series": ENERGY_PRICE_SERIES,
             "company_network_notes": [
-                "Corporate SSL bundles are passed to httpx through MyHarness certificate support.",
+                "Corporate SSL bundles are passed to httpx through Lumina certificate support.",
                 "Set EIA_API_PROTOCOL=http or EIA_API_BASE_URL if company HTTPS inspection requires it.",
             ],
         }

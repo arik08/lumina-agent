@@ -136,6 +136,16 @@ def test_file_output_mode_is_a_preference_until_artifact_intent_is_explicit() ->
     assert executor_module._ARTIFACT_CREATION_REQUEST.search(
         "이번 분석을 보고서 파일로 만들어 줘"
     )
+    assert executor_module._ARTIFACT_CREATION_REQUEST.search("보고서 좀 써줘")
+    assert executor_module._report_artifact_requested("보고서로 정리해줘") is True
+    assert executor_module._report_artifact_requested("이 보고서 요약해줘") is False
+    assert (
+        executor_module._report_artifact_requested_for_snapshot(
+            {"deep_analysis": {"node_type": "scope"}},
+            "현재 Node는 report가 아니므로 Markdown 보고서를 작성하십시오.",
+        )
+        is False
+    )
 
 
 def test_prompt_cache_key_tracks_static_prefix_not_dynamic_messages() -> None:
@@ -1463,7 +1473,7 @@ def test_file_mode_is_a_general_delivery_preference_not_a_file_command(
         )
 
 
-def test_chat_mode_never_exposes_or_executes_artifact_tools(
+def test_chat_mode_never_exposes_or_executes_artifact_tools_for_non_report_request(
     monkeypatch, tmp_path: Path
 ) -> None:
     settings = Settings(
@@ -1505,7 +1515,7 @@ def test_chat_mode_never_exposes_or_executes_artifact_tools(
                 )
             )
         return RecordingProvider(
-            text_chunks=("주간 업무 보고서 내용을 채팅 응답으로 작성했습니다.",)
+            text_chunks=("주간 업무 내용을 채팅 응답으로 설명했습니다.",)
         )
 
     monkeypatch.setattr(local_run_executor, "_provider", provider)
@@ -1525,7 +1535,7 @@ def test_chat_mode_never_exposes_or_executes_artifact_tools(
             },
             json={
                 "message": {
-                    "text": "이번 주 업무 보고서 써줘",
+                    "text": "이번 주 업무를 채팅으로 설명해줘",
                     "outputMode": "chat",
                 }
             },
@@ -1554,6 +1564,99 @@ def test_chat_mode_never_exposes_or_executes_artifact_tools(
     )
     assert "Output mode: Chat." in system_text
     assert "Never call `create_report` or `write_file`" in system_text
+
+
+def test_chat_mode_report_request_creates_html_artifact(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'chat-report-output.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    requests = []
+    provider_turn = 0
+
+    class RecordingProvider(MockProvider):
+        async def stream(self, request):
+            requests.append(request)
+            async for event in super().stream(request):
+                yield event
+
+    def provider(
+        _provider_id: str, *, wants_artifact: bool, first_turn: bool
+    ) -> MockProvider:
+        nonlocal provider_turn
+        del first_turn
+        assert wants_artifact is True
+        provider_turn += 1
+        if provider_turn == 1:
+            return RecordingProvider(
+                tool_call=MockToolCall(
+                    name="create_report",
+                    arguments={
+                        "format": "html",
+                        "title": "주간 업무 보고서",
+                        "html_source": (
+                            "<!doctype html><html lang='ko'><head>"
+                            "<meta charset='utf-8'><title>주간 업무 보고서</title>"
+                            "</head><body><main><h1>주간 업무 보고서</h1>"
+                            "<p>재사용 가능한 Artifact로 저장했습니다.</p>"
+                            "</main></body></html>"
+                        ),
+                    },
+                    call_id="call_chat_report_artifact",
+                )
+            )
+        return RecordingProvider(text_chunks=("보고서를 Artifact로 만들었습니다.",))
+
+    monkeypatch.setattr(local_run_executor, "_provider", provider)
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "채팅 모드 보고서"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "chat-report-output-0001",
+            },
+            json={
+                "message": {
+                    "text": "이번 주 업무 보고서 좀 써줘",
+                    "outputMode": "chat",
+                }
+            },
+        )
+        assert started.status_code == 202, started.text
+        snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
+
+    assert snapshot["status"] == "completed"
+    assert provider_turn == 2
+    assert [tool["toolName"] for tool in snapshot["toolExecutions"]] == [
+        "create_report"
+    ]
+    assert len(snapshot["artifacts"]) == 1
+    first_tool_names = {
+        schema["function"]["name"]
+        for schema in requests[0].tools
+        if isinstance(schema.get("function"), dict)
+    }
+    assert {"create_report", "write_file"} <= first_tool_names
+    system_text = "\n".join(
+        str(message.content)
+        for message in requests[0].messages
+        if message.role == "system"
+    )
+    assert "report-delivery rule takes precedence" in system_text
+    assert "Never put the HTML source in visible chat text" in system_text
 
 
 def test_final_answer_captures_memory_inline_without_a_second_model_call(

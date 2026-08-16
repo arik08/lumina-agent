@@ -1,0 +1,126 @@
+{
+  "mcpServers": {
+    "development-finance": {
+      "type": "stdio",
+      "description": "ADB KIDB 공식 SDMX 지표를 조회하고 기존 World Bank MCP와 개발금융 데이터 라우팅을 제공합니다.",
+      "command": "python",
+      "args": [
+        "runtime/server.py"
+      ],
+      "cwd": ".",
+      "auto_connect": false,
+      "tools": [
+        {
+          "name": "search_catalog",
+          "description": "List ADB KIDB indicators within an official dataflow.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "dataflow": {
+                "title": "Dataflow",
+                "type": "string"
+              },
+              "query": {
+                "default": "",
+                "title": "Query",
+                "type": "string"
+              },
+              "limit": {
+                "default": 100,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "source",
+              "dataflow"
+            ],
+            "title": "search_catalogArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "query_series",
+          "description": "Query annual ADB indicators; indicators/economies are plus-separated official codes.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "dataflow": {
+                "title": "Dataflow",
+                "type": "string"
+              },
+              "indicators": {
+                "title": "Indicators",
+                "type": "string"
+              },
+              "economies": {
+                "title": "Economies",
+                "type": "string"
+              },
+              "start_period": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Start Period"
+              },
+              "end_period": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "End Period"
+              },
+              "limit": {
+                "default": 1000,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "source",
+              "dataflow",
+              "indicators",
+              "economies"
+            ],
+            "title": "query_seriesArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_source_health",
+          "description": "Perform a small no-key query against the official ADB KIDB API.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source"
+            ],
+            "title": "get_source_healthArguments",
+            "type": "object"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -12,7 +12,7 @@ test("file mode warning follows the LLM JSON decision through a body-level speec
   assert.match(app, /workspace\.settings\?\.outputMode === "file"/);
   assert.match(app, /&& !composerHasText/);
   assert.match(app, /activeRun\?\.outputIntent\?\.fileCreationRequested === false/);
-  assert.doesNotMatch(app, /explicitArtifactRequestPattern|setTimeout\(syncVisibility,\s*420\)/);
+  assert.doesNotMatch(app, /setTimeout\(syncVisibility,\s*420\)/);
   assert.match(app, /<GlobalTooltipLayer[\s\S]*className="file-mode-nudge-layer"/);
   assert.match(app, /controlRef=\{fileModeButtonRef\}/);
   assert.match(app, /ref=\{triggerRef\}/);
@@ -26,6 +26,17 @@ test("file mode emphasis does not alter composer layout and respects reduced mot
   assert.match(styles, /\.artifact-length-trigger\.is-file-mode-nudged\s*\{[^}]*box-shadow:/);
   assert.doesNotMatch(styles, /\.artifact-length-trigger\.is-file-mode-nudged\s*\{[^}]*(?:width|height|margin|padding):/);
   assert.match(styles, /prefers-reduced-motion:\s*reduce[^}]*is-file-mode-nudged[^}]*animation:\s*none/s);
+});
+
+test("chat mode warns before a report request is sent", () => {
+  assert.match(app, /reportArtifactRequestPattern/);
+  assert.match(app, /composerHasReportRequest/);
+  assert.match(app, /workspace\.settings\?\.outputMode === "chat"[\s\S]*composerHasReportRequest/);
+  assert.match(app, /attentionDescriptionId=\{outputModeNudgeId\}/);
+  assert.match(app, /id=\{outputModeNudgeId\}/);
+  const chatWarning = app.match(/shouldNudgeChatReportMode \? \(([\s\S]*?)\) :/)?.[1] ?? "";
+  assert.match(chatWarning, /채팅 모드에서 보고서를 요청하셨어요/);
+  assert.doesNotMatch(chatWarning, /HTML Artifact로 생성됩니다/);
 });
 
 test("file mode returns to auto only after a message is accepted", () => {

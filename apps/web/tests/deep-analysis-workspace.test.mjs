@@ -199,17 +199,18 @@ test("Workflow fitting keeps Nodes below the fixed canvas controls", async () =>
   assert.match(view, /y: contentTop \+ Math\.max\(0, \(availableHeight - contentHeight \* fittedScale\) \/ 2\) - minY \* fittedScale/);
 });
 
-test("Workflow Canvas keeps the Mission root visible without connecting isolated Nodes", async () => {
+test("Workflow Canvas connects Mission only to the first workflow start Node", async () => {
   const view = await readFile(viewPath, "utf8");
 
   assert.match(view, /const workflowMissionRootPosition = \{ positionX: 272, positionY: 88 \} as const/);
+  assert.match(view, /function workflowMissionStartNode\(nodes: readonly DeepAnalysisWorkflowNode\[\]\)/);
+  assert.match(view, /left\.sequence - right\.sequence/);
   assert.match(view, /const workflowMissionRoot = useMemo/);
   assert.match(view, /if \(!shownWorkflow\) return null/);
-  assert.match(view, /const connectedNodeKeys = new Set\([\s\S]*?\.flatMap\(\(edge\) => \[edge\.sourceNodeKey, edge\.targetNodeKey\]\)/);
-  assert.match(view, /connectedNodeKeys\.has\(node\.nodeKey\) && !targetNodeKeys\.has\(node\.nodeKey\)/);
-  assert.match(view, /return \{ connectedNodes, position: workflowMissionRootPosition \}/);
-  assert.doesNotMatch(view, /const positionedNodes = connectedNodes\.length \? connectedNodes : nodes/);
-  assert.match(view, /workflowMissionRoot\?\.connectedNodes\.map/);
+  assert.match(view, /startNode: workflowMissionStartNode\(shownWorkflow\.nodes\)/);
+  assert.match(view, /workflowMissionRoot\?\.startNode &&/);
+  assert.match(view, /className="deep-analysis-edge deep-analysis-mission-edge"/);
+  assert.doesNotMatch(view, /workflowMissionRoot\?\.connectedNodes\.map/);
   assert.match(view, /className=\{`deep-analysis-goal-node deep-analysis-mission-root-node/);
   assert.match(view, /mission\.startMode === "manual" \? "직접 구성" : "AI 자동 설계"/);
   assert.match(view, /fitNodesToViewport\(\[[\s\S]*?workflowMissionRoot\.position[\s\S]*?shownWorkflow\?\.nodes/);
@@ -237,16 +238,31 @@ test("newly added isolated Nodes keep their position and do not affect connected
 
 test("Node auto-arrange explicitly lays out isolated Nodes without creating Edges", async () => {
   const view = await readFile(viewPath, "utf8");
+  const layout = await readFile(layoutPath, "utf8");
   const autoArrangeWorkflow = view.slice(
     view.indexOf("async function autoArrangeWorkflow()"),
     view.indexOf("async function regenerateWorkflow("),
   );
 
   assert.match(view, /function arrangeWorkflowTopDown\([\s\S]*?includeIsolatedNodes = false/);
-  assert.match(view, /const arranged = arrangeWorkflowTopDown\(draft, true\)/);
+  assert.match(layout, /function orientWorkflowSequenceEdges\(workflow: DeepAnalysisWorkflowRevision\)/);
+  assert.match(layout, /if \(edge\.edgeType === "loop_back"\) return \[edge\]/);
+  assert.match(layout, /workflowSequenceEdgeEndpoints\(source, target\)/);
+  assert.match(layout, /if \(sequencePairs\.has\(pairKey\)\) return \[\]/);
+  assert.match(view, /const arranged = arrangeWorkflowTopDown\(orientWorkflowSequenceEdges\(draft\), true\)/);
   assert.match(view, /fitNodesToViewport\(\[workflowMissionRootPosition, \.\.\.arranged\.nodes\]\)/);
   assert.match(view, /const workflowLayerTop = workflowMissionRootPosition\.positionY \+ workflowNodeHeight \+ workflowLayerGap/);
   assert.match(view, /positionX: workflowMissionRootPosition\.positionX \+ \(workflowNodeWidth - layerWidth\) \/ 2/);
+  assert.match(view, /const incoming = new Map<string, string\[\]>\(\)/);
+  assert.match(view, /const orderedLayers = new Map<number, DeepAnalysisWorkflowNode\[\]>\(/);
+  assert.match(view, /const layerPositions = new Map<string, number>\(\)/);
+  assert.match(view, /const layerCenter = \(nodes\.length - 1\) \/ 2/);
+  assert.match(view, /\(index - layerCenter\) \* horizontalGap/);
+  assert.match(view, /const reorderLayer = \(/);
+  assert.match(view, /reorderLayer\(nodes, incoming\)/);
+  assert.match(view, /reorderLayer\(nodes, outgoing\)/);
+  assert.match(view, /for \(let pass = 0; pass < 4; pass \+= 1\)/);
+  assert.match(view, /const layer = orderedLayers\.get\(nodeDepth\) \?\? \[node\]/);
   assert.doesNotMatch(autoArrangeWorkflow, /edges:\s*\[/);
 });
 
@@ -404,14 +420,25 @@ test("Workflow connections keep sequence edges vertical and bounded loops latera
     readFile(viewPath, "utf8"),
     readFile(cssPath, "utf8"),
   ]);
+  const layout = await readFile(layoutPath, "utf8");
 
   assert.match(view, /const workflowPortSides = \["north", "east", "south", "west"\] as const/);
+  assert.match(view, /function workflowConnectionType\([\s\S]*?if \(sourceIsLateral && targetIsLateral\) return "loop_back"/);
+  assert.match(view, /if \(!sourceIsLateral && !targetIsLateral\) return "sequence"/);
+  assert.match(view, /const edgeType = workflowConnectionType\(connectionDraft\.sourceSide, targetSide\)/);
+  assert.match(layout, /const sourceComesFirst = source\.sequence !== target\.sequence/);
+  assert.match(view, /edgeType,\n\s+\},/);
+  assert.match(view, /const workflowConnectionHitRadius = 52/);
+  assert.match(view, /function workflowConnectionTargetAtPoint/);
+  assert.match(view, /workflowConnectionTargetAtPoint\(workflowDraft, point/);
+  assert.doesNotMatch(view, /elementFromPoint\(event\.clientX/);
   assert.match(view, /edge\.edgeType === "loop_back"/);
   assert.match(view, /!\["validation", "data_check"\]\.includes\(source\.nodeType\)/);
   assert.match(view, /const reachable = new Set\(\[targetNodeKey\]\)[\s\S]*?!reachable\.has\(sourceNodeKey\)/);
-  assert.match(view, /edgeType: isLoop \? "loop_back" : "sequence"/);
+  assert.match(view, /setError\("일반 흐름은 위·아래 포트끼리, Feedback은 좌·우 포트끼리 연결해 주세요\."\)/);
   assert.match(view, />Loop<\/text>/);
   assert.match(css, /path\.deep-analysis-edge\.is-loop-back/);
+  assert.match(css, /\.deep-analysis-connection-port \{[^}]*width: 40px; height: 40px/);
   assert.match(css, /\.deep-analysis-connection-port\.port-east/);
   assert.match(css, /\.deep-analysis-connection-port\.port-west/);
 });

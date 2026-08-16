@@ -2065,22 +2065,30 @@ class LocalRunExecutor:
             run.snapshot_json.get("user_memories")
             or run.snapshot_json.get("project_memories")
         )
+        report_artifact_request = _report_artifact_requested_for_snapshot(
+            run.snapshot_json, user_message
+        )
         artifact_required = (
             retry_step_key != "final"
-            and output_mode == "auto"
             and (
-                bool(_ARTIFACT_CREATION_REQUEST.search(user_message))
+                report_artifact_request
                 or (
-                    recent_artifact_count > 0
-                    and _artifact_delivery_skill_selected(run.snapshot_json)
+                    output_mode == "auto"
+                    and (
+                        bool(_ARTIFACT_CREATION_REQUEST.search(user_message))
+                        or (
+                            recent_artifact_count > 0
+                            and _artifact_delivery_skill_selected(run.snapshot_json)
+                        )
+                    )
                 )
             )
         )
-        artifact_tools_available = (
-            retry_step_key != "final"
-            and output_mode != "chat"
-            and (
-                output_mode == "file" or artifact_required or recent_artifact_count > 0
+        artifact_tools_available = retry_step_key != "final" and (
+            artifact_required
+            or (
+                output_mode != "chat"
+                and (output_mode == "file" or recent_artifact_count > 0)
             )
         )
         artifact_management_available = recent_artifact_count > 0 or any(
@@ -2495,12 +2503,15 @@ class LocalRunExecutor:
                                 ),
                                 "artifact_progress": None,
                             }
-                            if output_mode == "chat" and tool_calls[call_id][
-                                "name"
-                            ] in {
-                                "create_report",
-                                "write_file",
-                            }:
+                            if (
+                                output_mode == "chat"
+                                and not artifact_required
+                                and tool_calls[call_id]["name"]
+                                in {
+                                    "create_report",
+                                    "write_file",
+                                }
+                            ):
                                 tool_calls[call_id]["blocked_error"] = (
                                     "chat_mode_file_creation_forbidden"
                                 )
@@ -3122,7 +3133,7 @@ class LocalRunExecutor:
                 resolve_bridge_call(call, mcp_tools_by_name, deferred_tool_names)
                 for call in calls
             ]
-            if output_mode == "chat":
+            if output_mode == "chat" and not artifact_required:
                 for call in calls:
                     if call["name"] in {"create_report", "write_file"}:
                         call["blocked_error"] = "chat_mode_file_creation_forbidden"
@@ -5066,7 +5077,13 @@ class LocalRunExecutor:
         )
         output_mode = metadata.get("output_mode", "auto")
         if output_mode == "chat":
-            content = "[Output mode for this request: chat response]\n" + content
+            content = (
+                "[Output mode for this request: create a report Artifact]\n"
+                if _report_artifact_requested_for_snapshot(
+                    run.snapshot_json, message.canonical_text
+                )
+                else "[Output mode for this request: chat response]\n"
+            ) + content
         elif output_mode == "file":
             content = (
                 "[Output mode for this request: create an artifact file]\n" + content
@@ -5396,12 +5413,26 @@ class LocalRunExecutor:
         output_mode = _normalized_output_mode(
             run.snapshot_json.get("output_mode", "auto")
         )
-        if output_mode == "chat":
+        report_artifact_request = _report_artifact_requested_for_snapshot(
+            run.snapshot_json, user_message
+        )
+        if output_mode == "chat" and report_artifact_request:
+            stable_system_parts.append(
+                "Output mode: Chat was selected, but this message explicitly requests a "
+                "report. The report-delivery rule takes precedence: create the report as a "
+                "managed Artifact with `create_report`, using `format=\"html\"` when no "
+                "file format is specified. Never put the HTML source in visible chat text or "
+                "a fenced code block; send the complete document through the `html_source` "
+                "argument instead. Keep the final chat response concise and refer to the "
+                "created report by its display name."
+            )
+        elif output_mode == "chat":
             stable_system_parts.append(
                 "Output mode: Chat. Return the complete final result directly in the chat "
                 "response. Never call `create_report` or `write_file`, and never create or "
-                "save an Artifact or file, even when the user explicitly asks for a report, "
-                "document, or file. The selected Chat mode is an absolute delivery constraint."
+                "save an Artifact or file for an ordinary chat request. The selected Chat "
+                "mode remains an absolute delivery constraint unless the message explicitly "
+                "requests a report."
             )
         elif output_mode == "file":
             stable_system_parts.append(
@@ -5544,7 +5575,9 @@ class LocalRunExecutor:
             and schema["function"].get("name") == "create_report"
             for schema in tool_schemas
         )
-        artifact_required = bool(_ARTIFACT_CREATION_REQUEST.search(user_message)) or (
+        artifact_required = report_artifact_request or bool(
+            _ARTIFACT_CREATION_REQUEST.search(user_message)
+        ) or (
             artifact_tool_available
             and _artifact_delivery_skill_selected(run.snapshot_json)
         )
@@ -10567,10 +10600,31 @@ def _normalized_output_mode(requested_mode: object) -> str:
 
 _ARTIFACT_CREATION_REQUEST = re.compile(
     r"(?i)(?:(?:보고서|report|html|artifact|문서|markdown|\.md|\.py|파일).{0,24}"
-    r"(?:만들|생성|작성|저장|create|generate|write)|"
+    r"(?:만들|생성|작성|제작|쓰|써|정리|저장|내보내|create|generate|write|draft|prepare|produce|export)|"
     r"(?:create|generate|write).{0,24}"
     r"(?:보고서|report|html|artifact|document|markdown|\.md|\.py|file))"
 )
+
+_REPORT_ARTIFACT_REQUEST = re.compile(
+    r"(?:(?:보고서|리포트|report|briefing).{0,32}"
+    r"(?:만들|생성|작성|제작|쓰|써|정리|저장|내보내|create|generate|write|draft|prepare|produce|export)|"
+    r"(?:만들|생성|작성|제작|쓰|써|정리|저장|내보내|create|generate|write|draft|prepare|produce|export)"
+    r".{0,32}(?:보고서|리포트|report|briefing))",
+    re.IGNORECASE,
+)
+
+
+def _report_artifact_requested(text: str) -> bool:
+    return _REPORT_ARTIFACT_REQUEST.search(" ".join(text.split())) is not None
+
+
+def _report_artifact_requested_for_snapshot(
+    snapshot: Mapping[str, Any], text: str
+) -> bool:
+    # Deep Analysis node prompts are server-authored execution envelopes. They
+    # mention report delivery rules even for intermediate Markdown nodes, so
+    # they must not be reinterpreted as a fresh user request for an Artifact.
+    return not bool(snapshot.get("deep_analysis")) and _report_artifact_requested(text)
 
 _ARTIFACT_DELIVERY_SKILL_SLUGS = frozenset({"visual-artifact"})
 

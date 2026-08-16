@@ -11,7 +11,7 @@
       "tools": [
         {
           "name": "preview_trade_data",
-          "description": "Fetch public preview trade data without an API key. Use partner_code=\"0\" for World or \"all\" for a partner breakdown.",
+          "description": "Fetch UN Comtrade public preview trade data without requiring an API key.",
           "inputSchema": {
             "properties": {
               "reporter_code": {
@@ -88,7 +88,7 @@
         },
         {
           "name": "get_trade_data",
-          "description": "Fetch keyed trade data. Use partner_code=\"0\" for World or \"all\" for a partner breakdown. Requires UN_COMTRADE_API_KEY or COMTRADE_API_KEY.",
+          "description": "Fetch UN Comtrade data endpoint results. Requires UN_COMTRADE_API_KEY or COMTRADE_API_KEY.",
           "inputSchema": {
             "properties": {
               "reporter_code": {
@@ -160,6 +160,93 @@
               "period"
             ],
             "title": "get_trade_dataArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "latest_common_annual_trade_data",
+          "description": "Fetch the latest annual period that has rows for every requested reporter.\n\nUse this for cross-country comparisons where all reporters must share one period. The\nreturned selectedPeriod is the newest common year found, not necessarily the latest\ncalendar year.\n",
+          "inputSchema": {
+            "properties": {
+              "reporter_codes": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Reporter Codes",
+                "type": "array"
+              },
+              "cmd_code": {
+                "default": "TOTAL",
+                "title": "Cmd Code",
+                "type": "string"
+              },
+              "flow_code": {
+                "default": "M",
+                "title": "Flow Code",
+                "type": "string"
+              },
+              "partner_code": {
+                "default": "0",
+                "title": "Partner Code",
+                "type": "string"
+              },
+              "latest_year": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Latest Year"
+              },
+              "lookback_years": {
+                "default": 5,
+                "title": "Lookback Years",
+                "type": "integer"
+              },
+              "type_code": {
+                "default": "C",
+                "title": "Type Code",
+                "type": "string"
+              },
+              "classification_code": {
+                "default": "HS",
+                "title": "Classification Code",
+                "type": "string"
+              },
+              "partner2_code": {
+                "default": "0",
+                "title": "Partner2 Code",
+                "type": "string"
+              },
+              "customs_code": {
+                "default": "C00",
+                "title": "Customs Code",
+                "type": "string"
+              },
+              "mot_code": {
+                "default": "0",
+                "title": "Mot Code",
+                "type": "string"
+              },
+              "include_desc": {
+                "default": true,
+                "title": "Include Desc",
+                "type": "boolean"
+              },
+              "limit": {
+                "default": 1000,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "reporter_codes"
+            ],
+            "title": "latest_common_annual_trade_dataArguments",
             "type": "object"
           }
         },

@@ -4,6 +4,8 @@ import importlib.util
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 MCP_ROOT = REPOSITORY_ROOT / "extensions" / "mcp"
@@ -19,19 +21,21 @@ def _load_module(name: str, package: str, filename: str) -> ModuleType:
     return module
 
 
-def test_ecos_uses_public_sample_key_when_unconfigured(monkeypatch) -> None:
+def test_ecos_requires_explicit_key_when_unconfigured(monkeypatch) -> None:
     ecos = _load_module("test_ecos_server", "ecos", "server.py")
     monkeypatch.delenv("ECOS_API_KEY", raising=False)
     monkeypatch.delenv("BOK_ECOS_API_KEY", raising=False)
 
-    assert ecos._api_key() == "sample"
+    with pytest.raises(ValueError, match="ECOS_API_KEY"):
+        ecos._api_key()
 
 
-def test_eia_uses_demo_key_when_unconfigured(monkeypatch) -> None:
+def test_eia_requires_explicit_key_when_unconfigured(monkeypatch) -> None:
     eia = _load_module("test_eia_server", "eia", "server.py")
     monkeypatch.delenv("EIA_API_KEY", raising=False)
 
-    assert eia._api_key() == "DEMO_KEY"
+    with pytest.raises(ValueError, match="EIA_API_KEY"):
+        eia._api_key()
 
 
 def test_configured_api_keys_override_public_defaults(monkeypatch) -> None:
@@ -44,9 +48,9 @@ def test_configured_api_keys_override_public_defaults(monkeypatch) -> None:
     assert eia._api_key() == "configured-eia-key"
 
 
-def test_national_assembly_bootstrap_has_public_sample_fallback() -> None:
+def test_national_assembly_bootstrap_does_not_embed_api_key() -> None:
     assembly = _load_module(
         "test_national_assembly_bootstrap", "national-assembly", "bootstrap.py"
     )
 
-    assert assembly.DEFAULT_ASSEMBLY_API_KEY == "sample"
+    assert not hasattr(assembly, "DEFAULT_ASSEMBLY_API_KEY")

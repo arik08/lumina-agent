@@ -1,0 +1,7 @@
+{
+  "name": "lumina-korean-law-mcp-runtime",
+  "private": true,
+  "dependencies": {
+    "korean-law-mcp": "4.0.6"
+  }
+}

@@ -1,15 +1,16 @@
 ---
 name: worldbank
-description: World Bank의 국가별 개발지표와 국제 비교 시계열을 조회할 때 사용하는 MCP 라우팅 지침입니다.
+description: World Bank 국가·경제지표 메타데이터와 시계열을 조회하는 MCP 라우팅입니다.
 metadata:
   lumina-source: skill-mcp:worldbank
 ---
 
 # World Bank MCP
 
-GDP, 인구, 개발·빈곤·교육 등 World Bank 국가 지표는 `worldbank` MCP를 사용합니다.
+`worldbank` MCP로 국가별 개발·경제지표를 조회합니다.
 
-- 국가 코드를 모르면 `search_countries` 또는 `list_countries`, 지표 코드를 모르면 `search_indicators`를 먼저 사용합니다.
-- 정의와 출처는 `get_indicator_metadata`, 실제 시계열은 `fetch_indicator_data`로 조회합니다.
-- 국가, 지표 코드, 단위, 관측 연도와 결측 여부를 답변에 포함합니다.
-- 오류가 나면 `check_connection`으로 연결 문제와 조회 조건을 구분합니다.
+- 국가 코드는 `search_countries`, 지표 코드는 `search_indicators`로 찾습니다.
+- 지표 정의와 출처는 `get_indicator_metadata`로 확인한 뒤 `fetch_indicator_data`로 시계열을 조회합니다.
+- 여러 국가는 세미콜론으로 구분하고, 범위가 넓으면 기간과 국가를 먼저 좁힙니다.
+- 연결 오류는 `check_connection`으로 확인합니다.
+- 답변에 국가 코드, 지표 ID, 기간, 단위·출처 메타데이터를 함께 밝힙니다.

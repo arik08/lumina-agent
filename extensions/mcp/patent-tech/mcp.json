@@ -1,0 +1,138 @@
+{
+  "mcpServers": {
+    "patent-tech": {
+      "type": "stdio",
+      "description": "KIPRISPlus·EPO OPS 특허 서지와 OpenAlex·Crossref·Semantic Scholar 연구 메타데이터를 조회합니다.",
+      "command": "python",
+      "args": [
+        "runtime/server.py"
+      ],
+      "cwd": ".",
+      "auto_connect": false,
+      "tools": [
+        {
+          "name": "search_catalog",
+          "description": "Search source catalogs or return supported patent/research record types.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "query": {
+                "default": "",
+                "title": "Query",
+                "type": "string"
+              },
+              "limit": {
+                "default": 20,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "source"
+            ],
+            "title": "search_catalogArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "search_records",
+          "description": "Search patent bibliographic records or scholarly works using structured APIs.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "query": {
+                "title": "Query",
+                "type": "string"
+              },
+              "limit": {
+                "default": 20,
+                "title": "Limit",
+                "type": "integer"
+              },
+              "start_year": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Start Year"
+              },
+              "end_year": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "End Year"
+              }
+            },
+            "required": [
+              "source",
+              "query"
+            ],
+            "title": "search_recordsArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_record",
+          "description": "Get one patent bibliography/family or scholarly-work metadata record.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              },
+              "record_id": {
+                "title": "Record Id",
+                "type": "string"
+              },
+              "record_type": {
+                "default": "detail",
+                "title": "Record Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source",
+              "record_id"
+            ],
+            "title": "get_recordArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_source_health",
+          "description": "Perform a lightweight official endpoint check and safely report credential needs.",
+          "inputSchema": {
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source"
+            ],
+            "title": "get_source_healthArguments",
+            "type": "object"
+          }
+        }
+      ]
+    }
+  }
+}

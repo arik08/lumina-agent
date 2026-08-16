@@ -363,12 +363,26 @@ const workflowLayerGap = 74;
 const workflowMissionRootPosition = { positionX: 272, positionY: 88 } as const;
 const workflowLayerTop = workflowMissionRootPosition.positionY + workflowNodeHeight + workflowLayerGap;
 const workflowSiblingGap = 36;
+const workflowConnectionHitRadius = 52;
 const defaultInspectorWidth = 760;
 const minimumInspectorWidth = 420;
 const maximumInspectorWidthRatio = 0.84;
 const inspectorWidthStorageKey = "lumina:deep-analysis:inspector-width:v2";
 const workflowPortSides = ["north", "east", "south", "west"] as const;
 type WorkflowPortSide = typeof workflowPortSides[number];
+type WorkflowConnectionType = "sequence" | "loop_back";
+
+function workflowConnectionType(
+  sourceSide: WorkflowPortSide,
+  targetSide: WorkflowPortSide,
+): WorkflowConnectionType | null {
+  const sourceIsLateral = sourceSide === "east" || sourceSide === "west";
+  const targetIsLateral = targetSide === "east" || targetSide === "west";
+  if (sourceIsLateral && targetIsLateral) return "loop_back";
+  if (!sourceIsLateral && !targetIsLateral) return "sequence";
+  return null;
+}
+
 type WorkflowNodePosition = Pick<DeepAnalysisWorkflowNode, "positionX" | "positionY">;
 function statusLabel(status: string) {
   return statusLabels[status] ?? status;
@@ -421,6 +435,7 @@ function arrangeWorkflowTopDown(
 ) {
   const nodeByKey = new Map(workflow.nodes.map((node) => [node.nodeKey, node]));
   const outgoing = new Map<string, string[]>();
+  const incoming = new Map<string, string[]>();
   const incomingCount = new Map(workflow.nodes.map((node) => [node.nodeKey, 0]));
   const connectedNodeKeys = new Set<string>();
   for (const edge of workflow.edges) {
@@ -429,6 +444,7 @@ function arrangeWorkflowTopDown(
     connectedNodeKeys.add(edge.sourceNodeKey);
     connectedNodeKeys.add(edge.targetNodeKey);
     outgoing.set(edge.sourceNodeKey, [...(outgoing.get(edge.sourceNodeKey) ?? []), edge.targetNodeKey]);
+    incoming.set(edge.targetNodeKey, [...(incoming.get(edge.targetNodeKey) ?? []), edge.sourceNodeKey]);
     incomingCount.set(edge.targetNodeKey, (incomingCount.get(edge.targetNodeKey) ?? 0) + 1);
   }
   const layoutNodeKeys = includeIsolatedNodes
@@ -475,15 +491,77 @@ function arrangeWorkflowTopDown(
     const nodeDepth = depth.get(node.nodeKey) ?? 0;
     layers.set(nodeDepth, [...(layers.get(nodeDepth) ?? []), node]);
   }
-  for (const nodes of layers.values()) {
-    nodes.sort((left, right) => compareNodes(left.nodeKey, right.nodeKey));
+
+  const orderedLayers = new Map<number, DeepAnalysisWorkflowNode[]>(
+    [...layers.entries()].map(([layerDepth, nodes]) => [
+      layerDepth,
+      nodes.sort((left, right) => compareNodes(left.nodeKey, right.nodeKey)),
+    ]),
+  );
+  const layerPositions = new Map<string, number>();
+  const refreshLayerPositions = () => {
+    layerPositions.clear();
+    for (const nodes of orderedLayers.values()) {
+      const layerCenter = (nodes.length - 1) / 2;
+      const horizontalGap = workflowNodeWidth + workflowSiblingGap;
+      nodes.forEach((node, index) => layerPositions.set(
+        node.nodeKey,
+        (index - layerCenter) * horizontalGap,
+      ));
+    }
+  };
+  const reorderLayer = (
+    nodes: DeepAnalysisWorkflowNode[],
+    neighborKeys: Map<string, string[]>,
+  ) => {
+    const originalOrder = new Map(nodes.map((node, index) => [node.nodeKey, index]));
+    const score = (node: DeepAnalysisWorkflowNode) => {
+      const positions = (neighborKeys.get(node.nodeKey) ?? [])
+        .map((nodeKey) => layerPositions.get(nodeKey))
+        .filter((position): position is number => position !== undefined);
+      if (!positions.length) return null;
+      return positions.reduce((total, position) => total + position, 0) / positions.length;
+    };
+    return [...nodes].sort((left, right) => {
+      const leftScore = score(left);
+      const rightScore = score(right);
+      if (leftScore === null && rightScore === null) {
+        return originalOrder.get(left.nodeKey)! - originalOrder.get(right.nodeKey)!;
+      }
+      if (leftScore === null) return 1;
+      if (rightScore === null) return -1;
+      return leftScore - rightScore
+        || originalOrder.get(left.nodeKey)! - originalOrder.get(right.nodeKey)!;
+    });
+  };
+  const layerDepths = [...orderedLayers.keys()].sort((left, right) => left - right);
+  const firstLayerDepth = layerDepths[0] ?? 0;
+  const lastLayerDepth = layerDepths.at(-1) ?? firstLayerDepth;
+  refreshLayerPositions();
+  for (let pass = 0; pass < 4; pass += 1) {
+    for (const layerDepth of layerDepths) {
+      if (layerDepth === firstLayerDepth) continue;
+      const nodes = orderedLayers.get(layerDepth);
+      if (!nodes) continue;
+      orderedLayers.set(layerDepth, reorderLayer(nodes, incoming));
+      refreshLayerPositions();
+    }
+    for (let index = layerDepths.length - 2; index >= 0; index -= 1) {
+      const layerDepth = layerDepths[index];
+      if (layerDepth === lastLayerDepth) continue;
+      const nodes = orderedLayers.get(layerDepth);
+      if (!nodes) continue;
+      orderedLayers.set(layerDepth, reorderLayer(nodes, outgoing));
+      refreshLayerPositions();
+    }
   }
+
   return {
     ...workflow,
     nodes: workflow.nodes.map((node) => {
       if (!layoutNodeKeys.has(node.nodeKey)) return node;
       const nodeDepth = depth.get(node.nodeKey) ?? 0;
-      const layer = layers.get(nodeDepth) ?? [node];
+      const layer = orderedLayers.get(nodeDepth) ?? [node];
       const column = layer.findIndex((item) => item.nodeKey === node.nodeKey);
       const layerWidth = layer.length * workflowNodeWidth
         + Math.max(0, layer.length - 1) * workflowSiblingGap;
@@ -509,6 +587,37 @@ function workflowPortVector(side: WorkflowPortSide) {
   if (side === "east") return { x: 1, y: 0 };
   if (side === "south") return { x: 0, y: 1 };
   return { x: -1, y: 0 };
+}
+
+function workflowMissionStartNode(nodes: readonly DeepAnalysisWorkflowNode[]) {
+  return [...nodes].sort((left, right) => (
+    left.sequence - right.sequence
+    || left.positionY - right.positionY
+    || left.positionX - right.positionX
+    || left.nodeKey.localeCompare(right.nodeKey)
+  ))[0] ?? null;
+}
+
+function workflowConnectionTargetAtPoint(
+  workflow: Pick<DeepAnalysisWorkflowRevision, "nodes">,
+  point: { x: number; y: number },
+  sourceNodeKey: string,
+  sourceSide: WorkflowPortSide,
+) {
+  const targetSides: readonly WorkflowPortSide[] = ["east", "west"].includes(sourceSide)
+    ? ["east", "west"]
+    : ["north", "south"];
+  let closest: { nodeKey: string; side: WorkflowPortSide; distance: number } | null = null;
+  for (const node of workflow.nodes) {
+    if (node.nodeKey === sourceNodeKey) continue;
+    for (const side of targetSides) {
+      const port = workflowPortPoint(node, side);
+      const distance = Math.hypot(point.x - port.x, point.y - port.y);
+      if (distance > workflowConnectionHitRadius || (closest && distance >= closest.distance)) continue;
+      closest = { nodeKey: node.nodeKey, side, distance };
+    }
+  }
+  return closest;
 }
 
 function workflowEdgeSides(
@@ -806,6 +915,7 @@ export function DeepAnalysisView({
   const connectionDragRef = useRef<{
     pointerId: number;
     sourceNodeKey: string;
+    sourceSide: WorkflowPortSide;
     clientX: number;
     clientY: number;
     moved: boolean;
@@ -1231,17 +1341,11 @@ export function DeepAnalysisView({
     [shownWorkflow?.nodes],
   );
   const workflowMissionRoot = useMemo(() => {
-    const nodes = shownWorkflow?.nodes ?? [];
     if (!shownWorkflow) return null;
-    const dependencyEdges = shownWorkflow.edges.filter((edge) => edge.edgeType !== "loop_back");
-    const connectedNodeKeys = new Set(
-      dependencyEdges.flatMap((edge) => [edge.sourceNodeKey, edge.targetNodeKey]),
-    );
-    const targetNodeKeys = new Set(dependencyEdges.map((edge) => edge.targetNodeKey));
-    const connectedNodes = nodes.filter(
-      (node) => connectedNodeKeys.has(node.nodeKey) && !targetNodeKeys.has(node.nodeKey),
-    );
-    return { connectedNodes, position: workflowMissionRootPosition };
+    return {
+      position: workflowMissionRootPosition,
+      startNode: workflowMissionStartNode(shownWorkflow.nodes),
+    };
   }, [shownWorkflow]);
   const workflowCanvasSize = useMemo(() => ({
     width: Math.max(
@@ -1814,15 +1918,14 @@ export function DeepAnalysisView({
     const source = workflowDraft.nodes.find((node) => node.nodeKey === sourceNodeKey);
     const target = workflowDraft.nodes.find((node) => node.nodeKey === targetNodeKey);
     if (!source || !target) return;
-    const lateralSides = new Set<WorkflowPortSide>(["east", "west"]);
-    const isLoop = lateralSides.has(connectionDraft.sourceSide) && lateralSides.has(targetSide);
-    const isSequence = !lateralSides.has(connectionDraft.sourceSide) && !lateralSides.has(targetSide);
-    if (!isLoop && !isSequence) {
-      setError("일반 연결은 위·아래 포트끼리, Loop는 좌·우 포트끼리 연결해 주세요.");
+    const edgeType = workflowConnectionType(connectionDraft.sourceSide, targetSide);
+    if (!edgeType) {
+      setError("일반 흐름은 위·아래 포트끼리, Feedback은 좌·우 포트끼리 연결해 주세요.");
       setConnectionDraft(null);
       connectionDragRef.current = null;
       return;
     }
+    const isLoop = edgeType === "loop_back";
     if (isLoop) {
       const outgoing = new Map<string, string[]>();
       for (const edge of workflowDraft.edges) {
@@ -1875,7 +1978,7 @@ export function DeepAnalysisView({
             id: `draft:${sourceNodeKey}:${targetNodeKey}`,
             sourceNodeKey,
             targetNodeKey,
-            edgeType: isLoop ? "loop_back" : "sequence",
+            edgeType,
           },
         ],
       });
@@ -1898,6 +2001,7 @@ export function DeepAnalysisView({
     connectionDragRef.current = {
       pointerId: event.pointerId,
       sourceNodeKey,
+      sourceSide,
       clientX: event.clientX,
       clientY: event.clientY,
       moved: false,
@@ -1917,12 +2021,11 @@ export function DeepAnalysisView({
     const drag = connectionDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     if (drag.moved) {
-      const targetElement = document
-        .elementFromPoint(event.clientX, event.clientY)
-        ?.closest<HTMLElement>("[data-connection-input]");
-      const target = targetElement?.dataset.connectionInput;
-      const targetSide = targetElement?.dataset.connectionSide as WorkflowPortSide | undefined;
-      if (target && targetSide && target !== drag.sourceNodeKey) completeConnection(target, targetSide);
+      const point = canvasPointFromClient(event.clientX, event.clientY);
+      const target = point && workflowDraft
+        ? workflowConnectionTargetAtPoint(workflowDraft, point, drag.sourceNodeKey, drag.sourceSide)
+        : null;
+      if (target) completeConnection(target.nodeKey, target.side);
       else setConnectionDraft(null);
       connectionDragRef.current = null;
     }
@@ -3128,16 +3231,12 @@ export function DeepAnalysisView({
                       }}
                     >
                       <svg className="deep-analysis-edge-layer" aria-hidden="true">
-                        {workflowMissionRoot?.connectedNodes.map((node) => {
-                          const geometry = workflowEdgeGeometry(workflowMissionRoot.position, node);
-                          return (
-                            <path
-                              key={`mission:${node.nodeKey}`}
-                              className="deep-analysis-edge deep-analysis-mission-edge"
-                              d={geometry.path}
-                            />
-                          );
-                        })}
+                        {workflowMissionRoot?.startNode && (
+                          <path
+                            className="deep-analysis-edge deep-analysis-mission-edge"
+                            d={workflowEdgeGeometry(workflowMissionRoot.position, workflowMissionRoot.startNode).path}
+                          />
+                        )}
                         {(shownWorkflow?.edges ?? []).map((edge) => {
                           const source = shownWorkflowNodeByKey.get(edge.sourceNodeKey);
                           const target = shownWorkflowNodeByKey.get(edge.targetNodeKey);

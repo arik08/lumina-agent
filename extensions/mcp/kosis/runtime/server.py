@@ -14,7 +14,6 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 
-DEFAULT_API_KEY = "NTI4ZGI4MzE5YzdlODRiYTdkZDY2MGVlMDc0ZjkxODQ="
 BASE_URL = "https://kosis.kr/openapi"
 MAX_ROWS = 500
 
@@ -25,26 +24,25 @@ server = FastMCP("kosis")
 
 def _httpx_verify_argument() -> bool | ssl.SSLContext:
     """Return the SSL verification config for KOSIS requests."""
+    bundle = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
+    if not bundle:
+        return True
+    context = ssl.create_default_context()
     try:
-        from myharness.utils.certificates import httpx_verify_argument
-    except ImportError:
-        bundle = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
-        if not bundle:
-            return True
-        context = ssl.create_default_context()
-        try:
-            context.set_ciphers("DEFAULT@SECLEVEL=1")
-        except ssl.SSLError:
-            pass
-        if hasattr(ssl, "VERIFY_X509_STRICT"):
-            context.verify_flags &= ~ssl.VERIFY_X509_STRICT
-        context.load_verify_locations(cafile=bundle)
-        return context
-    return httpx_verify_argument()
+        context.set_ciphers("DEFAULT@SECLEVEL=1")
+    except ssl.SSLError:
+        pass
+    if hasattr(ssl, "VERIFY_X509_STRICT"):
+        context.verify_flags &= ~ssl.VERIFY_X509_STRICT
+    context.load_verify_locations(cafile=bundle)
+    return context
 
 
 def _api_key() -> str:
-    return os.environ.get("KOSIS_API_KEY", DEFAULT_API_KEY)
+    key = os.environ.get("KOSIS_API_KEY", "").strip()
+    if not key:
+        raise ValueError("KOSIS_API_KEY is required for the KOSIS MCP.")
+    return key
 
 
 def _clean_limit(limit: int) -> int:
@@ -89,7 +87,7 @@ def _get(endpoint: str, params: dict[str, Any]) -> Any:
         raise RuntimeError(
             "KOSIS request failed. If this is a company network, check HTTPS proxy "
             "and corporate CA settings such as HTTPS_PROXY and SSL_CERT_FILE. "
-            "MyHarness will pass the configured corporate SSL context to httpx."
+            "Lumina will pass the configured corporate SSL context to httpx."
         ) from exc
     data = _parse_kosis_json(response.text)
     if isinstance(data, dict) and data.get("err"):

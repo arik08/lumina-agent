@@ -250,7 +250,6 @@ $NpmCommand = if ($env:OS -eq "Windows_NT") {
 else {
     (Get-Command "npm" -ErrorAction Stop | Select-Object -First 1).Source
 }
-Assert-Command "git" "Install Git from https://git-scm.com/downloads. It is required to install the National Assembly MCP server."
 Write-Host "[Lumina] Required tools are available."
 
 if ($ValidateOnly) {

@@ -41,4 +41,4 @@ metadata:
 - 국민참여입법센터 정보공개 서비스 신청 ID: `LAWMKING_OC`
 - 기본 프로필: `MCP_PROFILE=full`
 
-`installer.bat` 실행 시 upstream `hollobit/assembly-api-mcp`의 고정 revision을 `.cache/mcp/assembly-api-mcp`에 내려받아 빌드합니다. 이미 별도 위치에 빌드해 둔 경우 `NATIONAL_ASSEMBLY_MCP_DIR`로 해당 경로를 지정할 수 있습니다.
+일반 설치와 실행은 저장소에 포함된 `hollobit/assembly-api-mcp` 고정 revision bundle을 사용하므로 별도 clone이나 `npm install`이 필요하지 않습니다. 유지보수자가 별도 upstream checkout을 명시적으로 다시 빌드할 때만 `NATIONAL_ASSEMBLY_MCP_DIR`로 해당 경로를 지정할 수 있습니다.

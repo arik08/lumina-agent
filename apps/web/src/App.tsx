@@ -166,6 +166,11 @@ const artifactPaneDefaultWidth = 1200;
 const artifactSplitPaneMinViewport = 1024;
 const chatPaneMinWidth = 440;
 const modelChangeCacheWarning = "모델을 변경하면 다음 요청에서 새 모델이 기존 대화를 다시 처리하므로 추가 API 비용이 발생할 수 있습니다.";
+const reportArtifactRequestPattern = /(?:(?:보고서|리포트|report|briefing).{0,32}(?:만들|생성|작성|제작|쓰|써|정리|저장|내보내|create|generate|write|draft|prepare|produce|export)|(?:만들|생성|작성|제작|쓰|써|정리|저장|내보내|create|generate|write|draft|prepare|produce|export).{0,32}(?:보고서|리포트|report|briefing))/i;
+
+function isReportArtifactRequest(text: string) {
+  return reportArtifactRequestPattern.test(text.replace(/\s+/g, " "));
+}
 
 function clampArtifactPaneWidth(value: number, collapsed: boolean) {
   const sidebarWidth = collapsed ? 48 : 278;
@@ -953,6 +958,7 @@ function App() {
   const [sessionTitleEditing, setSessionTitleEditing] = useState(false);
   const [sessionTitleDraft, setSessionTitleDraft] = useState("");
   const [composerHasText, setComposerHasText] = useState(false);
+  const [composerHasReportRequest, setComposerHasReportRequest] = useState(false);
   const [targetOutputTokens, setTargetOutputTokens] = useState<number | null>(defaultArtifactOutputTokens);
   const [analysisDepth, setAnalysisDepth] = useState<AnalysisDepth>("auto");
   const [answerLength, setAnswerLength] = useState<AnswerLength>("auto");
@@ -1043,6 +1049,8 @@ function App() {
     if (input && input.value !== value) input.value = value;
     const nextHasText = Boolean(value.trim());
     setComposerHasText((current) => current === nextHasText ? current : nextHasText);
+    const nextHasReportRequest = isReportArtifactRequest(value);
+    setComposerHasReportRequest((current) => current === nextHasReportRequest ? current : nextHasReportRequest);
   }, []);
 
   useEffect(() => {
@@ -1912,6 +1920,11 @@ function App() {
     && workspace.settings?.outputMode === "file"
     && !composerHasText
     && activeRun?.outputIntent?.fileCreationRequested === false;
+  const shouldNudgeChatReportMode = mainView === "chat"
+    && workspace.settings?.outputMode === "chat"
+    && composerHasReportRequest;
+  const shouldNudgeOutputMode = shouldNudgeFileMode || shouldNudgeChatReportMode;
+  const outputModeNudgeId = shouldNudgeChatReportMode ? "chat-report-nudge" : "file-mode-nudge";
   const conversationFollow = useConversationAutoFollow(
     runIsActive,
     workspace.activeConversationId,
@@ -4237,19 +4250,31 @@ function App() {
                       void workspace.selectOutputMode(value);
                     }}
                     controlRef={fileModeButtonRef}
-                    attention={shouldNudgeFileMode}
+                    attention={shouldNudgeOutputMode}
+                    attentionDescriptionId={outputModeNudgeId}
                   />
                   <GlobalTooltipLayer
                     anchor={fileModeButtonRef.current}
                     className="file-mode-nudge-layer"
-                    id="file-mode-nudge"
-                    open={shouldNudgeFileMode}
+                    id={outputModeNudgeId}
+                    open={shouldNudgeOutputMode}
                   >
-                    <span className="file-mode-nudge-icon" aria-hidden="true"><FileText size={20} /></span>
-                    <span className="file-mode-nudge-copy">
-                      <strong>파일 생성 요청이 아닌 것 같아요</strong>
-                      <small>현재는 파일 모드입니다. 대화만 원하면 ‘채팅’을 선택하세요.</small>
-                    </span>
+                    {shouldNudgeChatReportMode ? (
+                      <>
+                        <span className="file-mode-nudge-icon" aria-hidden="true"><FileText size={20} /></span>
+                        <span className="file-mode-nudge-copy">
+                          <strong>채팅 모드에서 보고서를 요청하셨어요</strong>
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="file-mode-nudge-icon" aria-hidden="true"><FileText size={20} /></span>
+                        <span className="file-mode-nudge-copy">
+                          <strong>파일 생성 요청이 아닌 것 같아요</strong>
+                          <small>현재는 파일 모드입니다. 대화만 원하면 ‘채팅’을 선택하세요.</small>
+                        </span>
+                      </>
+                    )}
                   </GlobalTooltipLayer>
                 </div>
                 <div>

@@ -1,15 +1,16 @@
 ---
 name: kosis
-description: KOSIS 국가통계포털의 통계표, 국가통계 시계열과 메타데이터를 조회할 때 사용하는 MCP 라우팅 지침입니다.
+description: KOSIS 국가통계포털의 통계표·수치·메타데이터를 조회하는 MCP 라우팅입니다.
 metadata:
   lumina-source: skill-mcp:kosis
 ---
 
 # KOSIS MCP
 
-대한민국 국가승인통계와 KOSIS 통계표 조회에는 `kosis` MCP를 사용합니다.
+`kosis` MCP로 국가통계포털 데이터를 조회합니다.
 
-- 통계표를 모르면 `search_statistics` 또는 `list_statistics`로 `org_id`와 `tbl_id`를 찾습니다.
-- 실제 값은 `get_stat_data`, 항목·단위 확인은 `get_table_meta`, 통계 설명은 `explain_statistics`를 사용합니다.
-- 결과에는 통계표명, 기관, 항목, 단위, 주기와 조회 기간을 표시합니다.
-- 연결 실패가 의심되면 `check_connection`으로 분리 확인합니다.
+- 주제 탐색은 `list_statistics`, 키워드 검색은 `search_statistics`를 사용합니다.
+- `org_id`와 `tbl_id`를 확인한 뒤 `get_table_meta`로 항목·단위를 파악하고 `get_stat_data`로 수치를 조회합니다.
+- 통계 정의나 조사 방법이 필요하면 `explain_statistics`를 사용합니다.
+- 연결 문제는 `check_connection`으로 확인합니다.
+- 답변에 기관·통계표 ID, 항목, 기간, 단위와 KOSIS 출처를 명시합니다.

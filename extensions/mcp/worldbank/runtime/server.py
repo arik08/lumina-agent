@@ -28,22 +28,18 @@ server = FastMCP("worldbank")
 
 def _httpx_verify_argument() -> bool | ssl.SSLContext:
     """Return the SSL verification config for World Bank API requests."""
+    bundle = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
+    if not bundle:
+        return True
+    context = ssl.create_default_context()
     try:
-        from myharness.utils.certificates import httpx_verify_argument
-    except ImportError:
-        bundle = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
-        if not bundle:
-            return True
-        context = ssl.create_default_context()
-        try:
-            context.set_ciphers("DEFAULT@SECLEVEL=1")
-        except ssl.SSLError:
-            pass
-        if hasattr(ssl, "VERIFY_X509_STRICT"):
-            context.verify_flags &= ~ssl.VERIFY_X509_STRICT
-        context.load_verify_locations(cafile=bundle)
-        return context
-    return httpx_verify_argument()
+        context.set_ciphers("DEFAULT@SECLEVEL=1")
+    except ssl.SSLError:
+        pass
+    if hasattr(ssl, "VERIFY_X509_STRICT"):
+        context.verify_flags &= ~ssl.VERIFY_X509_STRICT
+    context.load_verify_locations(cafile=bundle)
+    return context
 
 
 def _clean_limit(limit: int) -> int:
@@ -73,7 +69,7 @@ def _request_headers() -> dict[str, str]:
     return {
         "Accept": "application/json",
         "User-Agent": _env_value("WORLD_BANK_API_USER_AGENT", "WORLDBANK_API_USER_AGENT")
-        or "MyHarness WorldBank MCP/0.1",
+        or "Lumina WorldBank MCP/0.1",
     }
 
 
@@ -130,7 +126,7 @@ def _network_failure_message(base_url: str) -> str:
     return (
         "World Bank API request failed. If this is a company network, check HTTPS proxy "
         "and corporate CA settings such as HTTPS_PROXY and SSL_CERT_FILE. "
-        "MyHarness will pass the configured corporate SSL context to httpx. "
+        "Lumina will pass the configured corporate SSL context to httpx. "
         "If HTTPS inspection blocks this endpoint, set WORLD_BANK_API_PROTOCOL=http "
         f"or WORLD_BANK_API_BASE_URL to an approved proxy. Current base URL: {base_url}"
     )

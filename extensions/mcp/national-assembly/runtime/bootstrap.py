@@ -1,4 +1,4 @@
-"""Bootstrap the upstream Korean National Assembly MCP server for Lumina."""
+"""Launch the repository-bundled Korean National Assembly MCP server."""
 
 from __future__ import annotations
 
@@ -10,10 +10,8 @@ import threading
 from pathlib import Path
 
 
-REPO_URL = "https://github.com/hollobit/assembly-api-mcp.git"
-REPO_REVISION = "f74c6b452c59d87e2fa7265fd985b90e4057a8ef"
-DEFAULT_CACHE_DIR = Path(".cache") / "mcp" / "assembly-api-mcp"
-DEFAULT_ASSEMBLY_API_KEY = "sample"
+BUNDLED_INDEX = Path(__file__).with_name("index.js")
+COMPATIBILITY_PATCH = Path(__file__).with_name("assembly-api-mcp-network-retry.patch")
 
 
 def _log(message: str) -> None:
@@ -51,99 +49,71 @@ def _run(args: list[str], cwd: Path) -> None:
     subprocess.run(_resolve_command(args), cwd=str(cwd), check=True, stdout=sys.stderr, stderr=sys.stderr)
 
 
-def _server_dir() -> Path:
-    override = os.environ.get("NATIONAL_ASSEMBLY_MCP_DIR", "").strip()
-    if override:
-        return Path(override).expanduser().resolve()
-    return (Path.cwd() / DEFAULT_CACHE_DIR).resolve()
-
-
-def _checkout_revision(server_dir: Path, *, offline: bool) -> bool:
-    current_revision = subprocess.run(
-        _resolve_command(["git", "rev-parse", "HEAD"]),
+def _patch_can_apply(server_dir: Path, *, reverse: bool = False) -> bool:
+    args = ["git", "apply"]
+    if reverse:
+        args.append("--reverse")
+    args.extend(["--check", "--ignore-space-change", str(COMPATIBILITY_PATCH)])
+    result = subprocess.run(
+        _resolve_command(args),
         cwd=str(server_dir),
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    if current_revision == REPO_REVISION:
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0
+
+
+def _apply_compatibility_patch(server_dir: Path) -> bool:
+    if _patch_can_apply(server_dir):
+        _run(["git", "apply", str(COMPATIBILITY_PATCH)], server_dir)
+        return True
+    if _patch_can_apply(server_dir, reverse=True):
         return False
-    if offline:
-        raise RuntimeError(
-            "The cached National Assembly MCP is not at the required revision "
-            f"{REPO_REVISION} and cannot be updated while offline."
-        )
-    _run(["git", "fetch", "--depth", "1", "origin", REPO_REVISION], server_dir)
-    _run(["git", "checkout", "--detach", REPO_REVISION], server_dir)
-    return True
+    raise RuntimeError(
+        "The assembly-api-mcp compatibility patch does not match this checkout. "
+        "Update the patch or unset NATIONAL_ASSEMBLY_MCP_DIR to use the bundled server."
+    )
 
 
-def _ensure_server_built(server_dir: Path, *, offline: bool = False) -> Path:
+def _ensure_override_built(server_dir: Path) -> Path:
+    """Build an explicitly requested developer checkout.
+
+    Normal Lumina runs never call this path: they use the committed bundle.
+    """
     index_js = server_dir / "dist" / "index.js"
     package_json = server_dir / "package.json"
-
-    if not server_dir.exists():
-        if offline:
-            raise RuntimeError(
-                "The National Assembly MCP is not cached and cannot be installed while offline."
-            )
-        server_dir.parent.mkdir(parents=True, exist_ok=True)
-        _run(["git", "clone", "--depth", "1", REPO_URL, str(server_dir)], Path.cwd())
-    elif not package_json.exists():
+    if not package_json.exists():
         raise RuntimeError(
-            f"{server_dir} exists but does not look like assembly-api-mcp. "
-            "Remove it or set NATIONAL_ASSEMBLY_MCP_DIR to a valid checkout."
+            f"{server_dir} does not look like assembly-api-mcp. "
+            "Unset NATIONAL_ASSEMBLY_MCP_DIR to use the bundled server."
         )
 
-    if not (server_dir / ".git").exists():
-        if index_js.exists():
-            return index_js
-        raise RuntimeError(
-            f"{server_dir} is not a Git checkout and does not contain dist/index.js."
-        )
-
-    revision_changed = _checkout_revision(server_dir, offline=offline)
-    if index_js.exists() and not revision_changed:
+    patch_applied = _apply_compatibility_patch(server_dir)
+    if index_js.exists() and not patch_applied:
         return index_js
 
-    if offline:
-        raise RuntimeError(
-            "The National Assembly MCP build is missing and cannot install Node dependencies while offline."
-        )
-    npm_install = (
-        ["npm", "ci"]
-        if (server_dir / "package-lock.json").exists()
-        else ["npm", "install"]
-    )
-    _run(npm_install, server_dir)
+    _run(["npm", "install"], server_dir)
     _run(["npm", "run", "build"], server_dir)
     if not index_js.exists():
         raise RuntimeError(f"Expected built server at {index_js}, but it was not created.")
     return index_js
 
 
+def _server_index() -> Path:
+    override = os.environ.get("NATIONAL_ASSEMBLY_MCP_DIR", "").strip()
+    if override:
+        return _ensure_override_built(Path(override).expanduser().resolve())
+    if not BUNDLED_INDEX.exists():
+        raise RuntimeError(f"Bundled National Assembly MCP server is missing: {BUNDLED_INDEX}")
+    return BUNDLED_INDEX
+
+
 def main() -> None:
     node = shutil.which("node")
     if not node:
         raise RuntimeError("Node.js is required to run the national assembly MCP server.")
-    if not shutil.which("git"):
-        raise RuntimeError("git is required for the first national assembly MCP bootstrap.")
-    if not shutil.which("npm"):
-        raise RuntimeError("npm is required for the first national assembly MCP bootstrap.")
 
-    install_only = "--install-only" in sys.argv[1:]
-    offline = "--offline" in sys.argv[1:]
-    forwarded_args = [
-        argument
-        for argument in sys.argv[1:]
-        if argument not in {"--install-only", "--offline"}
-    ]
-    index_js = _ensure_server_built(_server_dir(), offline=offline)
-    if install_only:
-        _log(f"installed pinned upstream revision {REPO_REVISION}")
-        return
-    os.environ.setdefault("ASSEMBLY_API_KEY", DEFAULT_ASSEMBLY_API_KEY)
-    args = [node, str(index_js), *forwarded_args]
+    args = [node, str(_server_index()), *sys.argv[1:]]
     process = subprocess.Popen(
         args,
         stdin=sys.stdin,
