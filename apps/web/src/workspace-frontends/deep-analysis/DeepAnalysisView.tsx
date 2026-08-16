@@ -59,6 +59,7 @@ import { SelectMenu } from "../../components/SelectMenu";
 import { useCachedViewState } from "../../view-data-cache";
 import { useSharedNow } from "../../shared-clock";
 import { useFixedVirtualList } from "../../use-fixed-virtual-list";
+import { orientWorkflowSequenceEdges } from "./workflow-layout";
 import {
   appendMissionEvent,
   setMissionEvents,
@@ -1608,7 +1609,7 @@ export function DeepAnalysisView({
     setError(null);
     try {
       const draft = workflowDraft ?? await api.deepAnalysis.createDraft(mission.id, mission.revision);
-      const arranged = arrangeWorkflowTopDown(draft, true);
+      const arranged = arrangeWorkflowTopDown(orientWorkflowSequenceEdges(draft), true);
       setWorkflowDraft(arranged);
       setWorkflowDraftDirty(true);
       setEditingWorkflow(true);

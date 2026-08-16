@@ -7,6 +7,10 @@ const viewPath = new URL(
   "../src/workspace-frontends/deep-analysis/DeepAnalysisView.tsx",
   import.meta.url,
 );
+const layoutPath = new URL(
+  "../src/workspace-frontends/deep-analysis/workflow-layout.ts",
+  import.meta.url,
+);
 const apiPath = new URL("../src/api.ts", import.meta.url);
 const typesPath = new URL("../src/api-types.ts", import.meta.url);
 const cssPath = new URL(
@@ -17,6 +21,32 @@ const eventStorePath = new URL(
   "../src/workspace-frontends/deep-analysis/mission-event-store.ts",
   import.meta.url,
 );
+
+test("workflow layout orients vertical Edges by stable Node sequence", async () => {
+  const { orientWorkflowSequenceEdges, workflowSequenceEdgeEndpoints } = await import(layoutPath);
+  const nodes = [
+    { nodeKey: "N010", sequence: 0, positionX: 272, positionY: 520 },
+    { nodeKey: "N011", sequence: 1, positionX: 60, positionY: 250 },
+    { nodeKey: "N012", sequence: 2, positionX: 272, positionY: 400 },
+  ];
+  assert.deepEqual(workflowSequenceEdgeEndpoints(nodes[1], nodes[0]), {
+    sourceNodeKey: "N010",
+    targetNodeKey: "N011",
+  });
+
+  const workflow = {
+    nodes,
+    edges: [
+      { id: "reverse", sourceNodeKey: "N011", targetNodeKey: "N010", edgeType: "sequence" },
+      { id: "duplicate", sourceNodeKey: "N010", targetNodeKey: "N011", edgeType: "sequence" },
+      { id: "loop", sourceNodeKey: "N012", targetNodeKey: "N010", edgeType: "loop_back" },
+    ],
+  };
+  assert.deepEqual(orientWorkflowSequenceEdges(workflow).edges, [
+    { id: "reverse", sourceNodeKey: "N010", targetNodeKey: "N011", edgeType: "sequence" },
+    { id: "loop", sourceNodeKey: "N012", targetNodeKey: "N010", edgeType: "loop_back" },
+  ]);
+});
 
 test("deep analysis is an independent lazy Workspace view", async () => {
   const app = await readFile(appPath, "utf8");
