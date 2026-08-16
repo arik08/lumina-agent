@@ -934,7 +934,11 @@ def test_direct_url_run_keeps_search_and_fetch_tools(
     )
     with TestClient(create_app(settings)) as client:
         csrf = _login(client)
-        project_id = client.get("/api/projects").json()[0]["id"]
+        projects_response = client.get("/api/projects")
+        assert projects_response.status_code == 200, projects_response.text
+        projects = projects_response.json()
+        assert isinstance(projects, list) and projects, projects_response.text
+        project_id = projects[0]["id"]
         conversation = client.post(
             "/api/conversations",
             headers={"X-CSRF-Token": csrf},
