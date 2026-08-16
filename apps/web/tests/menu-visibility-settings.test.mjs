@@ -24,5 +24,6 @@ test("personal settings expose every shared navigation item as a checkbox", asyn
   assert.match(app, /navigation\.map\(\(\{ id, label, icon: Icon \}\)/);
   assert.match(app, /type="checkbox" checked=\{checked\}/);
   assert.match(app, /disabled=\{menuVisibilitySaving\}/);
-  assert.match(app, /숨긴 기능도 설정에서 다시 표시할 수 있습니다/);
+  assert.match(app, /fieldset className="settings-menu-visibility" aria-label="표시할 주요 메뉴"/);
+  assert.doesNotMatch(app, /사이드바에 표시할 기능만 선택합니다/);
 });

@@ -4374,9 +4374,7 @@ function App() {
                 </section>
                 <section className="settings-card" aria-labelledby="menu-settings-title">
                   <header><h2 id="menu-settings-title">메뉴 표시</h2><small>{menuVisibility.length}개 표시</small></header>
-                  <fieldset className="settings-menu-visibility" aria-describedby="menu-settings-description">
-                    <legend className="sr-only">표시할 주요 메뉴</legend>
-                    <p id="menu-settings-description">사이드바에 표시할 기능만 선택합니다. 숨긴 기능도 설정에서 다시 표시할 수 있습니다.</p>
+                  <fieldset className="settings-menu-visibility" aria-label="표시할 주요 메뉴">
                     <div>
                       {navigation.map(({ id, label, icon: Icon }) => {
                         const checked = menuVisibility.includes(id);
