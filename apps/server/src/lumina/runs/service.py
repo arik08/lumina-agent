@@ -73,6 +73,7 @@ from .approvals import (
     pending_approval_payloads_batch,
 )
 from .events import append_event
+from .execution_state import without_tool_checkpoint
 from .plans import (
     PLAN_STEP_QUEUED,
     _retryable_plan_step,
@@ -2068,7 +2069,7 @@ def _cancel_run_state(
         for item in snapshot.get("input_requests", [])
         if isinstance(item, dict)
     ]
-    snapshot.pop("tool_checkpoint", None)
+    snapshot = without_tool_checkpoint(snapshot)
     snapshot["cancelReason"] = reason
     run.snapshot_json = snapshot
     transition_run(db, run, CANCELLED, event_type="run_cancelled")

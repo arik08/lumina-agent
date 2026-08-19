@@ -8,6 +8,11 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..models import Plan, PlanStep, PlanSubtask, Run, ToolExecution, utc_now
+from .execution_state import (
+    execution_recovery_state,
+    with_model_turn_inflight,
+    without_model_turn_inflight,
+)
 from .events import append_event
 from .plans import plan_snapshot, resume_plan
 from .state import (
@@ -149,22 +154,19 @@ def mark_worker_shutdown_interrupted(db: Session, *, worker_id: str) -> tuple[st
 
 
 def mark_model_turn_inflight(db: Session, run: Run, *, turn_index: int) -> None:
-    snapshot = dict(run.snapshot_json)
-    snapshot["model_turn_inflight"] = {
-        "turnIndex": max(0, turn_index),
-        "draftCheckpoint": len(run.assistant_draft),
-        "startedAt": utc_now().isoformat(),
-    }
-    run.snapshot_json = snapshot
+    run.snapshot_json = with_model_turn_inflight(
+        run.snapshot_json,
+        turn_index=turn_index,
+        draft_checkpoint=len(run.assistant_draft),
+        started_at=utc_now().isoformat(),
+    )
     db.flush()
 
 
 def clear_model_turn_inflight(db: Session, run: Run) -> None:
     if "model_turn_inflight" not in run.snapshot_json:
         return
-    snapshot = dict(run.snapshot_json)
-    snapshot.pop("model_turn_inflight", None)
-    run.snapshot_json = snapshot
+    run.snapshot_json = without_model_turn_inflight(run.snapshot_json)
     db.flush()
 
 
@@ -222,13 +224,16 @@ def queue_paused_run_for_resume(db: Session, run: Run) -> bool:
     resume_plan(db, run, requeue=True)
 
     snapshot = dict(run.snapshot_json)
-    marker = snapshot.pop("model_turn_inflight", None)
-    checkpoint = _draft_checkpoint(marker, len(run.assistant_draft))
+    execution_state = execution_recovery_state(snapshot)
+    snapshot = without_model_turn_inflight(snapshot)
+    checkpoint = execution_state.retained_draft_length(
+        len(run.assistant_draft), preserve_untracked=True
+    )
     draft_was_reset = checkpoint != len(run.assistant_draft)
     run.assistant_draft = run.assistant_draft[:checkpoint]
     usage = dict(run.usage_json)
-    if isinstance(marker, dict):
-        turn_index = _nonnegative_int(marker.get("turnIndex"))
+    if execution_state.model_turn is not None:
+        turn_index = execution_state.model_turn.turn_index
         usage["model_turns"] = min(
             _nonnegative_int(usage.get("model_turns")), turn_index
         )
@@ -351,17 +356,17 @@ def _recover_run(db: Session, run: Run) -> None:
                 "finishedAt": utc_now(),
             },
         )
-    marker = snapshot.pop("model_turn_inflight", None)
-    checkpoint = _draft_checkpoint(marker, len(run.assistant_draft))
-    if marker is None and not isinstance(snapshot.get("tool_checkpoint"), dict):
-        # Legacy in-flight Runs have no safe boundary for partial model text.
-        checkpoint = 0
+    execution_state = execution_recovery_state(snapshot)
+    snapshot = without_model_turn_inflight(snapshot)
+    checkpoint = execution_state.retained_draft_length(
+        len(run.assistant_draft), preserve_untracked=False
+    )
     draft_was_reset = checkpoint != len(run.assistant_draft)
     run.assistant_draft = run.assistant_draft[:checkpoint]
 
     usage = dict(run.usage_json)
-    if isinstance(marker, dict):
-        turn_index = _nonnegative_int(marker.get("turnIndex"))
+    if execution_state.model_turn is not None:
+        turn_index = execution_state.model_turn.turn_index
         usage["model_turns"] = min(
             _nonnegative_int(usage.get("model_turns")), turn_index
         )
@@ -461,12 +466,6 @@ def _queue_active_plan_steps(db: Session, run: Run) -> None:
             step.error_message = None
     plan.status = "active"
     plan.updated_at = utc_now()
-
-
-def _draft_checkpoint(marker: Any, draft_length: int) -> int:
-    if not isinstance(marker, dict):
-        return draft_length
-    return min(_nonnegative_int(marker.get("draftCheckpoint")), draft_length)
 
 
 def _nonnegative_int(value: Any) -> int:

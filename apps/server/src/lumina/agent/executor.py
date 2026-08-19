@@ -184,6 +184,11 @@ from ..deep_analysis.calculations import (
 )
 from .worker_lock import _DatabaseWorkerLock
 from ..runs.broker import event_broker
+from ..runs.execution_state import (
+    with_tool_checkpoint,
+    with_updated_model_turn_position,
+    without_execution_checkpoints,
+)
 from ..runs.recovery import (
     detach_paused_run,
     mark_model_turn_inflight,
@@ -3459,8 +3464,6 @@ class LocalRunExecutor:
                     post_batch_transcript = _checkpoint_post_batch_transcript(
                         previous_checkpoint
                     )
-            if kind == "pending_tools":
-                snapshot.pop("model_turn_inflight", None)
             snapshot.pop("tool_checkpoint_prefix_user_message_ids", None)
             snapshot.pop("tool_checkpoint_prefix_transcript", None)
             checkpoint: dict[str, Any] = {
@@ -3482,8 +3485,11 @@ class LocalRunExecutor:
             }
             if kind == "completed_tools":
                 checkpoint["provider_tool_contents"] = list(provider_tool_contents)
-            snapshot["tool_checkpoint"] = checkpoint
-            run.snapshot_json = snapshot
+            run.snapshot_json = with_tool_checkpoint(
+                snapshot,
+                checkpoint,
+                clear_model_turn=kind == "pending_tools",
+            )
             parked = run.status == PAUSED
             if parked:
                 append_event(
@@ -3633,41 +3639,40 @@ class LocalRunExecutor:
                 if isinstance(previous_checkpoint, Mapping)
                 else []
             )
-            run.snapshot_json = {
+            snapshot = {
                 **run.snapshot_json,
                 "input_requests": [
                     *run.snapshot_json.get("input_requests", []),
                     request,
                 ],
-                "tool_checkpoint": {
-                    "version": 2,
-                    "kind": "user_input",
-                    "assistant_content": assistant_content,
-                    "calls": [
-                        {
-                            "id": str(call["id"]),
-                            "name": "request_user_input",
-                            "arguments": json.dumps(arguments, ensure_ascii=False),
-                            "provider_metadata": _safe_provider_metadata(
-                                call.get("provider_metadata")
-                            ),
-                            "input_request_id": request["id"],
-                        }
-                    ],
-                    "loop_state": dict(loop_state or {}),
-                    "completed_batches": completed_batches,
-                    "captures_applied_steers": True,
-                    "prefix_user_message_ids": (
-                        _checkpoint_prefix_user_message_ids(run.snapshot_json)
-                    ),
-                    "prefix_transcript": _checkpoint_prefix_transcript(
-                        run.snapshot_json
-                    ),
-                    "post_batch_user_message_ids": post_batch_user_message_ids,
-                    "post_batch_transcript": post_batch_transcript,
-                    "created_at": requested_at.isoformat(),
-                },
             }
+            checkpoint = {
+                "version": 2,
+                "kind": "user_input",
+                "assistant_content": assistant_content,
+                "calls": [
+                    {
+                        "id": str(call["id"]),
+                        "name": "request_user_input",
+                        "arguments": json.dumps(arguments, ensure_ascii=False),
+                        "provider_metadata": _safe_provider_metadata(
+                            call.get("provider_metadata")
+                        ),
+                        "input_request_id": request["id"],
+                    }
+                ],
+                "loop_state": dict(loop_state or {}),
+                "completed_batches": completed_batches,
+                "captures_applied_steers": True,
+                "prefix_user_message_ids": (
+                    _checkpoint_prefix_user_message_ids(run.snapshot_json)
+                ),
+                "prefix_transcript": _checkpoint_prefix_transcript(run.snapshot_json),
+                "post_batch_user_message_ids": post_batch_user_message_ids,
+                "post_batch_transcript": post_batch_transcript,
+                "created_at": requested_at.isoformat(),
+            }
+            run.snapshot_json = with_tool_checkpoint(snapshot, checkpoint)
             append_event(db, run, "input_requested", {"request": request})
             transition_run(db, run, AWAITING_INPUT)
         await event_broker.notify(run_id)
@@ -3775,28 +3780,24 @@ class LocalRunExecutor:
                 if isinstance(previous_checkpoint, Mapping)
                 else []
             )
-            run.snapshot_json = {
-                **run.snapshot_json,
-                "tool_checkpoint": {
-                    "version": 2,
-                    "kind": "approval",
-                    "assistant_content": assistant_content,
-                    "calls": checkpoint_calls,
-                    "approval_ids": approval_ids,
-                    "loop_state": dict(loop_state or {}),
-                    "completed_batches": completed_batches,
-                    "captures_applied_steers": True,
-                    "prefix_user_message_ids": (
-                        _checkpoint_prefix_user_message_ids(run.snapshot_json)
-                    ),
-                    "prefix_transcript": _checkpoint_prefix_transcript(
-                        run.snapshot_json
-                    ),
-                    "post_batch_user_message_ids": post_batch_user_message_ids,
-                    "post_batch_transcript": post_batch_transcript,
-                    "created_at": utc_now().isoformat(),
-                },
+            checkpoint = {
+                "version": 2,
+                "kind": "approval",
+                "assistant_content": assistant_content,
+                "calls": checkpoint_calls,
+                "approval_ids": approval_ids,
+                "loop_state": dict(loop_state or {}),
+                "completed_batches": completed_batches,
+                "captures_applied_steers": True,
+                "prefix_user_message_ids": (
+                    _checkpoint_prefix_user_message_ids(run.snapshot_json)
+                ),
+                "prefix_transcript": _checkpoint_prefix_transcript(run.snapshot_json),
+                "post_batch_user_message_ids": post_batch_user_message_ids,
+                "post_batch_transcript": post_batch_transcript,
+                "created_at": utc_now().isoformat(),
             }
+            run.snapshot_json = with_tool_checkpoint(run.snapshot_json, checkpoint)
             change_plan_step(
                 db,
                 run,
@@ -9740,9 +9741,7 @@ class LocalRunExecutor:
             )
             db.add(message)
             run.current_turn += 1
-            snapshot = dict(run.snapshot_json)
-            snapshot.pop("model_turn_inflight", None)
-            snapshot.pop("tool_checkpoint", None)
+            snapshot = without_execution_checkpoints(run.snapshot_json)
             snapshot.pop("tool_checkpoint_prefix_user_message_ids", None)
             snapshot.pop("tool_checkpoint_prefix_transcript", None)
             run.snapshot_json = snapshot
@@ -10184,7 +10183,7 @@ def _append_safe_transcript_entries(
             *post_batch_transcript,
             *restored,
         ]
-        snapshot["tool_checkpoint"] = checkpoint
+        snapshot = with_tool_checkpoint(snapshot, checkpoint)
     else:
         prefix_transcript = _checkpoint_prefix_transcript(snapshot)
         snapshot["tool_checkpoint_prefix_user_message_ids"] = [
@@ -10199,12 +10198,12 @@ def _append_safe_transcript_entries(
         ]
     marker = snapshot.get("model_turn_inflight")
     if isinstance(marker, Mapping):
-        snapshot["model_turn_inflight"] = {
-            **marker,
-            "turnIndex": _nonnegative_int(run.usage_json.get("model_turns")),
-            "draftCheckpoint": len(run.assistant_draft),
-            "safeBoundaryAt": utc_now().isoformat(),
-        }
+        snapshot = with_updated_model_turn_position(
+            snapshot,
+            turn_index=_nonnegative_int(run.usage_json.get("model_turns")),
+            draft_checkpoint=len(run.assistant_draft),
+            safe_boundary_at=utc_now().isoformat(),
+        )
     run.snapshot_json = snapshot
 
 
