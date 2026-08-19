@@ -61,6 +61,7 @@ from .image_tool import (
     prepare_image_tool,
     redacted_generate_image_input,
 )
+from .loop_reducer import decide_provider_round
 from .report_assets import resolve_report_images
 from .streaming import _ContinuationDeduper, _InlineMemoryStream
 from .text_utils import _bounded_text
@@ -85,12 +86,14 @@ from .tool_schemas import (
 from .tool_runtime_policy import (
     advance_tool_loop_guard as _advance_tool_loop_guard,
     build_tool_surface,
+    decide_tool_replay,
     describe_deferred_tool,
     estimate_schema_tokens,
     resolve_bridge_call,
     search_deferred_tools,
     should_parallelize_tool_calls,
     tool_round_fingerprint as _tool_round_fingerprint,
+    tool_replay_policy,
     wrap_untrusted_tool_result,
 )
 from ..config import Settings, get_settings
@@ -2070,8 +2073,12 @@ class LocalRunExecutor:
                 )
             )
         )
-        artifact_tools_available = retry_step_key != "final" and output_mode != "chat" and (
-            output_mode == "file" or artifact_required or recent_artifact_count > 0
+        artifact_tools_available = (
+            retry_step_key != "final"
+            and output_mode != "chat"
+            and (
+                output_mode == "file" or artifact_required or recent_artifact_count > 0
+            )
         )
         artifact_management_available = recent_artifact_count > 0 or any(
             isinstance(reference, Mapping) and reference.get("kind") == "artifact"
@@ -2624,11 +2631,9 @@ class LocalRunExecutor:
                                 active_call_id = None
                         elif event.type == "response_state":
                             state_item = event.provider_metadata.get("item")
-                            if (
-                                isinstance(state_item, Mapping)
-                                and state_item.get("type")
-                                in {"reasoning", "compaction"}
-                            ):
+                            if isinstance(state_item, Mapping) and state_item.get(
+                                "type"
+                            ) in {"reasoning", "compaction"}:
                                 response_state_items.append(dict(state_item))
                         elif event.type == "usage" and event.usage:
                             await flush_pending_text()
@@ -2830,7 +2835,8 @@ class LocalRunExecutor:
                 if round_text:
                     messages.append(
                         _assistant_response_message(
-                            "".join(round_text), response_state_items=response_state_items
+                            "".join(round_text),
+                            response_state_items=response_state_items,
                         )
                     )
                 await self._mark_turn_interrupted_by_steer(
@@ -2855,7 +2861,8 @@ class LocalRunExecutor:
                 if round_text:
                     messages.append(
                         _assistant_response_message(
-                            "".join(round_text), response_state_items=response_state_items
+                            "".join(round_text),
+                            response_state_items=response_state_items,
                         )
                     )
                 await self._mark_turn_interrupted_by_steer(
@@ -2867,6 +2874,15 @@ class LocalRunExecutor:
                     for text in steer_messages
                 )
                 continue
+            round_decision = decide_provider_round(
+                has_tool_calls=bool(calls),
+                has_visible_text=bool(round_text),
+                output_truncated=_is_output_truncated_stop_reason(provider_stop_reason),
+                empty_response_retry_attempt=empty_response_retry_attempt,
+                output_continuation_count=output_continuation_count,
+                max_empty_response_retries=_MAX_EMPTY_RESPONSE_RETRIES,
+                max_auto_continuations=_MAX_AUTO_CONTINUATIONS,
+            )
             if not calls:
                 steer_messages = await self._apply_pending_steers(
                     run_id,
@@ -2876,7 +2892,8 @@ class LocalRunExecutor:
                     if round_text:
                         messages.append(
                             _assistant_response_message(
-                                "".join(round_text), response_state_items=response_state_items
+                                "".join(round_text),
+                                response_state_items=response_state_items,
                             )
                         )
                     messages.extend(
@@ -2884,66 +2901,63 @@ class LocalRunExecutor:
                         for text in steer_messages
                     )
                     continue
-                output_truncated = _is_output_truncated_stop_reason(
-                    provider_stop_reason
+                empty_response_retry_attempt = (
+                    round_decision.empty_response_retry_attempt
                 )
-                if output_truncated and round_text:
-                    empty_response_retry_attempt = 0
-                    if output_continuation_count < _MAX_AUTO_CONTINUATIONS:
-                        messages.append(
-                            _assistant_response_message(
-                                "".join(round_text), response_state_items=response_state_items
-                            )
+                output_continuation_count = round_decision.output_continuation_count
+                if round_decision.action == "continue_output":
+                    messages.append(
+                        _assistant_response_message(
+                            "".join(round_text),
+                            response_state_items=response_state_items,
                         )
-                        messages.append(
-                            ProviderMessage(role="user", content=_CONTINUATION_PROMPT)
-                        )
-                        self._store_safe_transcript(
-                            run_id,
-                            (
-                                {
-                                    "role": "assistant",
-                                    "content": "".join(round_text),
-                                },
-                                {"role": "user", "content": _CONTINUATION_PROMPT},
-                            ),
-                        )
-                        pending_continuation_reference = "".join(round_text)
-                        output_continuation_count += 1
-                        await self._publish_progress_summary(
-                            run_id,
-                            "응답이 출력 한도에 도달해 중복 없이 자동으로 이어서 작성합니다.",
-                            phase="continuing",
-                        )
-                        continue
+                    )
+                    messages.append(
+                        ProviderMessage(role="user", content=_CONTINUATION_PROMPT)
+                    )
+                    self._store_safe_transcript(
+                        run_id,
+                        (
+                            {
+                                "role": "assistant",
+                                "content": "".join(round_text),
+                            },
+                            {"role": "user", "content": _CONTINUATION_PROMPT},
+                        ),
+                    )
+                    pending_continuation_reference = "".join(round_text)
+                    await self._publish_progress_summary(
+                        run_id,
+                        "응답이 출력 한도에 도달해 중복 없이 자동으로 이어서 작성합니다.",
+                        phase="continuing",
+                    )
+                    continue
+                if round_decision.action == "append_truncation_notice":
                     await self._append_text(
                         run_id,
                         assistant_message_id,
                         _TRUNCATED_AFTER_CONTINUATIONS_NOTICE,
                     )
                     round_text.append(_TRUNCATED_AFTER_CONTINUATIONS_NOTICE)
-                elif not round_text:
-                    if empty_response_retry_attempt < _MAX_EMPTY_RESPONSE_RETRIES:
-                        empty_response_retry_attempt += 1
-                        if continuation_deduper.suppressed_chars:
-                            pending_continuation_reference = (
-                                continuation_deduper.reference
-                            )
-                        await self._append_owned_run_event(
-                            run_id,
-                            "provider_empty_response_retry_scheduled",
-                            {
-                                "attempt": empty_response_retry_attempt + 1,
-                                "maxAttempts": _MAX_EMPTY_RESPONSE_RETRIES + 1,
-                                "stopReason": provider_stop_reason,
-                            },
-                        )
-                        await self._publish_progress_summary(
-                            run_id,
-                            "Provider가 빈 응답을 반환해 대화를 종료하지 않고 한 번 더 요청합니다.",
-                            phase="retrying",
-                        )
-                        continue
+                elif round_decision.action == "retry_empty":
+                    if continuation_deduper.suppressed_chars:
+                        pending_continuation_reference = continuation_deduper.reference
+                    await self._append_owned_run_event(
+                        run_id,
+                        "provider_empty_response_retry_scheduled",
+                        {
+                            "attempt": empty_response_retry_attempt + 1,
+                            "maxAttempts": _MAX_EMPTY_RESPONSE_RETRIES + 1,
+                            "stopReason": provider_stop_reason,
+                        },
+                    )
+                    await self._publish_progress_summary(
+                        run_id,
+                        "Provider가 빈 응답을 반환해 대화를 종료하지 않고 한 번 더 요청합니다.",
+                        phase="retrying",
+                    )
+                    continue
+                elif round_decision.action == "resolve_empty":
                     if artifact_created:
                         await self._append_text(
                             run_id,
@@ -2965,9 +2979,6 @@ class LocalRunExecutor:
                             retryable=False,
                             stage="response",
                         )
-                else:
-                    empty_response_retry_attempt = 0
-                    output_continuation_count = 0
                 (
                     report_revision_artifact_id,
                     report_revision_mime_type,
@@ -2977,7 +2988,8 @@ class LocalRunExecutor:
                     if round_text:
                         messages.append(
                             _assistant_response_message(
-                                "".join(round_text), response_state_items=response_state_items
+                                "".join(round_text),
+                                response_state_items=response_state_items,
                             )
                         )
                     messages.append(
@@ -3047,7 +3059,8 @@ class LocalRunExecutor:
                     if round_text:
                         messages.append(
                             _assistant_response_message(
-                                "".join(round_text), response_state_items=response_state_items
+                                "".join(round_text),
+                                response_state_items=response_state_items,
                             )
                         )
                     messages.append(
@@ -3093,14 +3106,14 @@ class LocalRunExecutor:
                 )
                 return
 
-            if _is_output_truncated_stop_reason(provider_stop_reason):
+            if round_decision.action == "reject_incomplete_tools":
                 raise ProviderRequestError(
                     "Provider 출력 한도 때문에 Tool Call이 완전히 생성되지 않아 실행하지 않았습니다.",
                     retryable=False,
                     stage="response",
                 )
-            empty_response_retry_attempt = 0
-            output_continuation_count = 0
+            empty_response_retry_attempt = round_decision.empty_response_retry_attempt
+            output_continuation_count = round_decision.output_continuation_count
 
             calls = [
                 resolve_bridge_call(call, mcp_tools_by_name, deferred_tool_names)
@@ -3119,9 +3132,7 @@ class LocalRunExecutor:
             tool_loop_state = {
                 "artifactRequired": artifact_required,
                 "artifactCreated": artifact_created,
-                "artifactCompletionReminderCount": (
-                    artifact_completion_reminder_count
-                ),
+                "artifactCompletionReminderCount": (artifact_completion_reminder_count),
                 "artifactDraftingTurn": artifact_drafting_turn,
                 "retiredWebTools": sorted(retired_web_tools),
                 "toolLoopFingerprint": last_tool_loop_fingerprint,
@@ -4434,11 +4445,16 @@ class LocalRunExecutor:
                     ToolExecution.tool_call_id == str(tool_call["id"]),
                 )
             )
+            policy = tool_replay_policy(str(tool_call["name"]))
+            decision = decide_tool_replay(
+                policy,
+                execution_status=tool.status if tool is not None else None,
+            )
+            if decision.action == "execute":
+                return None, False
             if tool is None:
-                return None, False
-            if tool.status == "streaming":
-                return None, False
-            if tool.status == "completed":
+                raise RuntimeError("Tool replay decision requires a durable execution")
+            if decision.action == "reuse_result":
                 return (
                     dict(tool.result_json)
                     if isinstance(tool.result_json, dict)
@@ -4448,11 +4464,8 @@ class LocalRunExecutor:
             notify = False
             if tool.status == "running":
                 tool.status = "failed"
-                tool.error_code = "tool_outcome_unknown"
-                tool.error_message = (
-                    "이전 Tool 실행 결과를 확정할 수 없어 중복 부작용을 막기 위해 "
-                    "자동 재실행하지 않았습니다."
-                )
+                tool.error_code = decision.error_code
+                tool.error_message = decision.error_message
                 tool.finished_at = utc_now()
                 finish_tool_subtask(db, tool)
                 append_event(
@@ -4464,8 +4477,11 @@ class LocalRunExecutor:
                 notify = True
             payload = {
                 "error": {
-                    "code": tool.error_code or "tool_not_replayed",
+                    "code": tool.error_code
+                    or decision.error_code
+                    or "tool_not_replayed",
                     "message": tool.error_message
+                    or decision.error_message
                     or "저장된 Tool 결과를 다시 사용할 수 없습니다.",
                     "stage": "recovery",
                     "retryable": False,
@@ -6503,8 +6519,8 @@ class LocalRunExecutor:
                     ),
                     policy=_web_policy(),
                     trust_profile=self.trust_profile,
-                    progress_callback=lambda message: self._update_tool_execution_progress(
-                        run_id, tool_id, message
+                    progress_callback=lambda message: (
+                        self._update_tool_execution_progress(run_id, tool_id, message)
                     ),
                 )
                 payload = search_result.to_dict()
@@ -6777,7 +6793,9 @@ class LocalRunExecutor:
                             "Run context disappeared during Artifact rename"
                         )
                     self._require_execution_owner(workspace_run)
-                    artifact = require_artifact(db, workspace_user, artifact_id, write=True)
+                    artifact = require_artifact(
+                        db, workspace_user, artifact_id, write=True
+                    )
                     if artifact.project_id != workspace_run.project_id:
                         raise ApiProblem(
                             404,
@@ -6791,9 +6809,10 @@ class LocalRunExecutor:
                             "Artifact가 다른 곳에서 변경되었습니다. 최신 버전을 확인해 주세요.",
                             details={"currentVersion": artifact.current_version_number},
                         )
-                    if Path(normalized_name).suffix.casefold() != Path(
-                        artifact.display_name
-                    ).suffix.casefold():
+                    if (
+                        Path(normalized_name).suffix.casefold()
+                        != Path(artifact.display_name).suffix.casefold()
+                    ):
                         raise ApiProblem(
                             409,
                             "artifact_format_conflict",
@@ -6855,7 +6874,9 @@ class LocalRunExecutor:
                             "Run context disappeared during Artifact restore"
                         )
                     self._require_execution_owner(workspace_run)
-                    artifact = require_artifact(db, workspace_user, artifact_id, write=True)
+                    artifact = require_artifact(
+                        db, workspace_user, artifact_id, write=True
+                    )
                     if artifact.project_id != workspace_run.project_id:
                         raise ApiProblem(
                             404,
@@ -7221,7 +7242,9 @@ class LocalRunExecutor:
                 target_artifact.kind != report.kind
                 or target_artifact.mime_type != report.mime_type
             ):
-                raise ValueError("An Artifact revision must keep the original file format.")
+                raise ValueError(
+                    "An Artifact revision must keep the original file format."
+                )
             precomputed_validation = await self._run_heavy_work(
                 lambda: validate_artifact_content_async(
                     kind=report.kind,
@@ -8065,7 +8088,11 @@ class LocalRunExecutor:
         with session_scope() as db:
             run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
             tool = db.get(ToolExecution, tool_id)
-            if run is None or tool is None or tool.status not in {"running", "streaming"}:
+            if (
+                run is None
+                or tool is None
+                or tool.status not in {"running", "streaming"}
+            ):
                 return False
             self._require_execution_owner(run)
             tool.result_summary = message
@@ -9026,7 +9053,9 @@ class LocalRunExecutor:
             }
             retry_record = {**retry_payload, "createdAt": utc_now().isoformat()}
             previous_retries = run.snapshot_json.get("provider_retries", [])
-            retries = list(previous_retries) if isinstance(previous_retries, list) else []
+            retries = (
+                list(previous_retries) if isinstance(previous_retries, list) else []
+            )
             run.snapshot_json = {
                 **run.snapshot_json,
                 "provider_activity": {
@@ -10507,9 +10536,7 @@ _ARTIFACT_DELIVERY_SKILL_SLUGS = frozenset({"visual-artifact"})
 
 def _artifact_delivery_skill_selected(snapshot: Mapping[str, Any]) -> bool:
     selected_ids = {
-        str(item)
-        for item in snapshot.get("auto_selected_skill_ids", [])
-        if str(item)
+        str(item) for item in snapshot.get("auto_selected_skill_ids", []) if str(item)
     }
     selected_ids.update(
         str(reference.get("reference_id", ""))
@@ -10526,9 +10553,11 @@ def _artifact_delivery_skill_selected(snapshot: Mapping[str, Any]) -> bool:
 
 
 def _artifact_delivery_skill_result(result: object) -> bool:
-    return isinstance(result, Mapping) and str(
-        result.get("slug", result.get("name", ""))
-    ).casefold() in _ARTIFACT_DELIVERY_SKILL_SLUGS
+    return (
+        isinstance(result, Mapping)
+        and str(result.get("slug", result.get("name", ""))).casefold()
+        in _ARTIFACT_DELIVERY_SKILL_SLUGS
+    )
 
 
 def _consume_progress_control(

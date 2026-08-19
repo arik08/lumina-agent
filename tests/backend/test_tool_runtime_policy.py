@@ -5,10 +5,12 @@ from types import SimpleNamespace
 
 from lumina.agent.tool_runtime_policy import (
     build_tool_surface,
+    decide_tool_replay,
     describe_deferred_tool,
     resolve_bridge_call,
     search_deferred_tools,
     should_parallelize_tool_calls,
+    tool_replay_policy,
     wrap_untrusted_tool_result,
 )
 
@@ -155,6 +157,32 @@ def test_parallel_policy_allows_reads_but_serializes_control_and_writes() -> Non
         ),
         catalog,
     )
+
+
+def test_replay_policy_declares_read_and_write_safety_in_one_boundary() -> None:
+    read_policy = tool_replay_policy("web_search")
+    write_policy = tool_replay_policy("write_file")
+
+    assert read_policy.replay_safe is True
+    assert read_policy.requires_idempotency_key is False
+    assert write_policy.replay_safe is False
+    assert write_policy.requires_idempotency_key is True
+    assert read_policy.result_reusable is write_policy.result_reusable is True
+    assert (
+        read_policy.unknown_outcome_fail_closed
+        is write_policy.unknown_outcome_fail_closed
+        is True
+    )
+
+
+def test_replay_policy_never_reexecutes_an_unknown_started_outcome() -> None:
+    decision = decide_tool_replay(
+        tool_replay_policy("web_search"),
+        execution_status="running",
+    )
+
+    assert decision.action == "fail_closed"
+    assert decision.error_code == "tool_outcome_unknown"
 
 
 def test_untrusted_wrapper_neutralizes_boundary_breakout() -> None:

@@ -96,9 +96,7 @@ def test_run_transition_rejects_a_stale_concurrent_status(tmp_path: Path) -> Non
 
     with SessionLocal() as db:
         run = db.get(Run, run_id)
-        events = list(
-            db.scalars(select(RunEvent).where(RunEvent.run_id == run_id))
-        )
+        events = list(db.scalars(select(RunEvent).where(RunEvent.run_id == run_id)))
         assert run is not None and run.status == PREPARING
         assert [event.event_type for event in events].count("run_status_changed") == 1
 
@@ -132,15 +130,73 @@ def test_tool_execution_claim_is_durable_and_cannot_be_reopened(
 
     with SessionLocal() as db:
         tools = list(
-            db.scalars(
-                select(ToolExecution).where(ToolExecution.run_id == run_id)
-            )
+            db.scalars(select(ToolExecution).where(ToolExecution.run_id == run_id))
         )
         assert len(tools) == 1
         assert tools[0].id == tool_id
         assert tools[0].status == "running"
         assert tools[0].idempotency_key is not None
         assert tools[0].idempotency_key.startswith("tool:")
+
+
+def test_tool_replay_policy_reuses_completed_and_fails_closed_unknown_outcomes(
+    tmp_path: Path,
+) -> None:
+    key = "tool-replay-policy"
+    run_id = _direct_run(tmp_path, key)
+    executor = LocalRunExecutor(_settings(tmp_path, key))
+    completed_call = {"id": "completed-call", "name": "web_search"}
+    running_call = {"id": "running-call", "name": "write_file"}
+
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run is not None
+        run.worker_id = executor._worker_id
+        db.commit()
+
+    completed_id = executor._start_tool_execution_database(
+        run_id,
+        completed_call,
+        {"query": "steel"},
+    )
+    executor._start_tool_execution_database(
+        run_id,
+        running_call,
+        {"path": "result.txt", "content": "safe"},
+    )
+    with SessionLocal() as db:
+        completed = db.get(ToolExecution, completed_id)
+        assert completed is not None
+        completed.status = "completed"
+        completed.result_json = {"items": ["persisted"]}
+        completed.finished_at = utc_now()
+        db.commit()
+
+    completed_payload, completed_notify = executor._persisted_tool_result_database(
+        run_id,
+        completed_call,
+    )
+    unknown_payload, unknown_notify = executor._persisted_tool_result_database(
+        run_id,
+        running_call,
+    )
+
+    assert completed_payload == {"items": ["persisted"]}
+    assert completed_notify is False
+    assert unknown_payload is not None
+    assert unknown_payload["error"]["code"] == "tool_outcome_unknown"
+    assert unknown_payload["error"]["retryable"] is False
+    assert unknown_notify is True
+    with SessionLocal() as db:
+        running = db.scalar(
+            select(ToolExecution).where(
+                ToolExecution.run_id == run_id,
+                ToolExecution.tool_call_id == running_call["id"],
+            )
+        )
+        assert running is not None
+        assert running.status == "failed"
+        assert running.error_code == "tool_outcome_unknown"
 
 
 @pytest.mark.asyncio

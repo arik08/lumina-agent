@@ -7,6 +7,7 @@ from pathlib import Path
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 _SERVER_SOURCE = _REPOSITORY_ROOT / "apps" / "server" / "src" / "lumina"
 _EXECUTION_STATE_MODULE = _SERVER_SOURCE / "runs" / "execution_state.py"
+_EXECUTOR_MODULE = _SERVER_SOURCE / "agent" / "executor.py"
 
 
 def _python_sources() -> list[Path]:
@@ -36,7 +37,9 @@ def test_run_status_assignments_stay_inside_transition_boundary() -> None:
         for node in ast.walk(tree):
             targets: list[ast.expr] = []
             if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-                raw_targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                raw_targets = (
+                    node.targets if isinstance(node, ast.Assign) else [node.target]
+                )
                 targets.extend(raw_targets)
             for target in targets:
                 if (
@@ -68,3 +71,10 @@ def test_tool_execution_records_always_have_an_idempotency_key() -> None:
                 offenders.append(f"{path.relative_to(_REPOSITORY_ROOT)}:{node.lineno}")
 
     assert offenders == []
+
+
+def test_executor_delegates_replay_and_provider_round_decisions() -> None:
+    source = _EXECUTOR_MODULE.read_text(encoding="utf-8")
+
+    assert "round_decision = decide_provider_round(" in source
+    assert "decision = decide_tool_replay(" in source

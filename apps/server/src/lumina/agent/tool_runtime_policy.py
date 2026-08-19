@@ -6,7 +6,7 @@ import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from ..mcp.runtime import PreparedMcpTool
 from ..runs.approvals import classify_tool_risk, normalized_tool_arguments
@@ -89,6 +89,86 @@ class ToolSurface:
     @property
     def bridge_active(self) -> bool:
         return bool(self.deferred_names)
+
+
+ToolReplayAction = Literal["execute", "reuse_result", "fail_closed"]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolReplayPolicy:
+    """Durable replay contract; unknown started outcomes always take precedence."""
+
+    replay_safe: bool
+    result_reusable: bool
+    unknown_outcome_fail_closed: bool
+    requires_idempotency_key: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ToolReplayDecision:
+    action: ToolReplayAction
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+_READ_REPLAY_POLICY = ToolReplayPolicy(
+    replay_safe=True,
+    result_reusable=True,
+    unknown_outcome_fail_closed=True,
+    requires_idempotency_key=False,
+)
+_MUTATING_REPLAY_POLICY = ToolReplayPolicy(
+    replay_safe=False,
+    result_reusable=True,
+    unknown_outcome_fail_closed=True,
+    requires_idempotency_key=True,
+)
+_REPLAY_POLICY_BY_EFFECT: Mapping[str, ToolReplayPolicy] = {
+    "read_only": _READ_REPLAY_POLICY,
+    "external_read": _READ_REPLAY_POLICY,
+    "workspace_write": _MUTATING_REPLAY_POLICY,
+    "external_write": _MUTATING_REPLAY_POLICY,
+    "local_execution": _MUTATING_REPLAY_POLICY,
+    "destructive": _MUTATING_REPLAY_POLICY,
+}
+
+
+def tool_replay_policy(
+    tool_name: str,
+    *,
+    mcp_original_name: str | None = None,
+) -> ToolReplayPolicy:
+    risk = classify_tool_risk(
+        tool_name,
+        approval_mode="on_risk",
+        mcp_original_name=mcp_original_name,
+    )
+    return _REPLAY_POLICY_BY_EFFECT.get(risk.effect, _MUTATING_REPLAY_POLICY)
+
+
+def decide_tool_replay(
+    policy: ToolReplayPolicy,
+    *,
+    execution_status: str | None,
+) -> ToolReplayDecision:
+    if execution_status in {None, "streaming"}:
+        return ToolReplayDecision(action="execute")
+    if execution_status == "completed" and policy.result_reusable:
+        return ToolReplayDecision(action="reuse_result")
+    if execution_status == "running" and policy.unknown_outcome_fail_closed:
+        return ToolReplayDecision(
+            action="fail_closed",
+            error_code="tool_outcome_unknown",
+            error_message=(
+                "이전 Tool 실행 결과를 확정할 수 없어 중복 부작용을 막기 위해 "
+                "자동 재실행하지 않았습니다."
+            ),
+        )
+    return ToolReplayDecision(
+        action="fail_closed",
+        error_code="tool_not_replayed",
+        error_message="저장된 Tool 결과를 다시 사용할 수 없습니다.",
+    )
 
 
 def build_tool_surface(
@@ -298,14 +378,18 @@ def wrap_untrusted_tool_result(content: str, *, source: str) -> str:
 
 
 __all__ = [
+    "ToolReplayDecision",
+    "ToolReplayPolicy",
     "ToolSurface",
     "advance_tool_loop_guard",
     "build_tool_surface",
+    "decide_tool_replay",
     "describe_deferred_tool",
     "estimate_schema_tokens",
     "resolve_bridge_call",
     "search_deferred_tools",
     "should_parallelize_tool_calls",
+    "tool_replay_policy",
     "tool_round_fingerprint",
     "wrap_untrusted_tool_result",
 ]
