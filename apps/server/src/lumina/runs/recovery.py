@@ -134,19 +134,16 @@ def mark_worker_shutdown_interrupted(db: Session, *, worker_id: str) -> tuple[st
         snapshot["workerRecoverable"] = True
         snapshot["workerInterruptedFrom"] = previous_status
         run.snapshot_json = snapshot
-        run.status = INTERRUPTED
         run.error_code = "worker_interrupted"
         run.error_message = "Worker가 종료되어 저장된 안전 지점에서 재개를 기다립니다."
-        run.finished_at = utc_now()
-        append_event(
+        transition_run(
             db,
             run,
-            "run_interrupted",
-            {
-                "status": INTERRUPTED,
+            INTERRUPTED,
+            event_type="run_interrupted",
+            event_payload={
                 "previousStatus": previous_status,
                 "recoverable": True,
-                "finishedAt": run.finished_at,
             },
         )
         interrupted.append(run.id)
@@ -164,7 +161,7 @@ def mark_model_turn_inflight(db: Session, run: Run, *, turn_index: int) -> None:
 
 
 def clear_model_turn_inflight(db: Session, run: Run) -> None:
-    if "model_turn_inflight" not in run.snapshot_json:
+    if execution_recovery_state(run.snapshot_json).model_turn is None:
         return
     run.snapshot_json = without_model_turn_inflight(run.snapshot_json)
     db.flush()
@@ -345,15 +342,14 @@ def _recover_run(db: Session, run: Run) -> None:
     snapshot.pop("workerRecoverable", None)
     snapshot.pop("workerInterruptedFrom", None)
     if previous_status != INTERRUPTED:
-        append_event(
+        transition_run(
             db,
             run,
-            "run_interrupted",
-            {
-                "status": INTERRUPTED,
+            INTERRUPTED,
+            event_type="run_interrupted",
+            event_payload={
                 "previousStatus": previous_status,
                 "recoverable": True,
-                "finishedAt": utc_now(),
             },
         )
     execution_state = execution_recovery_state(snapshot)
@@ -395,7 +391,6 @@ def _recover_run(db: Session, run: Run) -> None:
     run.worker_id = None
     run.heartbeat_at = None
     run.lease_expires_at = None
-    run.status = QUEUED
     run.finished_at = None
     run.error_code = None
     run.error_message = None
@@ -417,12 +412,12 @@ def _recover_run(db: Session, run: Run) -> None:
                 "revision": draft_revision,
             },
         )
-    append_event(
+    transition_run(
         db,
         run,
-        "run_recovery_scheduled",
-        {
-            "status": QUEUED,
+        QUEUED,
+        event_type="run_recovery_scheduled",
+        event_payload={
             "previousStatus": previous_status,
             "recoveryCount": recovery_count,
             "interruptedToolCount": len(interrupted_tools),

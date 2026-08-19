@@ -56,6 +56,7 @@ from lumina.runs.state import (
     TOOLS_RUNNING,
 )
 from lumina.runs.subtasks import bind_tool_subtask, ensure_tool_subtasks
+from lumina.runs.transitions import StaleRunTransition
 
 
 @pytest.mark.asyncio
@@ -76,6 +77,70 @@ async def test_executor_observes_unexpected_run_task_failure(
 
     assert "run-task-failure" not in executor._tasks
     assert "Run task terminated outside its failure boundary" in caplog.text
+
+
+def test_run_transition_rejects_a_stale_concurrent_status(tmp_path: Path) -> None:
+    run_id = _direct_run(tmp_path, "stale-transition-cas")
+
+    with SessionLocal() as first, SessionLocal() as stale:
+        current = first.get(Run, run_id)
+        stale_copy = stale.get(Run, run_id)
+        assert current is not None and stale_copy is not None
+
+        transition_run(first, current, PREPARING)
+        first.commit()
+
+        with pytest.raises(StaleRunTransition, match="changed concurrently"):
+            transition_run(stale, stale_copy, PREPARING)
+        stale.rollback()
+
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        events = list(
+            db.scalars(select(RunEvent).where(RunEvent.run_id == run_id))
+        )
+        assert run is not None and run.status == PREPARING
+        assert [event.event_type for event in events].count("run_status_changed") == 1
+
+
+def test_tool_execution_claim_is_durable_and_cannot_be_reopened(
+    tmp_path: Path,
+) -> None:
+    key = "tool-claim-invariant"
+    run_id = _direct_run(tmp_path, key)
+    executor = LocalRunExecutor(_settings(tmp_path, key))
+    call = {"id": "claim-call-1", "name": "read_file"}
+
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run is not None
+        run.worker_id = executor._worker_id
+        db.commit()
+
+    tool_id = executor._start_tool_execution_database(
+        run_id,
+        call,
+        {"path": "README.md"},
+    )
+
+    with pytest.raises(RuntimeError, match="cannot be claimed again"):
+        executor._start_tool_execution_database(
+            run_id,
+            call,
+            {"path": "README.md"},
+        )
+
+    with SessionLocal() as db:
+        tools = list(
+            db.scalars(
+                select(ToolExecution).where(ToolExecution.run_id == run_id)
+            )
+        )
+        assert len(tools) == 1
+        assert tools[0].id == tool_id
+        assert tools[0].status == "running"
+        assert tools[0].idempotency_key is not None
+        assert tools[0].idempotency_key.startswith("tool:")
 
 
 @pytest.mark.asyncio

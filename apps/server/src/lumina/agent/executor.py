@@ -185,6 +185,7 @@ from ..deep_analysis.calculations import (
 from .worker_lock import _DatabaseWorkerLock
 from ..runs.broker import event_broker
 from ..runs.execution_state import (
+    read_tool_checkpoint,
     with_tool_checkpoint,
     with_updated_model_turn_position,
     without_execution_checkpoints,
@@ -1886,7 +1887,7 @@ class LocalRunExecutor:
             run.worker_id = self._worker_id
             run.heartbeat_at = now
             run.lease_expires_at = now + timedelta(seconds=_WORKER_LEASE_SECONDS)
-            if isinstance(run.snapshot_json.get("tool_checkpoint"), dict):
+            if read_tool_checkpoint(run.snapshot_json) is not None:
                 transition_run(db, run, TOOLS_RUNNING)
                 from ..deep_analysis.execution import record_node_started
 
@@ -1950,10 +1951,10 @@ class LocalRunExecutor:
                 if isinstance(retry_snapshot, Mapping)
                 else ""
             )
-            checkpoint = run.snapshot_json.get("tool_checkpoint")
-            resuming_checkpoint = isinstance(checkpoint, dict)
+            checkpoint = read_tool_checkpoint(run.snapshot_json)
+            resuming_checkpoint = checkpoint is not None
             checkpoint_loop_state = (
-                checkpoint.get("loop_state", {}) if isinstance(checkpoint, dict) else {}
+                checkpoint.get("loop_state", {}) if checkpoint is not None else {}
             )
             resuming_approval = (
                 checkpoint.get("kind") != "user_input"
@@ -3408,7 +3409,7 @@ class LocalRunExecutor:
                 return False, False
             self._require_execution_owner(run)
             snapshot = dict(run.snapshot_json)
-            previous_checkpoint = snapshot.get("tool_checkpoint")
+            previous_checkpoint = read_tool_checkpoint(snapshot)
             completed_batches: list[dict[str, Any]] = []
             prefix_user_message_ids = _checkpoint_prefix_user_message_ids(snapshot)
             prefix_transcript = _checkpoint_prefix_transcript(snapshot)
@@ -3628,7 +3629,7 @@ class LocalRunExecutor:
                 call["input_request_error"] = "user_input_question_limit_reached"
                 return False
             completed_batches = _checkpoint_completed_batches(run.snapshot_json)
-            previous_checkpoint = run.snapshot_json.get("tool_checkpoint")
+            previous_checkpoint = read_tool_checkpoint(run.snapshot_json)
             post_batch_user_message_ids = (
                 _checkpoint_post_batch_user_message_ids(previous_checkpoint)
                 if isinstance(previous_checkpoint, Mapping)
@@ -3769,7 +3770,7 @@ class LocalRunExecutor:
             if not approval_ids:
                 return False
             completed_batches = _checkpoint_completed_batches(run.snapshot_json)
-            previous_checkpoint = run.snapshot_json.get("tool_checkpoint")
+            previous_checkpoint = read_tool_checkpoint(run.snapshot_json)
             post_batch_user_message_ids = (
                 _checkpoint_post_batch_user_message_ids(previous_checkpoint)
                 if isinstance(previous_checkpoint, Mapping)
@@ -3841,8 +3842,8 @@ class LocalRunExecutor:
         checkpoint_loop_state: Mapping[str, Any] = {}
         with SessionLocal() as db:
             run = db.get(Run, run_id)
-            checkpoint = run.snapshot_json.get("tool_checkpoint") if run else None
-            if run is None or not isinstance(checkpoint, dict):
+            checkpoint = read_tool_checkpoint(run.snapshot_json) if run else None
+            if run is None or checkpoint is None:
                 checkpoint_error = "저장된 Tool 승인 checkpoint를 찾을 수 없습니다."
             else:
                 self._require_execution_owner(run)
@@ -4300,6 +4301,12 @@ class LocalRunExecutor:
         list[tuple[dict[str, Any], dict[str, Any]]],
         RunLimitViolation | None,
     ]:
+        duplicate_call_ids = _duplicate_tool_call_ids(calls)
+        if duplicate_call_ids:
+            raise RuntimeError(
+                "Provider returned duplicate Tool Call IDs: "
+                + ", ".join(duplicate_call_ids)
+            )
         tool_semaphore = asyncio.Semaphore(self.settings.tool_concurrency_limit)
 
         async def execute_call(
@@ -4518,14 +4525,26 @@ class LocalRunExecutor:
                 )
             )
             streamed = tool is not None and tool.status == "streaming"
+            if tool is not None and not streamed:
+                raise RuntimeError(
+                    "Durable Tool execution cannot be claimed again: "
+                    f"{tool.tool_call_id} ({tool.status})"
+                )
             if tool is None:
                 tool = ToolExecution(
                     run_id=run.id,
                     tool_call_id=str(tool_call["id"]),
                     tool_name=str(tool_call["name"]),
+                    idempotency_key=_tool_execution_idempotency_key(
+                        run.id, str(tool_call["id"])
+                    ),
                     started_at=utc_now(),
                 )
                 db.add(tool)
+            elif tool.idempotency_key is None:
+                tool.idempotency_key = _tool_execution_idempotency_key(
+                    run.id, tool.tool_call_id
+                )
             tool.validated_input_json = dict(stored_arguments)
             tool.status = "running"
             db.flush()
@@ -5159,7 +5178,7 @@ class LocalRunExecutor:
             }
             pending_prefix_transcript = (
                 []
-                if isinstance(run.snapshot_json.get("tool_checkpoint"), Mapping)
+                if read_tool_checkpoint(run.snapshot_json) is not None
                 else _checkpoint_prefix_transcript(run.snapshot_json)
             )
             pending_prefix_message_ids = _checkpoint_transcript_user_message_ids(
@@ -7585,14 +7604,26 @@ class LocalRunExecutor:
                 )
             )
             streamed = tool is not None and tool.status == "streaming"
+            if tool is not None and not streamed:
+                raise RuntimeError(
+                    "Durable Tool execution cannot be claimed again: "
+                    f"{tool.tool_call_id} ({tool.status})"
+                )
             if tool is None:
                 tool = ToolExecution(
                     run_id=run.id,
                     tool_call_id=str(tool_call["id"]),
                     tool_name=str(tool_call["name"]),
+                    idempotency_key=_tool_execution_idempotency_key(
+                        run.id, str(tool_call["id"])
+                    ),
                     started_at=utc_now(),
                 )
                 db.add(tool)
+            elif tool.idempotency_key is None:
+                tool.idempotency_key = _tool_execution_idempotency_key(
+                    run.id, tool.tool_call_id
+                )
             tool.validated_input_json = dict(stored_arguments)
             tool.status = "running"
             db.flush()
@@ -8680,6 +8711,9 @@ class LocalRunExecutor:
                 run_id=run.id,
                 tool_call_id=str(tool_call["id"]),
                 tool_name=tool_name,
+                idempotency_key=_tool_execution_idempotency_key(
+                    run.id, str(tool_call["id"])
+                ),
                 validated_input_json=(
                     {
                         "__lumina_stream_tokens": 0,
@@ -10170,9 +10204,8 @@ def _append_safe_transcript_entries(
         return
     message_ids = _checkpoint_transcript_user_message_ids(restored)
     snapshot = dict(run.snapshot_json)
-    checkpoint = snapshot.get("tool_checkpoint")
-    if isinstance(checkpoint, Mapping):
-        checkpoint = dict(checkpoint)
+    checkpoint = read_tool_checkpoint(snapshot)
+    if checkpoint is not None:
         post_batch_transcript = _checkpoint_post_batch_transcript(checkpoint)
         checkpoint["captures_applied_steers"] = True
         checkpoint["post_batch_user_message_ids"] = [
@@ -10196,20 +10229,18 @@ def _append_safe_transcript_entries(
             *prefix_transcript,
             *restored,
         ]
-    marker = snapshot.get("model_turn_inflight")
-    if isinstance(marker, Mapping):
-        snapshot = with_updated_model_turn_position(
-            snapshot,
-            turn_index=_nonnegative_int(run.usage_json.get("model_turns")),
-            draft_checkpoint=len(run.assistant_draft),
-            safe_boundary_at=utc_now().isoformat(),
-        )
+    snapshot = with_updated_model_turn_position(
+        snapshot,
+        turn_index=_nonnegative_int(run.usage_json.get("model_turns")),
+        draft_checkpoint=len(run.assistant_draft),
+        safe_boundary_at=utc_now().isoformat(),
+    )
     run.snapshot_json = snapshot
 
 
 def _checkpoint_prefix_user_message_ids(snapshot: Mapping[str, Any]) -> list[str]:
-    checkpoint = snapshot.get("tool_checkpoint")
-    if not isinstance(checkpoint, Mapping):
+    checkpoint = read_tool_checkpoint(snapshot)
+    if checkpoint is None:
         return _checkpoint_message_ids(
             snapshot.get("tool_checkpoint_prefix_user_message_ids")
         )
@@ -10217,8 +10248,8 @@ def _checkpoint_prefix_user_message_ids(snapshot: Mapping[str, Any]) -> list[str
 
 
 def _checkpoint_prefix_transcript(snapshot: Mapping[str, Any]) -> list[dict[str, str]]:
-    checkpoint = snapshot.get("tool_checkpoint")
-    if not isinstance(checkpoint, Mapping):
+    checkpoint = read_tool_checkpoint(snapshot)
+    if checkpoint is None:
         return _checkpoint_transcript_entries(
             snapshot.get("tool_checkpoint_prefix_transcript"),
             fallback_user_message_ids=_checkpoint_message_ids(
@@ -10263,8 +10294,8 @@ def _checkpoint_transcript_user_message_ids(
 def _checkpoint_captured_steer_message_ids(
     snapshot: Mapping[str, Any],
 ) -> set[str]:
-    checkpoint = snapshot.get("tool_checkpoint")
-    if not isinstance(checkpoint, Mapping):
+    checkpoint = read_tool_checkpoint(snapshot)
+    if checkpoint is None:
         return set(
             _checkpoint_transcript_user_message_ids(
                 _checkpoint_prefix_transcript(snapshot)
@@ -10293,13 +10324,31 @@ def _checkpoint_captured_steer_message_ids(
 
 
 def _checkpoint_completed_batches(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
-    checkpoint = snapshot.get("tool_checkpoint")
-    if not isinstance(checkpoint, Mapping):
+    checkpoint = read_tool_checkpoint(snapshot)
+    if checkpoint is None:
         return []
     batches = checkpoint.get("completed_batches")
     if not isinstance(batches, list):
         return []
     return [dict(batch) for batch in batches[-64:] if isinstance(batch, Mapping)]
+
+
+def _duplicate_tool_call_ids(calls: Sequence[Mapping[str, Any]]) -> list[str]:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for call in calls:
+        call_id = str(call.get("id") or "").strip()
+        if not call_id:
+            continue
+        if call_id in seen:
+            duplicates.add(call_id)
+        seen.add(call_id)
+    return sorted(duplicates)
+
+
+def _tool_execution_idempotency_key(run_id: str, tool_call_id: str) -> str:
+    digest = hashlib.sha256(f"{run_id}\0{tool_call_id}".encode("utf-8")).hexdigest()
+    return f"tool:{digest}"
 
 
 def _restored_checkpoint_call(raw_call: Mapping[str, Any]) -> dict[str, Any]:

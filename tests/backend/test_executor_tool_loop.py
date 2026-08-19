@@ -88,6 +88,30 @@ def test_tool_loop_guard_requires_identical_results_and_no_visible_output() -> N
     ) == (None, 0)
 
 
+def test_duplicate_tool_call_ids_are_detected_before_execution() -> None:
+    assert executor_module._duplicate_tool_call_ids(
+        [
+            {"id": "call-b"},
+            {"id": "call-a"},
+            {"id": "call-b"},
+            {"id": "call-a"},
+        ]
+    ) == ["call-a", "call-b"]
+
+
+def test_tool_execution_idempotency_key_is_stable_and_bounded() -> None:
+    first = executor_module._tool_execution_idempotency_key("run-1", "call-1")
+
+    assert first == executor_module._tool_execution_idempotency_key(
+        "run-1", "call-1"
+    )
+    assert first != executor_module._tool_execution_idempotency_key(
+        "run-1", "call-2"
+    )
+    assert first.startswith("tool:")
+    assert len(first) <= 128
+
+
 def test_file_output_mode_is_a_preference_until_artifact_intent_is_explicit() -> None:
     assert executor_module._normalized_output_mode("file") == "file"
     intent_schema = executor_module._FILE_OUTPUT_INTENT_TOOL_SCHEMA["function"]

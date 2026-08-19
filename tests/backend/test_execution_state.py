@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from lumina.runs.execution_state import (
     execution_recovery_state,
+    read_tool_checkpoint,
     with_model_turn_inflight,
     with_tool_checkpoint,
     with_updated_model_turn_position,
@@ -35,14 +36,23 @@ def test_model_turn_is_the_current_position_over_an_older_tool_checkpoint() -> N
 
 
 def test_tool_checkpoint_is_a_safe_recovery_position() -> None:
-    state = execution_recovery_state(
-        {"tool_checkpoint": {"version": "2", "kind": "approval"}}
-    )
+    snapshot = {"tool_checkpoint": {"version": "2", "kind": "approval"}}
+    state = execution_recovery_state(snapshot)
 
     assert state.phase == "tool_checkpoint"
     assert state.model_turn is None
     assert state.tool_checkpoint_version == 2
     assert state.retained_draft_length(11, preserve_untracked=False) == 11
+    checkpoint = read_tool_checkpoint(snapshot)
+    assert checkpoint == {"version": "2", "kind": "approval"}
+    assert checkpoint is not snapshot["tool_checkpoint"]
+
+
+def test_malformed_tool_checkpoint_is_not_a_recovery_position() -> None:
+    snapshot = {"tool_checkpoint": "not-a-mapping"}
+
+    assert read_tool_checkpoint(snapshot) is None
+    assert execution_recovery_state(snapshot).phase == "untracked"
 
 
 def test_untracked_position_keeps_legacy_recovery_policy_explicit() -> None:

@@ -54,8 +54,7 @@ def execution_recovery_state(
     snapshot: Mapping[str, Any],
 ) -> ExecutionRecoveryStateV1:
     marker = snapshot.get(MODEL_TURN_INFLIGHT_KEY)
-    checkpoint = snapshot.get(TOOL_CHECKPOINT_KEY)
-    checkpoint_mapping = checkpoint if isinstance(checkpoint, Mapping) else None
+    checkpoint_mapping = read_tool_checkpoint(snapshot)
     has_tool_checkpoint = checkpoint_mapping is not None
     checkpoint_kind = (
         str(checkpoint_mapping.get("kind", "")).strip() or None
@@ -94,6 +93,11 @@ def execution_recovery_state(
         tool_checkpoint_kind=None,
         tool_checkpoint_version=None,
     )
+
+
+def read_tool_checkpoint(snapshot: Mapping[str, Any]) -> dict[str, Any] | None:
+    checkpoint = snapshot.get(TOOL_CHECKPOINT_KEY)
+    return dict(checkpoint) if isinstance(checkpoint, Mapping) else None
 
 
 def with_model_turn_inflight(
@@ -186,6 +190,7 @@ __all__ = [
     "ExecutionRecoveryStateV1",
     "ModelTurnPosition",
     "execution_recovery_state",
+    "read_tool_checkpoint",
     "with_model_turn_inflight",
     "with_tool_checkpoint",
     "with_updated_model_turn_position",
