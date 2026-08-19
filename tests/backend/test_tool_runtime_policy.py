@@ -11,6 +11,8 @@ from lumina.agent.tool_runtime_policy import (
     search_deferred_tools,
     should_parallelize_tool_calls,
     tool_replay_policy,
+    tool_replay_policy_from_snapshot,
+    tool_replay_policy_snapshot,
     wrap_untrusted_tool_result,
 )
 
@@ -167,6 +169,9 @@ def test_replay_policy_declares_read_and_write_safety_in_one_boundary() -> None:
     assert read_policy.requires_idempotency_key is False
     assert write_policy.replay_safe is False
     assert write_policy.requires_idempotency_key is True
+    assert read_policy.effect == "read_only"
+    assert write_policy.effect == "workspace_write"
+    assert read_policy.revision == write_policy.revision == 1
     assert read_policy.result_reusable is write_policy.result_reusable is True
     assert (
         read_policy.unknown_outcome_fail_closed
@@ -183,6 +188,31 @@ def test_replay_policy_never_reexecutes_an_unknown_started_outcome() -> None:
 
     assert decision.action == "fail_closed"
     assert decision.error_code == "tool_outcome_unknown"
+
+
+def test_replay_policy_snapshot_preserves_original_mcp_effect() -> None:
+    policy = tool_replay_policy(
+        "mcp_records",
+        mcp_original_name="update_records",
+    )
+
+    restored = tool_replay_policy_from_snapshot(tool_replay_policy_snapshot(policy))
+
+    assert restored == policy
+    assert restored.effect == "external_write"
+    assert restored.requires_idempotency_key is True
+
+
+def test_invalid_replay_policy_snapshot_falls_back_to_fail_closed_contract() -> None:
+    corrupted = tool_replay_policy_snapshot(tool_replay_policy("web_search"))
+    corrupted["unknownOutcomeFailClosed"] = False
+
+    restored = tool_replay_policy_from_snapshot(corrupted)
+
+    assert restored.effect == "unknown"
+    assert restored.replay_safe is False
+    assert restored.unknown_outcome_fail_closed is True
+    assert restored.requires_idempotency_key is True
 
 
 def test_untrusted_wrapper_neutralizes_boundary_breakout() -> None:

@@ -92,12 +92,15 @@ class ToolSurface:
 
 
 ToolReplayAction = Literal["execute", "reuse_result", "fail_closed"]
+TOOL_REPLAY_POLICY_REVISION = 1
 
 
 @dataclass(frozen=True, slots=True)
 class ToolReplayPolicy:
     """Durable replay contract; unknown started outcomes always take precedence."""
 
+    revision: int
+    effect: str
     replay_safe: bool
     result_reusable: bool
     unknown_outcome_fail_closed: bool
@@ -111,25 +114,31 @@ class ToolReplayDecision:
     error_message: str | None = None
 
 
-_READ_REPLAY_POLICY = ToolReplayPolicy(
-    replay_safe=True,
-    result_reusable=True,
-    unknown_outcome_fail_closed=True,
-    requires_idempotency_key=False,
-)
-_MUTATING_REPLAY_POLICY = ToolReplayPolicy(
+_CONSERVATIVE_REPLAY_POLICY = ToolReplayPolicy(
+    revision=TOOL_REPLAY_POLICY_REVISION,
+    effect="unknown",
     replay_safe=False,
     result_reusable=True,
     unknown_outcome_fail_closed=True,
     requires_idempotency_key=True,
 )
 _REPLAY_POLICY_BY_EFFECT: Mapping[str, ToolReplayPolicy] = {
-    "read_only": _READ_REPLAY_POLICY,
-    "external_read": _READ_REPLAY_POLICY,
-    "workspace_write": _MUTATING_REPLAY_POLICY,
-    "external_write": _MUTATING_REPLAY_POLICY,
-    "local_execution": _MUTATING_REPLAY_POLICY,
-    "destructive": _MUTATING_REPLAY_POLICY,
+    effect: ToolReplayPolicy(
+        revision=TOOL_REPLAY_POLICY_REVISION,
+        effect=effect,
+        replay_safe=effect in {"read_only", "external_read"},
+        result_reusable=True,
+        unknown_outcome_fail_closed=True,
+        requires_idempotency_key=effect not in {"read_only", "external_read"},
+    )
+    for effect in (
+        "read_only",
+        "external_read",
+        "workspace_write",
+        "external_write",
+        "local_execution",
+        "destructive",
+    )
 }
 
 
@@ -143,7 +152,48 @@ def tool_replay_policy(
         approval_mode="on_risk",
         mcp_original_name=mcp_original_name,
     )
-    return _REPLAY_POLICY_BY_EFFECT.get(risk.effect, _MUTATING_REPLAY_POLICY)
+    return _REPLAY_POLICY_BY_EFFECT.get(risk.effect, _CONSERVATIVE_REPLAY_POLICY)
+
+
+def tool_replay_policy_snapshot(policy: ToolReplayPolicy) -> dict[str, Any]:
+    return {
+        "revision": policy.revision,
+        "effect": policy.effect,
+        "replaySafe": policy.replay_safe,
+        "resultReusable": policy.result_reusable,
+        "unknownOutcomeFailClosed": policy.unknown_outcome_fail_closed,
+        "requiresIdempotencyKey": policy.requires_idempotency_key,
+    }
+
+
+def tool_replay_policy_from_snapshot(snapshot: Any) -> ToolReplayPolicy:
+    if not isinstance(snapshot, Mapping):
+        return _CONSERVATIVE_REPLAY_POLICY
+    revision = snapshot.get("revision")
+    effect = snapshot.get("effect")
+    boolean_fields = {
+        "replay_safe": snapshot.get("replaySafe"),
+        "result_reusable": snapshot.get("resultReusable"),
+        "unknown_outcome_fail_closed": snapshot.get("unknownOutcomeFailClosed"),
+        "requires_idempotency_key": snapshot.get("requiresIdempotencyKey"),
+    }
+    if (
+        revision != TOOL_REPLAY_POLICY_REVISION
+        or not isinstance(effect, str)
+        or not effect
+        or not all(isinstance(value, bool) for value in boolean_fields.values())
+    ):
+        return _CONSERVATIVE_REPLAY_POLICY
+    restored = ToolReplayPolicy(
+        revision=revision,
+        effect=effect,
+        replay_safe=bool(boolean_fields["replay_safe"]),
+        result_reusable=bool(boolean_fields["result_reusable"]),
+        unknown_outcome_fail_closed=bool(boolean_fields["unknown_outcome_fail_closed"]),
+        requires_idempotency_key=bool(boolean_fields["requires_idempotency_key"]),
+    )
+    expected = _REPLAY_POLICY_BY_EFFECT.get(effect)
+    return restored if restored == expected else _CONSERVATIVE_REPLAY_POLICY
 
 
 def decide_tool_replay(
@@ -378,6 +428,7 @@ def wrap_untrusted_tool_result(content: str, *, source: str) -> str:
 
 
 __all__ = [
+    "TOOL_REPLAY_POLICY_REVISION",
     "ToolReplayDecision",
     "ToolReplayPolicy",
     "ToolSurface",
@@ -390,6 +441,8 @@ __all__ = [
     "search_deferred_tools",
     "should_parallelize_tool_calls",
     "tool_replay_policy",
+    "tool_replay_policy_from_snapshot",
+    "tool_replay_policy_snapshot",
     "tool_round_fingerprint",
     "wrap_untrusted_tool_result",
 ]

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from lumina.agent.loop_reducer import decide_provider_round
+from lumina.agent.loop_reducer import (
+    decide_completed_tool_batch,
+    decide_provider_round,
+)
 from lumina.agent.tool_runtime_policy import decide_tool_replay, tool_replay_policy
 
 
@@ -90,3 +93,28 @@ def test_provider_round_fault_matrix(
     )
 
     assert decision.action == expected_action
+
+
+@pytest.mark.parametrize(
+    ("repeat_count", "expected_action", "expected_event", "inject_warning"),
+    (
+        (1, "continue_model", None, False),
+        (2, "continue_model", "tool_loop_warning", True),
+        (3, "fail_run", "tool_loop_detected", False),
+    ),
+)
+def test_completed_tool_batch_next_action_matrix(
+    repeat_count: int,
+    expected_action: str,
+    expected_event: str | None,
+    inject_warning: bool,
+) -> None:
+    decision = decide_completed_tool_batch(
+        repeat_count=repeat_count,
+        warning_repeat_count=2,
+        maximum_repeat_count=3,
+    )
+
+    assert decision.next_action == expected_action
+    assert decision.loop_event == expected_event
+    assert decision.inject_loop_warning is inject_warning

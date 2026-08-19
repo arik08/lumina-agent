@@ -61,7 +61,7 @@ from .image_tool import (
     prepare_image_tool,
     redacted_generate_image_input,
 )
-from .loop_reducer import decide_provider_round
+from .loop_reducer import decide_completed_tool_batch, decide_provider_round
 from .report_assets import resolve_report_images
 from .streaming import _ContinuationDeduper, _InlineMemoryStream
 from .text_utils import _bounded_text
@@ -84,6 +84,7 @@ from .tool_schemas import (
     _skill_activation_tool_schema,
 )
 from .tool_runtime_policy import (
+    ToolReplayPolicy,
     advance_tool_loop_guard as _advance_tool_loop_guard,
     build_tool_surface,
     decide_tool_replay,
@@ -94,6 +95,8 @@ from .tool_runtime_policy import (
     should_parallelize_tool_calls,
     tool_round_fingerprint as _tool_round_fingerprint,
     tool_replay_policy,
+    tool_replay_policy_from_snapshot,
+    tool_replay_policy_snapshot,
     wrap_untrusted_tool_result,
 )
 from ..config import Settings, get_settings
@@ -3244,11 +3247,12 @@ class LocalRunExecutor:
                     visible_output="".join(round_text),
                 )
             )
-            loop_guard_triggered = (
-                tool_loop_repeat_count >= _TOOL_LOOP_WARNING_REPEAT_COUNT
+            completed_batch_decision = decide_completed_tool_batch(
+                repeat_count=tool_loop_repeat_count,
+                warning_repeat_count=_TOOL_LOOP_WARNING_REPEAT_COUNT,
+                maximum_repeat_count=_TOOL_LOOP_MAX_REPEAT_COUNT,
             )
-            loop_guard_terminal = tool_loop_repeat_count >= _TOOL_LOOP_MAX_REPEAT_COUNT
-            if loop_guard_triggered and not loop_guard_terminal:
+            if completed_batch_decision.inject_loop_warning:
                 messages.append(
                     ProviderMessage(
                         role="system",
@@ -3307,20 +3311,16 @@ class LocalRunExecutor:
                 response_state_items=response_state_items,
             ):
                 return
-            if loop_guard_triggered:
+            if completed_batch_decision.loop_event is not None:
                 await self._append_owned_run_event(
                     run_id,
-                    (
-                        "tool_loop_detected"
-                        if loop_guard_terminal
-                        else "tool_loop_warning"
-                    ),
+                    completed_batch_decision.loop_event,
                     {
                         "repeatCount": tool_loop_repeat_count,
                         "toolNames": [str(call["name"]) for call in calls],
                     },
                 )
-            if loop_guard_terminal:
+            if completed_batch_decision.next_action == "fail_run":
                 await self._fail_run(
                     run_id,
                     "tool_loop_detected",
@@ -4445,7 +4445,11 @@ class LocalRunExecutor:
                     ToolExecution.tool_call_id == str(tool_call["id"]),
                 )
             )
-            policy = tool_replay_policy(str(tool_call["name"]))
+            policy = (
+                tool_replay_policy_from_snapshot(tool.replay_policy_json)
+                if tool is not None
+                else tool_replay_policy(str(tool_call["name"]))
+            )
             decision = decide_tool_replay(
                 policy,
                 execution_status=tool.status if tool is not None else None,
@@ -4502,6 +4506,12 @@ class LocalRunExecutor:
             tool_call.get("arguments")
         )
         mcp_tool = mcp_tools.get(str(tool_call["name"]))
+        replay_policy = tool_replay_policy(
+            str(tool_call["name"]),
+            mcp_original_name=(
+                mcp_tool.original_name if mcp_tool is not None else None
+            ),
+        )
         stored_arguments = (
             _mcp_input_metadata(arguments)
             if mcp_tool is not None
@@ -4515,6 +4525,7 @@ class LocalRunExecutor:
             run_id,
             tool_call,
             stored_arguments,
+            replay_policy,
         )
         await event_broker.notify(run_id)
         return await self._fail_tool_execution(
@@ -4528,6 +4539,7 @@ class LocalRunExecutor:
         run_id: str,
         tool_call: Mapping[str, Any],
         stored_arguments: Mapping[str, Any],
+        replay_policy: ToolReplayPolicy,
     ) -> str:
         with session_scope() as db:
             run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
@@ -4551,6 +4563,7 @@ class LocalRunExecutor:
                     run_id=run.id,
                     tool_call_id=str(tool_call["id"]),
                     tool_name=str(tool_call["name"]),
+                    replay_policy_json=tool_replay_policy_snapshot(replay_policy),
                     idempotency_key=_tool_execution_idempotency_key(
                         run.id, str(tool_call["id"])
                     ),
@@ -4560,6 +4573,11 @@ class LocalRunExecutor:
             elif tool.idempotency_key is None:
                 tool.idempotency_key = _tool_execution_idempotency_key(
                     run.id, tool.tool_call_id
+                )
+            tool.replay_policy_json = tool_replay_policy_snapshot(replay_policy)
+            if replay_policy.requires_idempotency_key and not tool.idempotency_key:
+                raise RuntimeError(
+                    "Mutating Tool execution requires a durable idempotency key"
                 )
             tool.validated_input_json = dict(stored_arguments)
             tool.status = "running"
@@ -6347,6 +6365,12 @@ class LocalRunExecutor:
                 }
             }
         mcp_tool = (mcp_tools or {}).get(str(tool_call["name"]))
+        replay_policy = tool_replay_policy(
+            str(tool_call["name"]),
+            mcp_original_name=(
+                mcp_tool.original_name if mcp_tool is not None else None
+            ),
+        )
         stored_arguments = (
             _mcp_input_metadata(arguments)
             if mcp_tool is not None
@@ -6360,6 +6384,7 @@ class LocalRunExecutor:
             run_id,
             tool_call,
             stored_arguments,
+            replay_policy,
         )
         await event_broker.notify(run_id)
         await asyncio.sleep(0.12)
@@ -7614,6 +7639,7 @@ class LocalRunExecutor:
         run_id: str,
         tool_call: Mapping[str, Any],
         stored_arguments: Mapping[str, Any],
+        replay_policy: ToolReplayPolicy,
     ) -> str:
         with session_scope() as db:
             run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
@@ -7637,6 +7663,7 @@ class LocalRunExecutor:
                     run_id=run.id,
                     tool_call_id=str(tool_call["id"]),
                     tool_name=str(tool_call["name"]),
+                    replay_policy_json=tool_replay_policy_snapshot(replay_policy),
                     idempotency_key=_tool_execution_idempotency_key(
                         run.id, str(tool_call["id"])
                     ),
@@ -7646,6 +7673,11 @@ class LocalRunExecutor:
             elif tool.idempotency_key is None:
                 tool.idempotency_key = _tool_execution_idempotency_key(
                     run.id, tool.tool_call_id
+                )
+            tool.replay_policy_json = tool_replay_policy_snapshot(replay_policy)
+            if replay_policy.requires_idempotency_key and not tool.idempotency_key:
+                raise RuntimeError(
+                    "Mutating Tool execution requires a durable idempotency key"
                 )
             tool.validated_input_json = dict(stored_arguments)
             tool.status = "running"
@@ -8738,6 +8770,9 @@ class LocalRunExecutor:
                 run_id=run.id,
                 tool_call_id=str(tool_call["id"]),
                 tool_name=tool_name,
+                replay_policy_json=tool_replay_policy_snapshot(
+                    tool_replay_policy(tool_name)
+                ),
                 idempotency_key=_tool_execution_idempotency_key(
                     run.id, str(tool_call["id"])
                 ),

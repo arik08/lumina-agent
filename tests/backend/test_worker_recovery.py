@@ -4,7 +4,11 @@ import asyncio
 from copy import deepcopy
 from datetime import timedelta
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
+import time
 
 import pytest
 from sqlalchemy import select
@@ -119,6 +123,7 @@ def test_tool_execution_claim_is_durable_and_cannot_be_reopened(
         run_id,
         call,
         {"path": "README.md"},
+        executor_module.tool_replay_policy("read_file"),
     )
 
     with pytest.raises(RuntimeError, match="cannot be claimed again"):
@@ -126,6 +131,7 @@ def test_tool_execution_claim_is_durable_and_cannot_be_reopened(
             run_id,
             call,
             {"path": "README.md"},
+            executor_module.tool_replay_policy("read_file"),
         )
 
     with SessionLocal() as db:
@@ -137,6 +143,39 @@ def test_tool_execution_claim_is_durable_and_cannot_be_reopened(
         assert tools[0].status == "running"
         assert tools[0].idempotency_key is not None
         assert tools[0].idempotency_key.startswith("tool:")
+        assert tools[0].replay_policy_json["effect"] == "read_only"
+        assert tools[0].replay_policy_json["revision"] == 1
+
+
+def test_mutating_tool_refuses_to_start_without_a_durable_idempotency_key(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    key = "tool-idempotency-enforcement"
+    run_id = _direct_run(tmp_path, key)
+    executor = LocalRunExecutor(_settings(tmp_path, key))
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run is not None
+        run.worker_id = executor._worker_id
+        db.commit()
+    monkeypatch.setattr(
+        executor_module, "_tool_execution_idempotency_key", lambda *_: ""
+    )
+
+    with pytest.raises(RuntimeError, match="requires a durable idempotency key"):
+        executor._start_tool_execution_database(
+            run_id,
+            {"id": "write-without-key", "name": "write_file"},
+            {"path": "result.txt", "content": "safe"},
+            executor_module.tool_replay_policy("write_file"),
+        )
+
+    with SessionLocal() as db:
+        assert (
+            db.scalar(select(ToolExecution.id).where(ToolExecution.run_id == run_id))
+            is None
+        )
 
 
 def test_tool_replay_policy_reuses_completed_and_fails_closed_unknown_outcomes(
@@ -158,11 +197,13 @@ def test_tool_replay_policy_reuses_completed_and_fails_closed_unknown_outcomes(
         run_id,
         completed_call,
         {"query": "steel"},
+        executor_module.tool_replay_policy("web_search"),
     )
     executor._start_tool_execution_database(
         run_id,
         running_call,
         {"path": "result.txt", "content": "safe"},
+        executor_module.tool_replay_policy("write_file"),
     )
     with SessionLocal() as db:
         completed = db.get(ToolExecution, completed_id)
@@ -197,6 +238,7 @@ def test_tool_replay_policy_reuses_completed_and_fails_closed_unknown_outcomes(
         assert running is not None
         assert running.status == "failed"
         assert running.error_code == "tool_outcome_unknown"
+        assert running.replay_policy_json["effect"] == "workspace_write"
 
 
 @pytest.mark.asyncio
@@ -489,6 +531,146 @@ def test_worker_recovery_never_replays_an_unknown_tool_outcome(tmp_path: Path) -
         assert [subtask.status for subtask in subtasks] == ["failed", "failed"]
         assert subtasks[0].error_code == "worker_restarted_unknown_outcome"
         assert subtasks[1].error_code == "worker_restarted_before_execution"
+
+
+def test_process_kill_after_tool_start_fails_closed_without_reexecution(
+    tmp_path: Path,
+) -> None:
+    key = "process-kill-running-tool"
+    run_id = _direct_run(tmp_path, key)
+    _prepare_tools_running_run(run_id)
+    process = _start_tool_crash_worker(tmp_path, key, run_id, "running")
+    try:
+        _wait_for_crash_worker(process, tmp_path / f"{key}.running.ready")
+        process.kill()
+        process.wait(timeout=5)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+    with SessionLocal() as db:
+        tool = db.scalar(select(ToolExecution).where(ToolExecution.run_id == run_id))
+        assert tool is not None
+        assert tool.status == "running"
+        assert tool.replay_policy_json["effect"] == "workspace_write"
+        assert tool.idempotency_key
+        batch = prepare_worker_recovery(db)
+        db.commit()
+        assert batch.resumable_run_ids == (run_id,)
+
+    with SessionLocal() as db:
+        tools = list(
+            db.scalars(select(ToolExecution).where(ToolExecution.run_id == run_id))
+        )
+        assert len(tools) == 1
+        assert tools[0].status == "failed"
+        assert tools[0].error_code == "worker_restarted_unknown_outcome"
+
+
+def test_process_kill_after_external_side_effect_never_invokes_it_twice(
+    tmp_path: Path,
+) -> None:
+    key = "process-kill-after-external-effect"
+    run_id = _direct_run(tmp_path, key)
+    _prepare_tools_running_run(run_id)
+    process = _start_tool_crash_worker(tmp_path, key, run_id, "external_effect")
+    try:
+        _wait_for_crash_worker(process, tmp_path / f"{key}.external_effect.ready")
+        assert (tmp_path / "external-side-effect.txt").read_text(
+            encoding="utf-8"
+        ) == "invoked-once"
+        process.kill()
+        process.wait(timeout=5)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+    with SessionLocal() as db:
+        batch = prepare_worker_recovery(db)
+        db.commit()
+        assert batch.resumable_run_ids == (run_id,)
+
+    executor = LocalRunExecutor(_settings(tmp_path, key))
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run is not None
+        run.worker_id = executor._worker_id
+        db.commit()
+    payload, notify = executor._persisted_tool_result_database(
+        run_id,
+        {"id": "subprocess-external_effect-call", "name": "write_file"},
+    )
+
+    assert payload is not None
+    assert payload["error"]["code"] == "worker_restarted_unknown_outcome"
+    assert payload["error"]["retryable"] is False
+    assert notify is False
+    assert (tmp_path / "external-side-effect.txt").read_text(
+        encoding="utf-8"
+    ) == "invoked-once"
+    with SessionLocal() as db:
+        assert (
+            len(
+                list(
+                    db.scalars(
+                        select(ToolExecution).where(ToolExecution.run_id == run_id)
+                    )
+                )
+            )
+            == 1
+        )
+
+
+def test_process_kill_after_tool_result_commit_reuses_persisted_result(
+    tmp_path: Path,
+) -> None:
+    key = "process-kill-completed-tool"
+    run_id = _direct_run(tmp_path, key)
+    _prepare_tools_running_run(run_id)
+    process = _start_tool_crash_worker(tmp_path, key, run_id, "completed")
+    try:
+        _wait_for_crash_worker(process, tmp_path / f"{key}.completed.ready")
+        process.kill()
+        process.wait(timeout=5)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+    with SessionLocal() as db:
+        tool = db.scalar(select(ToolExecution).where(ToolExecution.run_id == run_id))
+        assert tool is not None and tool.status == "completed"
+        assert tool.replay_policy_json["effect"] == "read_only"
+        batch = prepare_worker_recovery(db)
+        db.commit()
+        assert batch.resumable_run_ids == (run_id,)
+
+    executor = LocalRunExecutor(_settings(tmp_path, key))
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run is not None
+        run.worker_id = executor._worker_id
+        db.commit()
+    payload, notify = executor._persisted_tool_result_database(
+        run_id,
+        {"id": "subprocess-completed-call", "name": "web_search"},
+    )
+
+    assert payload == {"items": ["persisted-before-process-kill"]}
+    assert notify is False
+    with SessionLocal() as db:
+        assert (
+            len(
+                list(
+                    db.scalars(
+                        select(ToolExecution).where(ToolExecution.run_id == run_id)
+                    )
+                )
+            )
+            == 1
+        )
 
 
 def test_graceful_shutdown_records_interrupted_then_schedules_recovery(
@@ -1104,6 +1286,70 @@ def _direct_run(tmp_path: Path, key: str) -> str:
     create_schema()
     bootstrap_database(settings=settings)
     return _add_run_to_current_database(key)
+
+
+def _prepare_tools_running_run(run_id: str) -> None:
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run is not None
+        _move_to_model(db, run)
+        complete_plan_step(db, run, "model", reason="test_model_completed")
+        transition_run(db, run, TOOLS_RUNNING)
+        start_plan_step(db, run, "tools", reason="test_tools")
+        db.commit()
+
+
+def _start_tool_crash_worker(
+    tmp_path: Path,
+    key: str,
+    run_id: str,
+    phase: str,
+) -> subprocess.Popen[str]:
+    repository_root = Path(__file__).resolve().parents[2]
+    helper = repository_root / "tests" / "backend" / "helpers" / "tool_crash_worker.py"
+    marker = tmp_path / f"{key}.{phase}.ready"
+    environment = os.environ.copy()
+    server_source = str(repository_root / "apps" / "server" / "src")
+    environment["PYTHONPATH"] = os.pathsep.join(
+        filter(None, (server_source, environment.get("PYTHONPATH", "")))
+    )
+    return subprocess.Popen(
+        (
+            sys.executable,
+            str(helper),
+            str(tmp_path / f"{key}.db"),
+            str(tmp_path),
+            run_id,
+            phase,
+            str(marker),
+        ),
+        cwd=repository_root,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+
+def _wait_for_crash_worker(
+    process: subprocess.Popen[str],
+    marker: Path,
+) -> None:
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if marker.exists():
+            assert process.poll() is None
+            return
+        if process.poll() is not None:
+            stdout, stderr = process.communicate(timeout=1)
+            raise AssertionError(
+                f"Crash worker exited early ({process.returncode}): {stdout}\n{stderr}"
+            )
+        time.sleep(0.05)
+    process.kill()
+    stdout, stderr = process.communicate(timeout=5)
+    raise AssertionError(f"Crash worker did not become ready: {stdout}\n{stderr}")
 
 
 def _settings(tmp_path: Path, key: str) -> Settings:

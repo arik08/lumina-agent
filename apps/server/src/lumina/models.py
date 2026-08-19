@@ -835,6 +835,9 @@ class ToolExecution(UUIDPrimaryKeyMixin, Base):
     validated_input_json: Mapped[dict[str, Any]] = mapped_column(
         JSON, default=dict, nullable=False
     )
+    replay_policy_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
     status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False)
     result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     result_summary: Mapped[str | None] = mapped_column(Text)

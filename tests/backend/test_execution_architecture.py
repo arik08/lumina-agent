@@ -8,6 +8,7 @@ _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 _SERVER_SOURCE = _REPOSITORY_ROOT / "apps" / "server" / "src" / "lumina"
 _EXECUTION_STATE_MODULE = _SERVER_SOURCE / "runs" / "execution_state.py"
 _EXECUTOR_MODULE = _SERVER_SOURCE / "agent" / "executor.py"
+_MODELS_MODULE = _SERVER_SOURCE / "models.py"
 
 
 def _python_sources() -> list[Path]:
@@ -78,3 +79,11 @@ def test_executor_delegates_replay_and_provider_round_decisions() -> None:
 
     assert "round_decision = decide_provider_round(" in source
     assert "decision = decide_tool_replay(" in source
+    assert "completed_batch_decision = decide_completed_tool_batch(" in source
+    assert "tool_replay_policy_from_snapshot(tool.replay_policy_json)" in source
+
+
+def test_tool_execution_model_keeps_the_replay_policy_snapshot() -> None:
+    source = _MODELS_MODULE.read_text(encoding="utf-8")
+
+    assert "replay_policy_json: Mapped[dict[str, Any]]" in source

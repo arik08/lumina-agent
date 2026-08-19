@@ -117,7 +117,7 @@ Tool Result까지 저장되었지만 다음 모델 Turn 전에 중단된 Run은 
 - 승인 대기 상태
 - 마지막으로 완료된 단계
 
-부작용이 있는 Tool을 재실행하기 전에 이전 실행 완료 여부와 idempotency key를 확인합니다.
+부작용이 있는 Tool을 재실행하기 전에 이전 실행 완료 여부와 idempotency key를 확인합니다. 각 `ToolExecution`은 실행 시점의 effect, replay 허용 여부, 완료 결과 재사용 여부, unknown-outcome fail-closed 여부와 idempotency 요구를 revision과 함께 snapshot으로 고정하며, 복구 시 현재 Tool 이름으로 정책을 다시 추론하지 않습니다.
 
 ## 다중 사용자와 공유 모드
 

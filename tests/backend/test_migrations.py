@@ -89,6 +89,9 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         prompt_cache_seed_columns = {
             column["name"] for column in inspector.get_columns("prompt_cache_seeds")
         }
+        tool_execution_columns = {
+            column["name"] for column in inspector.get_columns("tool_executions")
+        }
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
             knowledge_fts_trigger_count = connection.scalar(
@@ -222,7 +225,8 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         "last_warm_input_tokens",
         "last_warm_cached_tokens",
     } <= prompt_cache_seed_columns
-    assert revision == "0076"
+    assert revision == "0077"
+    assert "replay_policy_json" in tool_execution_columns
     assert "ix_run_events_run_type" in run_event_indexes
     assert "ix_run_events_replay" not in run_event_indexes
     assert "ix_deep_analysis_events_replay" not in deep_analysis_event_indexes
@@ -605,6 +609,47 @@ def test_migration_0076_applies_standard_context_eighty_five_percent_safety(
     ]
 
 
+def test_tool_replay_policy_snapshot_migration_0077_round_trip(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "tool-replay-policy-round-trip.db"
+    database_url = f"sqlite:///{database.as_posix()}"
+    upgrade_database(database_url, "0076")
+
+    engine = create_engine(database_url)
+    try:
+        assert "replay_policy_json" not in {
+            column["name"] for column in inspect(engine).get_columns("tool_executions")
+        }
+    finally:
+        engine.dispose()
+
+    upgrade_database(database_url, "0077")
+    engine = create_engine(database_url)
+    try:
+        assert "replay_policy_json" in {
+            column["name"] for column in inspect(engine).get_columns("tool_executions")
+        }
+    finally:
+        engine.dispose()
+
+    config = Config(str(SERVER_ROOT / "alembic.ini"))
+    config.attributes["database_url"] = database_url
+    command.downgrade(config, "0076")
+    engine = create_engine(database_url)
+    try:
+        columns = {
+            column["name"] for column in inspect(engine).get_columns("tool_executions")
+        }
+        with engine.connect() as connection:
+            revision = MigrationContext.configure(connection).get_current_revision()
+    finally:
+        engine.dispose()
+
+    assert "replay_policy_json" not in columns
+    assert revision == "0076"
+
+
 def test_message_search_fts_migration_0056_round_trip(tmp_path: Path) -> None:
     database = tmp_path / "message-fts-round-trip.db"
     database_url = f"sqlite:///{database.as_posix()}"
@@ -861,7 +906,7 @@ def test_context_migration_adopts_legacy_create_all_table(tmp_path: Path) -> Non
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0076"
+                MigrationContext.configure(connection).get_current_revision() == "0077"
             )
     finally:
         engine.dispose()
@@ -891,7 +936,7 @@ def test_recent_migrations_adopt_tables_precreated_by_runtime_schema(
     try:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-        assert revision == "0076"
+        assert revision == "0077"
     finally:
         engine.dispose()
 

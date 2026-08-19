@@ -13,6 +13,8 @@ ProviderRoundAction = Literal[
     "resolve_empty",
     "finish_text",
 ]
+ToolBatchNextAction = Literal["continue_model", "fail_run"]
+ToolLoopEvent = Literal["tool_loop_warning", "tool_loop_detected"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +22,13 @@ class ProviderRoundDecision:
     action: ProviderRoundAction
     empty_response_retry_attempt: int
     output_continuation_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class CompletedToolBatchDecision:
+    next_action: ToolBatchNextAction
+    loop_event: ToolLoopEvent | None
+    inject_loop_warning: bool
 
 
 def decide_provider_round(
@@ -69,4 +78,34 @@ def decide_provider_round(
     )
 
 
-__all__ = ["ProviderRoundDecision", "decide_provider_round"]
+def decide_completed_tool_batch(
+    *,
+    repeat_count: int,
+    warning_repeat_count: int,
+    maximum_repeat_count: int,
+) -> CompletedToolBatchDecision:
+    if repeat_count >= maximum_repeat_count:
+        return CompletedToolBatchDecision(
+            next_action="fail_run",
+            loop_event="tool_loop_detected",
+            inject_loop_warning=False,
+        )
+    if repeat_count >= warning_repeat_count:
+        return CompletedToolBatchDecision(
+            next_action="continue_model",
+            loop_event="tool_loop_warning",
+            inject_loop_warning=True,
+        )
+    return CompletedToolBatchDecision(
+        next_action="continue_model",
+        loop_event=None,
+        inject_loop_warning=False,
+    )
+
+
+__all__ = [
+    "CompletedToolBatchDecision",
+    "ProviderRoundDecision",
+    "decide_completed_tool_batch",
+    "decide_provider_round",
+]
