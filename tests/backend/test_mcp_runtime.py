@@ -14,6 +14,7 @@ import pytest
 
 from lumina.config import Settings
 from lumina.mcp.runtime import (
+    MCP_IDEMPOTENCY_META_KEY,
     McpRuntime,
     McpRuntimeError,
     McpServerConfig,
@@ -241,8 +242,13 @@ async def test_waiting_tool_call_reconnects_after_connection_is_retired(
             return ({"name": "echo", "description": "Echo", "inputSchema": SCHEMA},)
 
         async def call_tool(
-            self, _name: str, _arguments: dict[str, Any]
+            self,
+            _name: str,
+            _arguments: dict[str, Any],
+            *,
+            idempotency_key: str | None = None,
         ) -> dict[str, Any]:
+            assert idempotency_key is None
             self.calls += 1
             if self.fail:
                 first_call_started.set()
@@ -604,7 +610,11 @@ async def test_streamable_http_headers_session_sse_and_timeout_cancellation(
         environment={"HTTP_TOKEN": "http-secret"},
     )
     tool = (await runtime.prepare_servers((_http_config(),)))[0]
-    result = await runtime.call_tool(tool, {"value": "ok"})
+    result = await runtime.call_tool(
+        tool,
+        {"value": "ok"},
+        idempotency_key="tool:stable-execution-key",
+    )
     assert result["content"] == [{"type": "text", "text": "done"}]
     assert server.last_stream is not None and server.last_stream.closed is True
     assert all(
@@ -623,6 +633,13 @@ async def test_streamable_http_headers_session_sse_and_timeout_cancellation(
     assert (
         sum(message.get("method") == "tools/list" for message in server.messages) == 1
     )
+    tool_call = next(
+        message for message in server.messages if message.get("method") == "tools/call"
+    )
+    assert tool_call["params"]["arguments"] == {"value": "ok"}
+    assert tool_call["params"]["_meta"] == {
+        MCP_IDEMPOTENCY_META_KEY: "tool:stable-execution-key"
+    }
     await runtime.close()
 
     delayed = _HttpMcpServer(delay_call=True)

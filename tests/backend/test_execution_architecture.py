@@ -74,6 +74,24 @@ def test_tool_execution_records_always_have_an_idempotency_key() -> None:
     assert offenders == []
 
 
+def test_executor_forwards_the_durable_idempotency_key_to_mcp() -> None:
+    tree = ast.parse(
+        _EXECUTOR_MODULE.read_text(encoding="utf-8"), filename=str(_EXECUTOR_MODULE)
+    )
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "call_tool"
+        and isinstance(node.func.value, ast.Attribute)
+        and node.func.value.attr == "mcp_runtime"
+    ]
+
+    assert len(calls) == 1
+    assert any(keyword.arg == "idempotency_key" for keyword in calls[0].keywords)
+
+
 def test_executor_delegates_replay_and_provider_round_decisions() -> None:
     source = _EXECUTOR_MODULE.read_text(encoding="utf-8")
 

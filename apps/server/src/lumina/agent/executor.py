@@ -6507,7 +6507,13 @@ class LocalRunExecutor:
 
         if mcp_tool is not None:
             try:
-                payload = await self.mcp_runtime.call_tool(mcp_tool, arguments)
+                payload = await self.mcp_runtime.call_tool(
+                    mcp_tool,
+                    arguments,
+                    idempotency_key=_tool_execution_idempotency_key(
+                        run_id, str(tool_call["id"])
+                    ),
+                )
             except asyncio.CancelledError:
                 await self._cancel_tool_execution(run_id, tool_id)
                 raise

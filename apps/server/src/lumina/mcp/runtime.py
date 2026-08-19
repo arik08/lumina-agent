@@ -38,6 +38,7 @@ from .policy import APPROVABLE_PRIVATE_NETWORKS, SECRET_NAME_PATTERN
 
 
 PROTOCOL_VERSION = "2025-11-25"
+MCP_IDEMPOTENCY_META_KEY = "io.github.arik08/lumina-idempotency-key"
 _MAX_MESSAGE_BYTES = 1024 * 1024
 _MAX_TOOL_PAGES = 20
 _MAX_TOOLS = 1024
@@ -314,7 +315,11 @@ class McpRuntime:
         return tuple(prepared)
 
     async def call_tool(
-        self, tool: PreparedMcpTool, arguments: Mapping[str, Any]
+        self,
+        tool: PreparedMcpTool,
+        arguments: Mapping[str, Any],
+        *,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         secrets = self._resolve_secrets(tool.config)
         retired_retries = 0
@@ -340,7 +345,9 @@ class McpRuntime:
                         continue
                     try:
                         raw_result = await cached.connection.call_tool(
-                            tool.original_name, dict(arguments)
+                            tool.original_name,
+                            dict(arguments),
+                            idempotency_key=idempotency_key,
                         )
                     except asyncio.CancelledError:
                         cached.retired = True
@@ -686,12 +693,19 @@ class _McpConnection:
         raise _runtime_error("mcp_tool_page_limit_exceeded", "schema")
 
     async def call_tool(
-        self, name: str, arguments: Mapping[str, Any]
+        self,
+        name: str,
+        arguments: Mapping[str, Any],
+        *,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         if not self._initialized:
             raise _runtime_error("mcp_lifecycle_invalid", "transport")
+        params: dict[str, Any] = {"name": name, "arguments": dict(arguments)}
+        if idempotency_key:
+            params["_meta"] = {MCP_IDEMPOTENCY_META_KEY: idempotency_key}
         result = await self._request(
-            "tools/call", {"name": name, "arguments": dict(arguments)}
+            "tools/call", params
         )
         if not isinstance(result.get("content", []), list):
             raise _runtime_error("mcp_response_invalid", "result")
