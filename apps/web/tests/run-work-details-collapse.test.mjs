@@ -12,7 +12,7 @@ test("work details collapse automatically only after a completed run", () => {
   }
 });
 
-test("a visible running timeline does not collapse underneath the viewport when the run completes", async () => {
+test("a visible running timeline collapses when the run completes", async () => {
   const conversationTurn = await readFile(
     new URL("../src/components/ConversationTurn.tsx", import.meta.url),
     "utf8",
@@ -20,9 +20,8 @@ test("a visible running timeline does not collapse underneath the viewport when 
 
   assert.match(
     conversationTurn,
-    /useEffect\(\(\) => \{\s*if \(!collapseWorkDetails\) setWorkDetailsOpen\(true\);\s*\}, \[snapshot\?\.runId, collapseWorkDetails\]\);/,
+    /useEffect\(\(\) => \{\s*setWorkDetailsOpen\(!collapseWorkDetails\);\s*\}, \[snapshot\?\.runId, collapseWorkDetails\]\);/,
   );
-  assert.doesNotMatch(conversationTurn, /setWorkDetailsOpen\(!collapseWorkDetails\)/);
 });
 
 test("work details stay open while a run is active or has not started", () => {

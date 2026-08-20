@@ -1873,7 +1873,7 @@ export const AssistantTurn = memo(function AssistantTurn({
   const hasWorkDetails = activities.length > 0;
 
   useEffect(() => {
-    if (!collapseWorkDetails) setWorkDetailsOpen(true);
+    setWorkDetailsOpen(!collapseWorkDetails);
   }, [snapshot?.runId, collapseWorkDetails]);
 
   useEffect(() => {
