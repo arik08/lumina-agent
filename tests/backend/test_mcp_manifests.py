@@ -100,18 +100,6 @@ def test_mcp_manifests_do_not_store_literal_secrets() -> None:
                 ), f"{manifest_path}:{server_name} stores {name} in the manifest"
 
 
-def test_korea_weather_keeps_its_required_secret_binding() -> None:
-    required_by_server = {
-        server_name: server.get("requiredSecretNames", [])
-        for manifest_path in _manifest_paths()
-        for server_name, server in json.loads(
-            manifest_path.read_text(encoding="utf-8")
-        )["mcpServers"].items()
-    }
-
-    assert required_by_server["korea-weather"] == ["KOREA_WEATHER_API_KEY"]
-
-
 def test_national_assembly_full_profile_pins_every_runtime_tool() -> None:
     manifest = json.loads(
         (MCP_ROOT / "national-assembly" / "mcp.json").read_text(encoding="utf-8")

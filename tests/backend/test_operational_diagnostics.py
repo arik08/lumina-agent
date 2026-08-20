@@ -811,8 +811,7 @@ def test_installer_uses_npm_cmd_instead_of_npm_ps1_on_windows(tmp_path: Path) ->
     assert "uv sync --project" in invocation
     assert "--python 3.13" in invocation
     assert "--extra codex" not in invocation
-    assert invocation.count("npm.cmd ci --prefix") == 2
-    assert "extensions\\mcp\\korea-weather\\runtime" in invocation
+    assert invocation.count("npm.cmd ci --prefix") == 1
     assert "national-assembly\\runtime\\bootstrap.py --install-only" in invocation
 
 
