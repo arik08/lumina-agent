@@ -96,6 +96,35 @@ function Invoke-Checked {
     }
 }
 
+function Initialize-CodeGraphIfAvailable {
+    $codegraph = if ($env:OS -eq "Windows_NT") {
+        Get-Command "codegraph.cmd" -CommandType Application -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+    }
+    if (-not $codegraph -and $env:OS -eq "Windows_NT") {
+        $codegraph = Get-Command "codegraph.exe" -CommandType Application -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+    }
+    if (-not $codegraph) {
+        $codegraph = Get-Command "codegraph" -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+    }
+    if (-not $codegraph) {
+        return
+    }
+
+    Write-Host "[Lumina] Initializing CodeGraph..."
+    try {
+        & $codegraph.Source init $RepositoryRoot
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "CodeGraph initialization failed with exit code $LASTEXITCODE. Lumina installation can continue."
+        }
+    }
+    catch {
+        Write-Warning "CodeGraph initialization failed. Lumina installation can continue."
+    }
+}
+
 function Get-ConfiguredValue {
     param([Parameter(Mandatory = $true)][string]$Key)
     $processValue = [Environment]::GetEnvironmentVariable($Key, "Process")
@@ -467,5 +496,7 @@ if ($runPgptNetworkCheck) {
         "--network", "--pgpt"
     )
 }
+
+Initialize-CodeGraphIfAvailable
 
 Write-Host "[Lumina] Installation completed. Run run_lumina_dev.bat for development or run_lumina.bat for the local service."

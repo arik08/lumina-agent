@@ -778,6 +778,10 @@ def test_installer_uses_npm_cmd_instead_of_npm_ps1_on_windows(tmp_path: Path) ->
         '@echo off\r\n>>"%LUMINA_INSTALL_TEST_CAPTURE%" echo npm.cmd %*\r\nexit /b 0\r\n',
         encoding="utf-8",
     )
+    (tmp_path / "codegraph.cmd").write_text(
+        '@echo off\r\n>>"%LUMINA_INSTALL_TEST_CAPTURE%" echo codegraph %*\r\nexit /b 0\r\n',
+        encoding="utf-8",
+    )
 
     installer = Path(__file__).resolve().parents[2] / "devtools" / "install_lumina.ps1"
     environment = os.environ.copy()
@@ -813,6 +817,55 @@ def test_installer_uses_npm_cmd_instead_of_npm_ps1_on_windows(tmp_path: Path) ->
     assert "--extra codex" not in invocation
     assert invocation.count("npm.cmd ci --prefix") == 1
     assert "national-assembly\\runtime\\bootstrap.py --install-only" in invocation
+    assert f"codegraph init {Path(__file__).resolve().parents[2]}" in invocation
+
+
+def test_installer_silently_skips_codegraph_when_cli_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if powershell is None:
+        pytest.skip("PowerShell is not installed")
+    if os.name != "nt":
+        pytest.skip("Windows command shims are used by the installer entrypoint")
+
+    shim = (
+        '@echo off\r\n'
+        'if /I "%~n0"=="node" echo v22.12.0\r\n'
+        'exit /b 0\r\n'
+    )
+    for command_name in ("uv", "node", "npm", "git"):
+        (tmp_path / f"{command_name}.cmd").write_text(shim, encoding="utf-8")
+
+    installer = Path(__file__).resolve().parents[2] / "devtools" / "install_lumina.ps1"
+    environment = os.environ.copy()
+    environment["PATH"] = str(tmp_path)
+    environment.pop("LUMINA_CA_CERT", None)
+    environment.pop("LUMINA_CA_BUNDLE", None)
+    completed = subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(installer),
+            "-NonInteractive",
+            "-SkipPgpt",
+            "-SkipDependencyInstall",
+            "-SkipFrontendBuild",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        env=environment,
+    )
+
+    output = completed.stdout + completed.stderr
+    assert completed.returncode == 0, output
+    assert "CodeGraph" not in output
 
 
 def test_national_assembly_bootstrap_pins_upstream_revision() -> None:
