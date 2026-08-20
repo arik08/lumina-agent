@@ -41,7 +41,7 @@ test("jump to latest accelerates quickly across long conversations", async () =>
 test("streaming auto-follow smooths buffered reveal height changes", async () => {
   const streamingUi = await readFile(streamingUiUrl, "utf8");
 
-  assert.match(streamingUi, /const streamScrollSmoothingMs = maxVisualLagMs;/);
+  assert.match(streamingUi, /const streamScrollSmoothingMs = 480;/);
   assert.match(streamingUi, /let smoothedTarget = container\.scrollTop;/);
   assert.match(streamingUi, /const smoothingWeight = activeRef\.current \|\| performance\.now\(\) <= terminalFollowUntilRef\.current\s*\? 1 - Math\.exp\(-elapsed \/ streamScrollSmoothingMs\)\s*: 1;/);
   assert.match(streamingUi, /smoothedTarget \+= \(target - smoothedTarget\) \* smoothingWeight;/);

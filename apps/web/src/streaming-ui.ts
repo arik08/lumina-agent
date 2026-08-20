@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 
 const streamStartBufferMs = 40;
 const maxVisualLagMs = 180;
-const streamScrollSmoothingMs = maxVisualLagMs;
+const streamScrollSmoothingMs = 480;
 const renderCommitReserveMs = 80;
 const visibleFrameIntervalMs = 15;
 const frameFallbackMs = 100;
