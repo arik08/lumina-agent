@@ -816,7 +816,7 @@ def test_installer_uses_npm_cmd_instead_of_npm_ps1_on_windows(tmp_path: Path) ->
     assert "--python 3.13" in invocation
     assert "--extra codex" not in invocation
     assert invocation.count("npm.cmd ci --prefix") == 1
-    assert "national-assembly\\runtime\\bootstrap.py --install-only" in invocation
+    assert "national-assembly\\runtime\\bootstrap.py --install-only" not in invocation
     assert f"codegraph init {Path(__file__).resolve().parents[2]}" in invocation
 
 

@@ -450,17 +450,6 @@ if (-not $SkipDependencyInstall) {
         $frontendInstallArguments += @("--offline", "--no-audit")
     }
     Invoke-Checked -Command $NpmCommand -Arguments $frontendInstallArguments
-
-    Write-Host "[Lumina] Installing the pinned National Assembly MCP server..."
-    $assemblyInstallArguments = @(
-        "run", "--project", $ServerRoot,
-        "python", (Join-Path $RepositoryRoot "extensions/mcp/national-assembly/runtime/bootstrap.py"),
-        "--install-only"
-    )
-    if ($NoNetwork) {
-        $assemblyInstallArguments += "--offline"
-    }
-    Invoke-Checked -Command "uv" -Arguments $assemblyInstallArguments
 }
 
 Write-Host "[Lumina] Applying database migrations..."

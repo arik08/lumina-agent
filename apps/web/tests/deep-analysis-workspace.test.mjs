@@ -427,7 +427,7 @@ test("Workflow connections keep sequence edges vertical and bounded loops latera
   assert.match(view, /if \(!sourceIsLateral && !targetIsLateral\) return "sequence"/);
   assert.match(view, /const edgeType = workflowConnectionType\(connectionDraft\.sourceSide, targetSide\)/);
   assert.match(layout, /const sourceComesFirst = source\.sequence !== target\.sequence/);
-  assert.match(view, /edgeType,\n\s+\},/);
+  assert.match(view, /edgeType,\r?\n\s+\},/);
   assert.match(view, /const workflowConnectionHitRadius = 52/);
   assert.match(view, /function workflowConnectionTargetAtPoint/);
   assert.match(view, /workflowConnectionTargetAtPoint\(workflowDraft, point/);
