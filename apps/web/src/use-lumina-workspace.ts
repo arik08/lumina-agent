@@ -10,6 +10,7 @@ import type {
   ChatMessage,
   ConversationListItem,
   CurrentSettings,
+  MessageFeedback,
   ModelSummary,
   PromptReference,
   ProjectSummary,
@@ -500,6 +501,43 @@ export function useLuminaWorkspace() {
     } finally {
       loadingOlderTurnSetsRef.current.delete(conversationId);
     }
+  }, []);
+
+  const updateMessageInteraction = useCallback((
+    conversationId: string,
+    messageId: string,
+    patch: { feedback?: MessageFeedback | null; knowledgeSaved?: boolean },
+  ) => {
+    setRuntimes((current) => {
+      const runtime = current[conversationId];
+      if (!runtime) return current;
+      let changed = false;
+      const turnSets = runtime.turnSets.map((turnSet) => {
+        let turnSetChanged = false;
+        const messages = turnSet.messages.map((message) => {
+          if (message.id !== messageId) return message;
+          const nextMessage = { ...message };
+          const feedback = patch.feedback;
+          if (feedback !== undefined) {
+            const currentFeedback = message.feedback ?? [];
+            nextMessage.feedback = feedback === null
+              ? currentFeedback.filter((item) => item.kind !== "rating")
+              : [
+                  ...currentFeedback.filter((item) => item.kind !== feedback.kind),
+                  feedback,
+                ];
+          }
+          if (patch.knowledgeSaved !== undefined) {
+            nextMessage.knowledgeSaved = patch.knowledgeSaved;
+          }
+          turnSetChanged = true;
+          changed = true;
+          return nextMessage;
+        });
+        return turnSetChanged ? { ...turnSet, messages } : turnSet;
+      });
+      return changed ? { ...current, [conversationId]: { ...runtime, turnSets } } : current;
+    });
   }, []);
 
   const mergeRunMutation = useCallback((mutation: RunMutationResponse) => {
@@ -1791,6 +1829,7 @@ export function useLuminaWorkspace() {
     activeRun,
     loadConversation,
     loadOlderConversationTurnSets,
+    updateMessageInteraction,
     settings,
     providers,
     models,

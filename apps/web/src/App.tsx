@@ -3898,6 +3898,7 @@ function App() {
                   onOpenArtifact={openArtifact}
                   onBranch={branchFromMessage}
                   onShare={shareFromMessage}
+                  onMessageInteractionChange={workspace.updateMessageInteraction}
                   onToast={showToast}
                   clarificationMode={workspace.settings?.clarificationMode ?? "balanced"}
                   inputBusy={workspace.runActionBusy}

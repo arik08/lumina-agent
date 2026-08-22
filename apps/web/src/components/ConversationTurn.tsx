@@ -77,6 +77,7 @@ import type {
   ClarificationMode,
   MemoryCitation,
   MessageCitation,
+  MessageFeedback,
   RunActivity,
   RunCommand,
   RunSnapshot,
@@ -1712,6 +1713,7 @@ export const AssistantTurn = memo(function AssistantTurn({
   onOpenArtifact,
   onBranch,
   onShare,
+  onMessageInteractionChange,
   onToast,
   clarificationMode,
   inputBusy,
@@ -1726,6 +1728,11 @@ export const AssistantTurn = memo(function AssistantTurn({
   onOpenArtifact: (artifact: ArtifactSummary, version?: number) => void;
   onBranch: (anchorMessageId: string) => Promise<void>;
   onShare: (anchorMessageId: string | null) => void;
+  onMessageInteractionChange: (
+    conversationId: string,
+    messageId: string,
+    patch: { feedback?: MessageFeedback | null; knowledgeSaved?: boolean },
+  ) => void;
   onToast: (message: string) => void;
   clarificationMode: ClarificationMode;
   inputBusy: boolean;
@@ -1739,6 +1746,11 @@ export const AssistantTurn = memo(function AssistantTurn({
   const userMessages = turnSet.messages.filter((message) => message.role === "user");
   const assistantMessages = turnSet.messages.filter((message) => message.role === "assistant");
   const finalMessage = assistantMessages.at(-1) ?? null;
+  const persistedRating = finalMessage?.feedback?.find((item) => item.kind === "rating")?.value;
+  const persistedAnswerRating: "like" | "dislike" | null = persistedRating === "like" || persistedRating === "dislike"
+    ? persistedRating
+    : null;
+  const reportSubmitted = Boolean(finalMessage?.feedback?.some((item) => item.kind === "report"));
   const liveAssistantDraft = useRunAssistantDraft(turnSet.runId, snapshot?.assistantDraft ?? null);
   const sources = finalMessage?.metadata?.sources ?? emptySources;
   const citations = finalMessage?.metadata?.citations ?? emptyCitations;
@@ -1841,7 +1853,7 @@ export const AssistantTurn = memo(function AssistantTurn({
   const [reportText, setReportText] = useState("");
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
-  const [answerRating, setAnswerRating] = useState<"like" | "dislike" | null>(null);
+  const [answerRating, setAnswerRating] = useState<"like" | "dislike" | null>(persistedAnswerRating);
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [expandedSourceId, setExpandedSourceId] = useState<string | null>(null);
@@ -1877,9 +1889,9 @@ export const AssistantTurn = memo(function AssistantTurn({
   }, [snapshot?.runId, collapseWorkDetails]);
 
   useEffect(() => {
-    setAnswerRating(null);
-    setKnowledgeSaved(false);
-  }, [finalMessage?.id]);
+    setAnswerRating(persistedAnswerRating);
+    setKnowledgeSaved(Boolean(finalMessage?.knowledgeSaved));
+  }, [finalMessage?.id, finalMessage?.knowledgeSaved, persistedAnswerRating]);
 
   const openSourceDetail = useCallback((sourceId: string) => {
     const currentDetail = window.history.state?.luminaSourceDetail;
@@ -2015,6 +2027,7 @@ export const AssistantTurn = memo(function AssistantTurn({
     try {
       await saveKnowledgeDocumentFromMessage(finalMessage.id);
       setKnowledgeSaved(true);
+      onMessageInteractionChange(finalMessage.conversationId, finalMessage.id, { knowledgeSaved: true });
     } catch {
       onToast("지식 그래프에 답변을 저장하지 못했습니다.");
     } finally {
@@ -2039,8 +2052,10 @@ export const AssistantTurn = memo(function AssistantTurn({
     try {
       if (nextRating === null) {
         await api.messages.deleteRating(finalMessage.id);
+        onMessageInteractionChange(finalMessage.conversationId, finalMessage.id, { feedback: null });
       } else {
-        await api.messages.putRating(finalMessage.id, nextRating);
+        const feedback = await api.messages.putRating(finalMessage.id, nextRating);
+        onMessageInteractionChange(finalMessage.conversationId, finalMessage.id, { feedback });
       }
     } catch {
       setAnswerRating(previousRating);
@@ -2055,7 +2070,8 @@ export const AssistantTurn = memo(function AssistantTurn({
     setReportSubmitting(true);
     setReportError(null);
     try {
-      await api.messages.report(finalMessage.id, reportText.trim());
+      const feedback = await api.messages.report(finalMessage.id, reportText.trim());
+      onMessageInteractionChange(finalMessage.conversationId, finalMessage.id, { feedback });
       setReportText("");
       setReportOpen(false);
     } catch {
@@ -2265,7 +2281,7 @@ export const AssistantTurn = memo(function AssistantTurn({
                     <button className="tooltip-control" type="button" aria-label="링크 공유" data-tooltip="링크 공유" disabled={!assistantText} onClick={() => onShare(finalMessage?.id ?? null)}><ShareActionIcon size={16} /></button>
                     <button className={`tooltip-control answer-rating-control ${answerRating === "like" ? "is-like" : ""}`} type="button" aria-label="좋아요" aria-pressed={answerRating === "like"} data-tooltip="좋아요" disabled={!finalMessage || ratingSubmitting} onClick={() => void rateAnswer("like")}><ThumbsUp size={16} /></button>
                     <button className={`tooltip-control answer-rating-control ${answerRating === "dislike" ? "is-dislike" : ""}`} type="button" aria-label="싫어요" aria-pressed={answerRating === "dislike"} data-tooltip="싫어요" disabled={!finalMessage || ratingSubmitting} onClick={() => void rateAnswer("dislike")}><ThumbsDown size={16} /></button>
-                    <button className={`tooltip-control ${reportOpen ? "is-active" : ""}`} type="button" aria-label="의견 게시" aria-expanded={reportOpen} data-tooltip="의견 게시" disabled={!finalMessage} onClick={() => { setReportOpen((open) => !open); setReportError(null); }}><MessageSquarePlus size={16} /></button>
+                    <button className={`tooltip-control ${reportOpen ? "is-active" : ""} ${reportSubmitted ? "is-submitted" : ""}`} type="button" aria-label="의견 게시" aria-expanded={reportOpen} aria-pressed={reportSubmitted} data-tooltip={reportSubmitted ? "의견 게시 완료" : "의견 게시"} disabled={!finalMessage} onClick={() => { setReportOpen((open) => !open); setReportError(null); }}><MessageSquarePlus size={16} /></button>
                   </div>
                   <time className="answer-completed-time" dateTime={snapshot?.finishedAt ?? finalMessage?.completedAt ?? undefined}>{formatCompletedAt(snapshot?.finishedAt ?? finalMessage?.completedAt)}</time>
                   {sourceCountLabels.length > 0 && (

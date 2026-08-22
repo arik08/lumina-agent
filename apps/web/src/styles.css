@@ -2687,6 +2687,8 @@ button.schedule-run-row:disabled { cursor: wait; opacity: 1; }
 .answer-actions .answer-rating-control.is-like:hover { color: var(--cobalt); }
 .answer-actions .answer-rating-control.is-dislike,
 .answer-actions .answer-rating-control.is-dislike:hover { color: var(--danger); }
+.answer-actions button.is-submitted,
+.answer-actions button.is-submitted:hover { color: var(--success); }
 .answer-feedback-form { display: grid; gap: 7px; margin-top: 7px; padding: 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-soft); }
 .answer-feedback-form > label { color: var(--ink); font-size: 14px; font-weight: 650; }
 .answer-feedback-form textarea { width: 100%; min-height: 78px; resize: vertical; border: 1px solid var(--line-strong); border-radius: 5px; outline: 0; padding: 8px 9px; background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; line-height: 1.5; }

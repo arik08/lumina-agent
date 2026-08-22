@@ -378,6 +378,118 @@ def _login(client: TestClient) -> str:
     return response.json()["csrfToken"]
 
 
+def test_turn_sets_restore_current_user_answer_interactions(tmp_path: Path) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'turn-interactions.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "interaction restore"},
+        ).json()
+        conversation_id = conversation["id"]
+
+        with SessionLocal() as db:
+            stored_conversation = db.get(Conversation, conversation_id)
+            assert stored_conversation is not None
+            branch_key = "interaction-restore-turn"
+            db.add_all(
+                [
+                    Message(
+                        conversation_id=conversation_id,
+                        author_user_id=stored_conversation.owner_user_id,
+                        role="user",
+                        status="completed",
+                        canonical_text="상태를 복원해 주세요.",
+                        turn_index=1,
+                        metadata_json={"branchSourceRunId": branch_key},
+                    ),
+                    Message(
+                        conversation_id=conversation_id,
+                        role="assistant",
+                        status="completed",
+                        canonical_text="복원할 답변입니다.",
+                        turn_index=1,
+                        metadata_json={"branchSourceRunId": branch_key},
+                    ),
+                ]
+            )
+            db.commit()
+            assistant_id = db.scalar(
+                select(Message.id).where(
+                    Message.conversation_id == conversation_id,
+                    Message.role == "assistant",
+                )
+            )
+            assert assistant_id is not None
+
+        rating = client.put(
+            f"/api/messages/{assistant_id}/rating",
+            headers={"X-CSRF-Token": csrf},
+            json={"value": "like"},
+        )
+        assert rating.status_code == 200, rating.text
+
+        def loaded_assistant() -> dict[str, object]:
+            page = client.get(
+                f"/api/conversations/{conversation_id}/turn-sets",
+                params={"limit_turn_sets": 3},
+            )
+            assert page.status_code == 200, page.text
+            return next(
+                message
+                for turn_set in page.json()["turnSets"]
+                for message in turn_set["messages"]
+                if message["id"] == assistant_id
+            )
+
+        restored = loaded_assistant()
+        assert restored["feedback"][0]["kind"] == "rating"
+        assert restored["feedback"][0]["value"] == "like"
+
+        knowledge = client.post(
+            f"/api/knowledge/documents/from-message/{assistant_id}",
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert knowledge.status_code == 201, knowledge.text
+        restored_with_knowledge = loaded_assistant()
+        assert restored_with_knowledge["knowledgeSaved"] is True
+
+        report = client.post(
+            f"/api/messages/{assistant_id}/reports",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "category": "other",
+                "description": "복원 상태 확인 의견",
+                "diagnosticScope": {
+                    "includeRunState": True,
+                    "includeToolSummaries": False,
+                    "includeConversation": False,
+                    "includeAttachments": False,
+                },
+            },
+        )
+        assert report.status_code == 201, report.text
+        restored_with_report = loaded_assistant()
+        assert {item["kind"] for item in restored_with_report["feedback"]} == {"rating", "report"}
+
+        deleted = client.delete(
+            f"/api/messages/{assistant_id}/rating",
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert deleted.status_code == 204
+        restored_after_delete = loaded_assistant()
+        assert [item["kind"] for item in restored_after_delete["feedback"]] == ["report"]
+
+
 def test_turn_set_cursor_pages_backwards_without_overlap(tmp_path: Path) -> None:
     settings = Settings(
         environment="test",

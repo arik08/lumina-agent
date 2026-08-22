@@ -31,13 +31,16 @@ from ...models import (
     Artifact,
     ArtifactVersion,
     Attachment,
+    KnowledgeDocument,
     Message,
+    MessageFeedback,
     MessageReference,
     Run,
     ToolExecution,
     User,
 )
 from ...providers.usage import derive_uncached_input_tokens
+from ...messages.service import feedback_payload
 from ...runs.service import message_response, preload_message_attachments, run_snapshots
 from ...storage import ManagedLocalStorage
 from ..dependencies import AuthContext, get_current_user, require_csrf
@@ -130,6 +133,8 @@ def _message_response_with_artifact_citations(
     db: Session,
     artifact_texts_by_run: dict[str, tuple[str, ...]],
     attachments_by_message: dict[str, list[dict[str, object]]] | None = None,
+    feedback_by_message: dict[str, list[MessageFeedback]] | None = None,
+    knowledge_saved_message_ids: set[str] | None = None,
 ) -> dict[str, object]:
     payload = message_response(
         message,
@@ -154,6 +159,14 @@ def _message_response_with_artifact_citations(
                 reference_texts=artifact_texts_by_run[message.run_id],
             ),
         }
+    if message.role == "assistant":
+        payload["feedback"] = [
+            feedback_payload(item)
+            for item in (feedback_by_message or {}).get(message.id, [])
+        ]
+        payload["knowledgeSaved"] = message.id in (
+            knowledge_saved_message_ids or set()
+        )
     return payload
 
 
@@ -655,6 +668,32 @@ def get_turn_sets(
         else {}
     )
     attachments_by_message = preload_message_attachments(db, selected_messages)
+    selected_message_ids = [message.id for message in selected_messages]
+    feedback_by_message: dict[str, list[MessageFeedback]] = defaultdict(list)
+    knowledge_saved_message_ids: set[str] = set()
+    if selected_message_ids:
+        feedback_rows = list(
+            db.scalars(
+                select(MessageFeedback)
+                .where(
+                    MessageFeedback.message_id.in_(selected_message_ids),
+                    MessageFeedback.user_id == user.id,
+                    MessageFeedback.deleted_at.is_(None),
+                )
+                .order_by(MessageFeedback.created_at, MessageFeedback.id)
+            )
+        )
+        for feedback in feedback_rows:
+            feedback_by_message[feedback.message_id].append(feedback)
+        knowledge_saved_message_ids = set(
+            db.scalars(
+                select(KnowledgeDocument.source_message_id).where(
+                    KnowledgeDocument.source_message_id.in_(selected_message_ids),
+                    KnowledgeDocument.owner_user_id == user.id,
+                    KnowledgeDocument.status == "active",
+                )
+            )
+        )
     selected_run_ids = [
         key for key in selected_keys if not key.startswith(("message:", "branch:"))
     ]
@@ -682,6 +721,8 @@ def get_turn_sets(
                         db,
                         artifact_texts_by_run,
                         attachments_by_message,
+                        feedback_by_message,
+                        knowledge_saved_message_ids,
                     )
                     for message in group
                 ],

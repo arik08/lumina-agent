@@ -1206,6 +1206,8 @@ export interface ChatMessage {
   references: MessageReference[];
   attachments: AttachmentSummary[];
   metadata?: MessageMetadata;
+  feedback?: MessageFeedback[];
+  knowledgeSaved?: boolean;
   createdAt: IsoDateTime;
   completedAt: IsoDateTime | null;
 }
@@ -1308,6 +1310,7 @@ export interface MessageFeedback {
   value?: "like" | "dislike" | null;
   category?: string | null;
   description?: string | null;
+  diagnosticScope?: Record<string, unknown>;
   status: string;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
