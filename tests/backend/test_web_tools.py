@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import ssl
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -374,6 +376,75 @@ def test_duckduckgo_browser_fallback_preserves_transport_limits(
     assert closed is True
     assert entries[0].title == "Browser result"
     assert entries[0].snippet == "Safe snippet"
+
+
+def test_duckduckgo_browser_fallback_copies_non_ascii_windows_ca_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    bundle = tmp_path / "한글 경로" / "combined-ca.pem"
+    bundle.parent.mkdir()
+    bundle.write_bytes(b"test-ca-bundle")
+    cainfo_paths: list[Path] = []
+
+    class FakeCurl:
+        def setopt(self, option: object, value: object) -> None:
+            assert option == web_module.CurlOpt.CAINFO
+            assert isinstance(value, bytes)
+            cainfo = Path(value.decode("ascii"))
+            assert str(cainfo).isascii()
+            assert cainfo != bundle
+            assert cainfo.read_bytes() == bundle.read_bytes()
+            cainfo_paths.append(cainfo)
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "text/html; charset=utf-8"}
+
+    class FakeSession:
+        def __init__(self, *, curl: object) -> None:
+            del curl
+
+        def get(self, _url: str, **kwargs) -> FakeResponse:
+            assert cainfo_paths[0].is_file()
+            kwargs["content_callback"](
+                b'<a class="result__a" href="https://example.com/windows">'
+                b'Windows result</a><div class="result__snippet">Safe snippet</div>'
+            )
+            return FakeResponse()
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(web_module, "_IS_WINDOWS", True)
+    monkeypatch.setattr(web_module, "Curl", FakeCurl)
+    monkeypatch.setattr(web_module.curl_requests, "Session", FakeSession)
+
+    web_module._search_duckduckgo_impersonated_endpoint(
+        "https://html.duckduckgo.com/html/?q=windows",
+        browser_profile="chrome",
+        policy=WebToolPolicy(),
+        trust_profile=SimpleNamespace(bundle_path=bundle),
+    )
+
+    assert len(cainfo_paths) == 1
+    assert not cainfo_paths[0].exists()
+
+
+def test_duckduckgo_browser_fallback_keeps_non_ascii_linux_ca_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    bundle = tmp_path / "한글 경로" / "combined-ca.pem"
+    bundle.parent.mkdir()
+    bundle.write_bytes(b"test-ca-bundle")
+
+    monkeypatch.setattr(web_module, "_IS_WINDOWS", False)
+    with web_module._curl_cffi_ca_bundle_path(bundle) as cainfo:
+        assert cainfo == os.fsencode(bundle)
+        assert bundle.is_file()
+
+    assert bundle.is_file()
 
 
 def test_duckduckgo_browser_fallback_rejects_oversized_response(

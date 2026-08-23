@@ -4,15 +4,20 @@ import asyncio
 import codecs
 import hashlib
 import ipaddress
+import os
 import re
+import shutil
 import socket
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+import sys
+import tempfile
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import Protocol
 from urllib.parse import (
     parse_qs,
@@ -71,6 +76,7 @@ _XML_CONTENT_TYPES = frozenset(
 _GENERIC_BINARY_CONTENT_TYPES = frozenset(
     {"", "application/download", "application/octet-stream", "binary/octet-stream"}
 )
+_IS_WINDOWS = sys.platform == "win32"
 _TRACKING_PARAMETERS = frozenset(
     {
         "fbclid",
@@ -1473,6 +1479,64 @@ def _parse_duckduckgo_results(html: str) -> list[_SearchEntry]:
     return parser.entries
 
 
+def _copy_ca_bundle_to_ascii_windows_temp(source: Path) -> Path:
+    candidates = [Path(tempfile.gettempdir())]
+    system_root = Path(os.environ.get("SystemRoot", r"C:\Windows"))
+    candidates.append(system_root / "Temp")
+
+    last_error: OSError | None = None
+    seen: set[str] = set()
+    for directory in candidates:
+        directory_text = str(directory)
+        if not directory_text.isascii() or directory_text.casefold() in seen:
+            continue
+        seen.add(directory_text.casefold())
+        try:
+            fd, temporary_name = tempfile.mkstemp(
+                prefix="lumina-ca-",
+                suffix=".pem",
+                dir=directory,
+            )
+        except OSError as exc:
+            last_error = exc
+            continue
+
+        os.close(fd)
+        temporary = Path(temporary_name)
+        try:
+            shutil.copyfile(source, temporary)
+            os.chmod(temporary, 0o600)
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+        return temporary
+
+    if last_error is not None:
+        raise last_error
+    raise OSError("No writable ASCII temporary directory is available")
+
+
+@contextmanager
+def _curl_cffi_ca_bundle_path(
+    bundle_path: Path | str | None,
+) -> Iterator[bytes | None]:
+    if bundle_path is None:
+        yield None
+        return
+
+    bundle_text = os.fspath(bundle_path)
+    source = Path(bundle_text)
+    if not _IS_WINDOWS or bundle_text.isascii():
+        yield os.fsencode(bundle_text)
+        return
+
+    temporary = _copy_ca_bundle_to_ascii_windows_temp(source)
+    try:
+        yield str(temporary).encode("ascii")
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _search_duckduckgo_impersonated_endpoint(
     url: str,
     *,
@@ -1492,30 +1556,31 @@ def _search_duckduckgo_impersonated_endpoint(
             return
         chunks.append(chunk)
 
-    curl = Curl()
-    if trust_profile.bundle_path is not None:
-        curl.setopt(CurlOpt.CAINFO, str(trust_profile.bundle_path).encode())
-    session = curl_requests.Session(curl=curl)
-    try:
-        response = session.get(
-            url,
-            timeout=policy.timeout_seconds,
-            allow_redirects=False,
-            proxy=policy.proxy,
-            verify=True,
-            impersonate=browser_profile,  # type: ignore[arg-type]
-            headers={"Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7"},
-            content_callback=receive,
-        )
-    except curl_requests.RequestsError as exc:
-        raise WebToolError(
-            "transport_error",
-            "검색 서비스 연결에 실패했습니다.",
-            stage="transport",
-            retryable=True,
-        ) from exc
-    finally:
-        session.close()
+    with _curl_cffi_ca_bundle_path(trust_profile.bundle_path) as ca_bundle_path:
+        curl = Curl()
+        if ca_bundle_path is not None:
+            curl.setopt(CurlOpt.CAINFO, ca_bundle_path)
+        session = curl_requests.Session(curl=curl)
+        try:
+            response = session.get(
+                url,
+                timeout=policy.timeout_seconds,
+                allow_redirects=False,
+                proxy=policy.proxy,
+                verify=True,
+                impersonate=browser_profile,  # type: ignore[arg-type]
+                headers={"Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7"},
+                content_callback=receive,
+            )
+        except curl_requests.RequestsError as exc:
+            raise WebToolError(
+                "transport_error",
+                "검색 서비스 연결에 실패했습니다.",
+                stage="transport",
+                retryable=True,
+            ) from exc
+        finally:
+            session.close()
     if response_too_large:
         raise WebToolError(
             "response_too_large",
