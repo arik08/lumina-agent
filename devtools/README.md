@@ -46,7 +46,7 @@ Python bytecode, mypy, Ruff, pytest cache를 저장소의 `.cache/` 아래로 �
 
 ### `LuminaInstall.Frontend.ps1`
 
-Windows에서 실행 중인 Vite/Node가 `node_modules`의 native `.node` 파일을 잠갔는지 검사합니다. 잠긴 파일이 있으면 `npm ci` 전에 설치를 중단하고 관련 Node PID 또는 종료 안내를 표시해 불완전한 의존성 교체를 막습니다. 설치기가 내부적으로 사용하며 단독 실행용이 아닙니다.
+Windows에서 현재 Lumina 작업 트리의 Vite process와 `node_modules`의 잠긴 native `.node` 파일을 검사합니다. 다른 작업 트리의 Vite는 제외하며, 현재 작업 트리의 process는 부모 process 경로까지 확인해 `npm ci` 전에 PID와 함께 안내합니다. 일반 package directory의 일시적인 `EBUSY`로 `npm ci`가 실패하면 lockfile을 변경하지 않는 `npm install --package-lock=false`로 전환하고 `npm ls`로 결과를 검증합니다. 설치기가 내부적으로 사용하며 단독 실행용이 아닙니다.
 
 ### `LuminaLauncher.Input.ps1`
 

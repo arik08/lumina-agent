@@ -365,7 +365,7 @@ def test_installer_frontend_lock_check_reports_locked_native_module(
     command = (
         f". '{helper}'; "
         f"$lock = [System.IO.File]::Open('{native_module}', 'Open', 'Read', 'None'); "
-        f"try {{ Assert-LuminaFrontendNativeModulesUnlocked -WebRoot '{tmp_path}' }} "
+        f"try {{ Assert-LuminaFrontendNativeModulesUnlocked -WebRoot '{tmp_path}' -Processes @() }} "
         "finally { $lock.Dispose() }"
     )
     completed = subprocess.run(
@@ -378,6 +378,44 @@ def test_installer_frontend_lock_check_reports_locked_native_module(
     assert completed.returncode != 0
     assert "locked native module" in output
     assert "binding.node" in output
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Vite process discovery")
+def test_installer_frontend_process_check_only_reports_this_lumina_workspace(
+    tmp_path: Path,
+) -> None:
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if powershell is None:
+        pytest.skip("PowerShell is not installed")
+    web_root = tmp_path / "lumina" / "apps" / "web"
+    other_root = tmp_path / "another-product"
+    helper = (
+        Path(__file__).resolve().parents[2]
+        / "devtools"
+        / "LuminaInstall.Frontend.ps1"
+    )
+    command = f"""
+. '{helper}';
+$processes = @(
+    [pscustomobject]@{{ ProcessId = 101; ParentProcessId = 102; ExecutablePath = 'C:\\Program Files\\nodejs\\node.exe'; CommandLine = 'node vite\\bin\\vite.js' }},
+    [pscustomobject]@{{ ProcessId = 102; ParentProcessId = 1; ExecutablePath = 'C:\\Windows\\System32\\cmd.exe'; CommandLine = 'cmd /c {web_root}\\npm.cmd run dev' }},
+    [pscustomobject]@{{ ProcessId = 201; ParentProcessId = 202; ExecutablePath = 'C:\\Program Files\\nodejs\\node.exe'; CommandLine = 'node {other_root}\\node_modules\\vite\\bin\\vite.js' }},
+    [pscustomobject]@{{ ProcessId = 202; ParentProcessId = 1; ExecutablePath = 'C:\\Windows\\System32\\cmd.exe'; CommandLine = 'cmd /c {other_root}\\npm.cmd run dev' }}
+);
+@(Get-LuminaFrontendViteProcesses -WebRoot '{web_root}' -Processes $processes) |
+    ForEach-Object {{ Write-Output $_.ProcessId }}
+"""
+    completed = subprocess.run(
+        [powershell, "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert completed.stdout.strip() == "101"
 
 
 def test_codegraph_update_is_portable_and_reindexes_after_cli_upgrades() -> None:
@@ -520,6 +558,36 @@ def test_installer_batch_keeps_success_visible_until_keypress(tmp_path: Path) ->
     assert "simulated installer success" in completed.stdout
     assert "Lumina installation completed successfully" in completed.stdout
     assert "Press any key" in completed.stdout
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows batch entrypoint")
+def test_installer_batch_noninteractive_mode_does_not_pause(tmp_path: Path) -> None:
+    repository_root = Path(__file__).resolve().parents[2]
+    installer = repository_root / "installer.bat"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "powershell.cmd").write_text(
+        "@echo off\r\necho simulated noninteractive success\r\nexit /b 0\r\n",
+        encoding="utf-8",
+    )
+
+    environment = os.environ.copy()
+    environment["PATH"] = f"{fake_bin}{os.pathsep}{environment.get('PATH', '')}"
+    completed = subprocess.run(
+        ["cmd", "/d", "/c", str(installer), "-NonInteractive"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        env=environment,
+        timeout=10,
+    )
+
+    assert completed.returncode == 0
+    assert "simulated noninteractive success" in completed.stdout
+    assert "Lumina installation completed successfully" in completed.stdout
+    assert "Press any key" not in completed.stdout
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows batch entrypoint")
@@ -818,6 +886,116 @@ def test_installer_uses_npm_cmd_instead_of_npm_ps1_on_windows(tmp_path: Path) ->
     assert invocation.count("npm.cmd ci --prefix") == 1
     assert "national-assembly\\runtime\\bootstrap.py --install-only" not in invocation
     assert f"codegraph init {Path(__file__).resolve().parents[2]}" in invocation
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows npm EBUSY fallback")
+def test_installer_falls_back_without_changing_lockfile_after_npm_ci_ebusy(
+    tmp_path: Path,
+) -> None:
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if powershell is None:
+        pytest.skip("PowerShell is not installed")
+
+    capture = tmp_path / "invocations.txt"
+    (tmp_path / "uv.cmd").write_text(
+        '@echo off\r\n>>"%LUMINA_INSTALL_TEST_CAPTURE%" echo uv %*\r\nexit /b 0\r\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "node.cmd").write_text(
+        "@echo off\r\necho v22.12.0\r\nexit /b 0\r\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "npm.cmd").write_text(
+        '@echo off\r\n'
+        '>>"%LUMINA_INSTALL_TEST_CAPTURE%" echo npm.cmd %*\r\n'
+        'if /I "%~1"=="ci" (\r\n'
+        '  >&2 echo npm ERR! code EBUSY\r\n'
+        '  exit /b 1\r\n'
+        ')\r\n'
+        'exit /b 0\r\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "codegraph.cmd").write_text(
+        "@echo off\r\nexit /b 0\r\n",
+        encoding="utf-8",
+    )
+
+    installer = Path(__file__).resolve().parents[2] / "devtools" / "install_lumina.ps1"
+    environment = os.environ.copy()
+    environment["PATH"] = f"{tmp_path}{os.pathsep}{environment.get('PATH', '')}"
+    environment["LUMINA_INSTALL_TEST_CAPTURE"] = str(capture)
+    environment.pop("LUMINA_CA_CERT", None)
+    environment.pop("LUMINA_CA_BUNDLE", None)
+    completed = subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(installer),
+            "-NonInteractive",
+            "-SkipPgpt",
+            "-SkipFrontendBuild",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        env=environment,
+    )
+
+    output = completed.stdout + completed.stderr
+    assert completed.returncode == 0, output
+    assert "npm ci could not replace a locked node_modules entry" in output
+    invocation = capture.read_text(encoding="utf-8")
+    assert invocation.count("npm.cmd ci --prefix") == 1
+    assert invocation.count("npm.cmd install --package-lock=false --prefix") == 1
+    assert invocation.count("npm.cmd ls --prefix") == 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows npm command shim")
+def test_installer_does_not_mask_non_ebusy_npm_ci_failures(tmp_path: Path) -> None:
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if powershell is None:
+        pytest.skip("PowerShell is not installed")
+    capture = tmp_path / "invocations.txt"
+    npm_command = tmp_path / "npm.cmd"
+    npm_command.write_text(
+        '@echo off\r\n'
+        '>>"%LUMINA_INSTALL_TEST_CAPTURE%" echo npm.cmd %*\r\n'
+        '>&2 echo npm ERR! code EACCES\r\n'
+        'exit /b 4\r\n',
+        encoding="utf-8",
+    )
+    helper = (
+        Path(__file__).resolve().parents[2]
+        / "devtools"
+        / "LuminaInstall.Frontend.ps1"
+    )
+    command = (
+        f". '{helper}'; Install-LuminaFrontendDependencies "
+        f"-NpmCommand '{npm_command}' -WebRoot '{tmp_path}' -Processes @()"
+    )
+    environment = os.environ.copy()
+    environment["LUMINA_INSTALL_TEST_CAPTURE"] = str(capture)
+    completed = subprocess.run(
+        [powershell, "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        env=environment,
+    )
+
+    output = completed.stdout + completed.stderr
+    assert completed.returncode != 0
+    assert "failed with exit code 4" in output
+    invocation = capture.read_text(encoding="utf-8")
+    assert invocation.count("npm.cmd ci --prefix") == 1
+    assert "npm.cmd install" not in invocation
 
 
 def test_installer_silently_skips_codegraph_when_cli_is_unavailable(

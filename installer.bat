@@ -1,5 +1,9 @@
 @echo off
 setlocal
+set "LUMINA_INSTALL_NONINTERACTIVE="
+for %%A in (%*) do (
+    if /I "%%~A"=="-NonInteractive" set "LUMINA_INSTALL_NONINTERACTIVE=1"
+)
 call powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0devtools\install_lumina.ps1" %*
 set "LUMINA_INSTALL_EXIT=%ERRORLEVEL%"
 if not "%LUMINA_INSTALL_EXIT%"=="0" (
@@ -11,6 +15,7 @@ if not "%LUMINA_INSTALL_EXIT%"=="0" (
     echo [Lumina] Lumina installation completed successfully.
     echo [Lumina] You can now run run_lumina.bat.
 )
+if "%LUMINA_INSTALL_NONINTERACTIVE%"=="1" exit /b %LUMINA_INSTALL_EXIT%
 echo [Lumina] Press any key to close this window.
 pause >nul
 exit /b %LUMINA_INSTALL_EXIT%

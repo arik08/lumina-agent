@@ -444,12 +444,15 @@ if (-not [string]::IsNullOrWhiteSpace($resolvedBundle)) {
 
 if (-not $SkipDependencyInstall) {
     Write-Host "[Lumina] Installing frontend dependencies..."
-    Assert-LuminaFrontendNativeModulesUnlocked -WebRoot $WebRoot
-    $frontendInstallArguments = @("ci", "--prefix", $WebRoot)
-    if ($NoNetwork) {
-        $frontendInstallArguments += @("--offline", "--no-audit")
+    $frontendProcessSnapshot = $null
+    if (-not [string]::IsNullOrWhiteSpace($env:LUMINA_INSTALL_TEST_CAPTURE)) {
+        $frontendProcessSnapshot = [object[]]::new(0)
     }
-    Invoke-Checked -Command $NpmCommand -Arguments $frontendInstallArguments
+    Install-LuminaFrontendDependencies `
+        -NpmCommand $NpmCommand `
+        -WebRoot $WebRoot `
+        -NoNetwork:$NoNetwork `
+        -Processes $frontendProcessSnapshot
 }
 
 Write-Host "[Lumina] Applying database migrations..."

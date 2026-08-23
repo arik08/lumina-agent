@@ -28,6 +28,8 @@ installer.bat -NonInteractive -SkipPgpt -NoNetwork
 
 `-NoNetwork`는 `uv`와 `npm`도 offline mode로 실행합니다. 필요한 dependency가 로컬 cache에 없으면 원격으로 조용히 전환하지 않고 설치가 실패합니다.
 
+Windows에서 Frontend dependency를 설치할 때는 현재 Lumina 작업 트리에 속한 Vite process를 부모 process 경로까지 확인합니다. 해당 Vite가 실행 중이면 PID를 표시하고 설치를 중단하되 다른 작업 트리의 Vite는 차단하지 않습니다. `npm ci`가 일반 `node_modules` 항목의 일시적인 `EBUSY` 잠금으로 실패한 경우에만 `npm install --package-lock=false`로 전환하며, 이후 `npm ls`와 production build가 모두 통과해야 설치가 계속됩니다. 다른 npm 오류에는 이 fallback을 적용하지 않습니다.
+
 `uv`가 PATH에 없고 인터넷 연결을 허용한 실행이면 installer가 Astral 공식 `install.ps1` 명령으로 사용자 실행 파일 폴더에 자동 설치하고, 현재 installer process의 PATH에 즉시 반영합니다. 실행 파일을 저장소에 포함하지 않으므로 repository 용량은 늘지 않습니다. `-NoNetwork`에서는 자동 설치하지 않고 수동 설치 명령을 포함한 오류를 표시합니다.
 
 installer는 첫 `uv` 네트워크 작업 전에 `UV_SYSTEM_CERTS=true`를 설정합니다. 회사 TLS inspection 인증서가 운영체제 인증서 저장소에 등록되어 있으면 Python runtime 다운로드와 dependency 설치 단계부터 해당 trust store를 사용하며, TLS 검증 자체는 유지합니다.
