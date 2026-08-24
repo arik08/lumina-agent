@@ -45,7 +45,7 @@ interface MemoryViewProps {
   canReviewProjectLearning: boolean;
 }
 
-type MemoryTab = "personal" | "project" | "proposals";
+type MemoryTab = "personal" | "proposals";
 type MemoryListStatus = "all" | "active" | "pending" | "dismissed";
 
 const editableMemoryStatusOptions = [
@@ -656,11 +656,6 @@ export function MemoryView({
   const [refreshKey, setRefreshKey] = useState(0);
 
   const refresh = () => setRefreshKey((value) => value + 1);
-  const proposalCreated = () => {
-    refresh();
-    setTab("proposals");
-  };
-
   return (
     <div className="feature-view memory-view">
       <header className="feature-header">
@@ -669,11 +664,9 @@ export function MemoryView({
       </header>
       <nav className="memory-tabs" aria-label="Memory 영역">
         <button type="button" aria-current={tab === "personal" ? "page" : undefined} onClick={() => setTab("personal")}>개인 Memory</button>
-        <button type="button" aria-current={tab === "project" ? "page" : undefined} onClick={() => setTab("project")}>Project Memory</button>
         <button type="button" aria-current={tab === "proposals" ? "page" : undefined} onClick={() => setTab("proposals")}>메모리 반영 제안</button>
       </nav>
       {tab === "personal" && <PersonalMemoryPanel refreshKey={refreshKey} />}
-      {tab === "project" && <ProjectMemoryPanel project={project} completedRunId={completedRunId} refreshKey={refreshKey} onProposalCreated={proposalCreated} />}
       {tab === "proposals" && <LearningProposalsPanel project={project} completedRunId={completedRunId} canReview={canReviewProjectLearning} refreshKey={refreshKey} onChanged={refresh} />}
     </div>
   );
