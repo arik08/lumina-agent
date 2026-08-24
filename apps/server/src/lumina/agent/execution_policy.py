@@ -8,12 +8,13 @@ import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from ..models import Run, utc_now
 from ..providers import ProviderMessage
 from ..providers.catalog import estimate_model_cost_parts, model_operational_profile
+from ..runs.timing import run_active_elapsed_seconds
 
 
 _AUTO_EFFORT_COMPLEX_PATTERN = re.compile(
@@ -227,22 +228,12 @@ def _run_deadline(run: Run) -> datetime | None:
     limits = run.snapshot_json.get("limits", {})
     if not isinstance(limits, Mapping):
         return None
-    value = limits.get("deadline")
-    if isinstance(value, datetime):
-        parsed = value
-    elif isinstance(value, str) and value:
-        try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-    else:
-        max_elapsed_seconds = _nonnegative_int(limits.get("maxElapsedSeconds"))
-        if max_elapsed_seconds <= 0 or run.started_at is None:
-            return None
-        parsed = run.started_at + timedelta(seconds=max_elapsed_seconds)
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
+    max_elapsed_seconds = _nonnegative_int(limits.get("maxElapsedSeconds"))
+    if max_elapsed_seconds <= 0:
+        return None
+    now = utc_now()
+    elapsed_seconds = run_active_elapsed_seconds(run, now=now)
+    return now + timedelta(seconds=max(0.0, max_elapsed_seconds - elapsed_seconds))
 
 
 def _run_limit_violation(run: Run) -> RunLimitViolation | None:
@@ -282,13 +273,15 @@ def _run_limit_violation(run: Run) -> RunLimitViolation | None:
             observed=cost_usd,
         )
 
-    deadline = _run_deadline(run)
-    if deadline is not None and utc_now() >= deadline:
+    max_elapsed_seconds = _nonnegative_int(limits.get("maxElapsedSeconds"))
+    now = utc_now()
+    elapsed_seconds = run_active_elapsed_seconds(run, now=now)
+    if max_elapsed_seconds and elapsed_seconds >= max_elapsed_seconds:
         return RunLimitViolation(
             code="run_deadline_reached",
             message="관리자가 설정한 Run 실행 시간 한도에 도달했습니다.",
-            limit=deadline.isoformat(),
-            observed=utc_now().isoformat(),
+            limit=max_elapsed_seconds,
+            observed=elapsed_seconds,
         )
     return None
 

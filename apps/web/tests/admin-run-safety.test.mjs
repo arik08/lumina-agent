@@ -18,6 +18,7 @@ test("admin run safety exposes generous limits and a same-button emergency confi
   ]);
 
   assert.match(app, /settingsSection === "admin"[\s\S]*<AdminRunSafetySettings/);
+  assert.match(settings, /답변·승인·일시 정지 대기 시간 제외/);
   assert.doesNotMatch(adminView, /실행 안전|admin-run-safety/);
   assert.match(settings, /실행 안전/);
   assert.match(settings, /최대 모델 Turn/);

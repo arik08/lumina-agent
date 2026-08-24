@@ -12,6 +12,7 @@ from ..models import Run, RunEvent, utc_now
 from ..notifications import create_run_transition_notification
 from .events import append_event
 from .state import COMPLETED, PREPARING, TERMINAL_STATUSES, ensure_transition
+from .timing import update_run_active_timing
 
 
 class StaleRunTransition(RuntimeError):
@@ -28,7 +29,14 @@ def transition_run(
 ) -> RunEvent:
     current = run.status
     ensure_transition(current, target)
+    now = utc_now()
     _compare_and_set_status(db, run, current=current, target=target)
+    update_run_active_timing(
+        run,
+        current_status=current,
+        target_status=target,
+        now=now,
+    )
     if target == COMPLETED:
         work_plan = run.snapshot_json.get("work_plan", [])
         if isinstance(work_plan, list) and any(
@@ -49,7 +57,6 @@ def transition_run(
                 "work_plan_updated",
                 {"steps": completed_work_plan},
             )
-    now = utc_now()
     if target == PREPARING and run.started_at is None:
         run.started_at = now
     if target in TERMINAL_STATUSES:

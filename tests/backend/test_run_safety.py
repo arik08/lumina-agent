@@ -18,6 +18,8 @@ from lumina.providers import (
 )
 from lumina.runs.broker import RunEventBroker
 from lumina.runs.safety import normalize_run_safety_settings, run_limit_snapshot
+from lumina.runs.state import AWAITING_INPUT, MODEL_STREAMING, PREPARING, QUEUED
+from lumina.runs.timing import update_run_active_timing
 
 
 def _run(*, limits: dict[str, object], usage: dict[str, object]) -> Run:
@@ -89,6 +91,82 @@ def test_run_limit_violation_checks_turns_tokens_cost_and_elapsed_time() -> None
     )
     elapsed_run.started_at = utc_now() - timedelta(days=8)
     assert _run_limit_violation(elapsed_run).code == "run_deadline_reached"
+
+
+def test_run_elapsed_limit_excludes_time_waiting_for_user_input() -> None:
+    limits = {
+        "maxModelTurns": 400,
+        "maxTotalTokens": 4_000_000,
+        "maxElapsedSeconds": 60,
+        "maxCostUsd": 100.0,
+    }
+    run = _run(limits=limits, usage={"model_turns": 1})
+    active_started_at = utc_now() - timedelta(days=8, seconds=10)
+    run.status = PREPARING
+    run.started_at = active_started_at
+    update_run_active_timing(
+        run,
+        current_status=QUEUED,
+        target_status=PREPARING,
+        now=active_started_at,
+    )
+    wait_started_at = active_started_at + timedelta(seconds=10)
+    update_run_active_timing(
+        run,
+        current_status=PREPARING,
+        target_status=AWAITING_INPUT,
+        now=wait_started_at,
+    )
+    run.status = AWAITING_INPUT
+
+    assert _run_limit_violation(run) is None
+
+    resumed_at = utc_now()
+    update_run_active_timing(
+        run,
+        current_status=AWAITING_INPUT,
+        target_status=QUEUED,
+        now=resumed_at,
+    )
+    run.status = QUEUED
+    update_run_active_timing(
+        run,
+        current_status=QUEUED,
+        target_status=MODEL_STREAMING,
+        now=resumed_at,
+    )
+    run.status = MODEL_STREAMING
+
+    assert _run_limit_violation(run) is None
+
+
+def test_legacy_waiting_run_does_not_count_wall_clock_time_on_resume() -> None:
+    run = _run(
+        limits={"maxElapsedSeconds": 60},
+        usage={"model_turns": 1},
+    )
+    run.status = AWAITING_INPUT
+    run.started_at = utc_now() - timedelta(days=8)
+
+    assert _run_limit_violation(run) is None
+
+    resumed_at = utc_now()
+    update_run_active_timing(
+        run,
+        current_status=AWAITING_INPUT,
+        target_status=QUEUED,
+        now=resumed_at,
+    )
+    run.status = QUEUED
+    update_run_active_timing(
+        run,
+        current_status=QUEUED,
+        target_status=MODEL_STREAMING,
+        now=resumed_at,
+    )
+    run.status = MODEL_STREAMING
+
+    assert _run_limit_violation(run) is None
 
 
 def test_executor_cancel_many_actively_cancels_matching_tasks(tmp_path: Path) -> None:
