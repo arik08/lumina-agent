@@ -373,6 +373,10 @@ export function useConversationAutoFollow(
       terminalFollowUntilRef.current = performance.now() + terminalFollowSettleMs;
     } else if (active) {
       terminalFollowUntilRef.current = 0;
+      if (!previousActiveRef.current) {
+        followingRef.current = true;
+        setShowJumpToLatest(false);
+      }
     }
     previousActiveRef.current = active;
   }, [active]);

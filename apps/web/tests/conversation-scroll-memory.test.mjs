@@ -17,6 +17,7 @@ test("conversation scroll position is restored per session without completed-run
   assert.match(streamingUi, /\(!activeRef\.current && !settlingTerminalFollow && !force\)/);
   assert.match(streamingUi, /if \(previousHeight !== null && nextHeight < previousHeight && followingRef\.current\) \{[\s\S]*?cancelAnimationFrame\(animationRef\.current\)[\s\S]*?maximumTop - lastBottomDistanceRef\.current[\s\S]*?setProgrammaticScrollTop\(container, preservedTop,/);
   assert.match(streamingUi, /terminalFollowUntilRef\.current = performance\.now\(\) \+ terminalFollowSettleMs;/);
+  assert.match(streamingUi, /else if \(active\) \{[\s\S]*?if \(!previousActiveRef\.current\) \{[\s\S]*?followingRef\.current = true;[\s\S]*?setShowJumpToLatest\(false\);/);
   assert.match(streamingUi, /follow\(!activeRef\.current && !settlingTerminalFollow, false, !activeRef\.current\);/);
   assert.doesNotMatch(streamingUi, /!activeRef\.current && conversationId && remembered\?\.atBottom/);
   assert.match(streamingUi, /setShowJumpToLatest\(!followingRef\.current && distance > jumpButtonThresholdPx\)/);
