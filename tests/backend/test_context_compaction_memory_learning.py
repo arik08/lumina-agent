@@ -24,6 +24,7 @@ from lumina.memories.service import (
     MemoryCandidate,
     MemoryExtractionResult,
     PreparedMemoryExtractor,
+    enforce_active_memory_quota,
     learn_memories_for_run,
     optimize_memories_with_llm,
     patch_memory,
@@ -1985,12 +1986,95 @@ def test_memory_retrieval_selects_relevant_subset_with_core_preferences(
             user_id=user.id,
             query="설비 점검 결과를 HTML 보고서로 작성해 주세요.",
         )
-        assert len(selected) == 2
+        assert len(selected) == 4
         assert {memory.category for memory in selected} == {
+            "user_identity",
+            "communication_preference",
             "user_role",
             "output_preference",
         }
         assert all(memory.display_text != rows[-1].display_text for memory in selected)
+
+        no_overlap = select_relevant_memories(
+            db,
+            user_id=user.id,
+            query="오늘 할 일을 정리해 주세요.",
+        )
+        assert {memory.category for memory in no_overlap} == {
+            "user_identity",
+            "communication_preference",
+            "user_role",
+            "output_preference",
+        }
+
+        with_recurring_rule = select_relevant_memories(
+            db,
+            user_id=user.id,
+            query="월요일 오전 회의를 준비해 주세요.",
+        )
+        assert rows[-1] in with_recurring_rule
+
+
+def test_active_memory_quota_retires_low_value_overflow_without_deleting_history(
+    tmp_path: Path,
+) -> None:
+    user, _project, _conversation = _configure(tmp_path, "memory-quota")
+    with SessionLocal() as db:
+        user = db.merge(user)
+        protected = UserMemory(
+            user_id=user.id,
+            category="user_identity",
+            normalized_fact="사용자 이름은 오명철입니다.",
+            display_text="사용자 이름은 오명철입니다.",
+            conflict_key="user_name",
+            source_message_ids_json=[],
+            source_run_ids_json=[],
+            confidence=1.0,
+            evidence_count=1,
+            status="active",
+            extractor_version="test",
+        )
+        reinforced = UserMemory(
+            user_id=user.id,
+            category="recurring_rule",
+            normalized_fact="매주 월요일 설비 회의를 합니다.",
+            display_text="매주 월요일 설비 회의를 합니다.",
+            conflict_key="weekly_meeting",
+            source_message_ids_json=[],
+            source_run_ids_json=[],
+            confidence=0.9,
+            evidence_count=5,
+            status="active",
+            extractor_version="test",
+        )
+        low_value = UserMemory(
+            user_id=user.id,
+            category="terminology",
+            normalized_fact="임시 용어를 사용합니다.",
+            display_text="임시 용어를 사용합니다.",
+            conflict_key=None,
+            source_message_ids_json=[],
+            source_run_ids_json=[],
+            confidence=0.2,
+            evidence_count=1,
+            status="active",
+            extractor_version="test",
+        )
+        db.add_all((protected, reinforced, low_value))
+        db.flush()
+
+        retired_ids = enforce_active_memory_quota(
+            db,
+            user_id=user.id,
+            max_count=2,
+            character_budget=100_000,
+        )
+
+        assert retired_ids == (low_value.id,)
+        assert protected.status == "active"
+        assert reinforced.status == "active"
+        assert low_value.status == "superseded"
+        assert low_value.deleted_at is None
 
 
 @pytest.mark.asyncio

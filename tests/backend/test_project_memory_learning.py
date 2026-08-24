@@ -266,7 +266,9 @@ def test_project_memory_revision_snapshot_delete_and_rollback(tmp_path: Path) ->
             assert snapshots[0]["revision"] == 1
             assert snapshots[0]["content_hash"] == memory_v1["contentHash"]
             user_snapshots = snapshotted_run.snapshot_json["user_memories"]
-            assert user_snapshots == []
+            assert len(user_snapshots) == 1
+            assert user_snapshots[0]["category"] == "communication_preference"
+            assert user_snapshots[0]["display_text"] == "개인 UserMemory"
         prompt_messages = LocalRunExecutor(settings)._conversation_messages(
             snapshotted_run_id,
             "베어링 점검 주기를 알려 주세요.",
@@ -275,7 +277,7 @@ def test_project_memory_revision_snapshot_delete_and_rollback(tmp_path: Path) ->
             message.role == "system"
             and f"project_memory_id={memory_v1['id']}" in str(message.content)
             and "revision=1" in str(message.content)
-            and "개인 UserMemory" not in str(message.content)
+            and "개인 UserMemory" in str(message.content)
             for message in prompt_messages
         )
         assert any(
@@ -298,7 +300,10 @@ def test_project_memory_revision_snapshot_delete_and_rollback(tmp_path: Path) ->
         with SessionLocal() as db:
             unrelated_run = db.get(Run, unrelated_run_id)
             assert unrelated_run is not None
-            assert unrelated_run.snapshot_json["user_memories"] == []
+            assert [
+                memory["category"]
+                for memory in unrelated_run.snapshot_json["user_memories"]
+            ] == ["communication_preference"]
             assert unrelated_run.snapshot_json["project_memories"] == []
 
         updated = _proposal(

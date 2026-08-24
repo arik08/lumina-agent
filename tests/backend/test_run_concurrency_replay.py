@@ -2889,7 +2889,17 @@ def test_queue_next_promotes_to_new_run_only_after_terminal(
             assert source_snapshot.status_code == 200
             assert source_snapshot.json()["status"] == "completed"
             assert source_snapshot.json()["pendingCommands"] == []
-            assert source_snapshot.json()["lastSequence"] == promotion_sequence
+            assert source_snapshot.json()["lastSequence"] >= promotion_sequence
+            with SessionLocal() as db:
+                later_event_types = set(
+                    db.scalars(
+                        select(RunEvent.event_type).where(
+                            RunEvent.run_id == current_run_id,
+                            RunEvent.sequence > promotion_sequence,
+                        )
+                    )
+                )
+                assert later_event_types <= {"memory_extraction_completed"}
 
             provider.release["queue-next"].set()
             assert _wait_for_terminal(client, promoted_run_id)["status"] == "completed"

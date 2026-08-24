@@ -1536,6 +1536,17 @@ class LocalRunExecutor:
                 extra={"run_id": completed_run_id},
             )
 
+    def _discard_background_task(self, task: asyncio.Task[None]) -> None:
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        failure = task.exception()
+        if failure is not None:
+            logger.error(
+                "Background task terminated outside its failure boundary",
+                exc_info=(type(failure), failure, failure.__traceback__),
+            )
+
     async def _dispatch_runs(self) -> None:
         try:
             while self._started:
@@ -9800,6 +9811,13 @@ class LocalRunExecutor:
         event_broker.clear_artifact_progress(run_id)
         event_broker.clear_assistant_draft(run_id)
         await event_broker.notify(run_id)
+        if completed:
+            task = asyncio.create_task(
+                self._learn_memory_after_completion(run_id, memory_json),
+                name=f"lumina-memory-{run_id}",
+            )
+            self._background_tasks.add(task)
+            task.add_done_callback(self._discard_background_task)
 
     def _complete_run_database(
         self,
@@ -9893,30 +9911,83 @@ class LocalRunExecutor:
                 reason="final_response_completed",
             )
             transition_run(db, run, COMPLETED, event_type="run_completed")
-            if run.snapshot_json.get("memory_learning_mode", "auto") != "off":
-                source_ids = tuple(
-                    db.scalars(
-                        select(Message.id)
-                        .where(
-                            Message.run_id == run.id,
-                            Message.role == "user",
-                            Message.author_user_id == run.user_id,
-                            Message.status == "completed",
-                        )
-                        .order_by(Message.created_at, Message.id)
-                    )
-                )
-                candidates = memory_candidates_from_inline_json(
-                    memory_json,
-                    source_message_ids=source_ids,
-                )
-                learn_memories_for_run(
-                    db,
-                    run.id,
-                    extractor=PreparedMemoryExtractor(candidates),
-                )
             completed = True
         return completed
+
+    async def _learn_memory_after_completion(
+        self, run_id: str, memory_json: str | None
+    ) -> None:
+        try:
+            await self._run_database_mutation(
+                run_id,
+                self._learn_memory_database,
+                run_id,
+                memory_json,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Memory persistence failed after Run completion run_id=%s", run_id
+            )
+            try:
+                await self._run_database_mutation(
+                    run_id,
+                    self._record_memory_failure_database,
+                    run_id,
+                    type(exc).__name__,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to record Memory persistence failure run_id=%s", run_id
+                )
+        finally:
+            await event_broker.notify(run_id)
+
+    @staticmethod
+    def _learn_memory_database(run_id: str, memory_json: str | None) -> None:
+        with session_scope() as db:
+            run = db.get(Run, run_id)
+            if (
+                run is None
+                or run.status != COMPLETED
+                or run.snapshot_json.get("memory_learning_mode", "auto") == "off"
+            ):
+                return
+            source_ids = tuple(
+                db.scalars(
+                    select(Message.id)
+                    .where(
+                        Message.run_id == run.id,
+                        Message.role == "user",
+                        Message.author_user_id == run.user_id,
+                        Message.status == "completed",
+                    )
+                    .order_by(Message.created_at, Message.id)
+                )
+            )
+            candidates = memory_candidates_from_inline_json(
+                memory_json,
+                source_message_ids=source_ids,
+            )
+            learn_memories_for_run(
+                db,
+                run.id,
+                extractor=PreparedMemoryExtractor(candidates),
+            )
+
+    @staticmethod
+    def _record_memory_failure_database(
+        run_id: str, error_type: str
+    ) -> None:
+        with session_scope() as db:
+            run = db.get(Run, run_id)
+            if run is None:
+                return
+            append_event(
+                db,
+                run,
+                "memory_extraction_failed",
+                {"errorType": error_type},
+            )
 
     def _emit_run_activity(self, run_id: str, state: str) -> None:
         with SessionLocal() as db:

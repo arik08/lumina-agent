@@ -24,6 +24,15 @@ from .policy import (
 
 INLINE_LLM_EXTRACTOR_VERSION = "llm-inline-v1"
 LLM_OPTIMIZER_VERSION = "llm-memory-optimizer-v1"
+ACTIVE_MEMORY_MAX_COUNT = 200
+ACTIVE_MEMORY_CHARACTER_BUDGET = 100_000
+CORE_MEMORY_LIMIT = 4
+CORE_MEMORY_CATEGORY_PRIORITY = {
+    "user_identity": 4,
+    "user_role": 3,
+    "communication_preference": 2,
+    "output_preference": 1,
+}
 _MEMORY_TERM = re.compile(r"[A-Za-z0-9_]{2,}|[가-힣]{2,}")
 _MEMORY_CATEGORIES = frozenset(
     {
@@ -404,6 +413,7 @@ def create_memory(
     _append_memory_events(
         db, run_ids=run_ids, memory=memory, action="created" if created else "confirmed"
     )
+    enforce_active_memory_quota(db, user_id=user.id)
     return memory, created
 
 
@@ -584,6 +594,7 @@ def learn_memories_for_run(
             action="created" if mode == "auto" else "candidate_created",
         )
 
+    retired_ids = enforce_active_memory_quota(db, user_id=run.user_id)
     append_event(
         db,
         run,
@@ -594,6 +605,7 @@ def learn_memories_for_run(
             "createdIds": created_ids,
             "updatedIds": updated_ids,
             "pendingIds": list(dict.fromkeys(pending_ids)),
+            "retiredIds": list(retired_ids),
             "skippedCount": skipped_count,
         },
     )
@@ -644,7 +656,7 @@ def select_relevant_memories(
     limit: int = 8,
     character_budget: int = 8_000,
 ) -> list[UserMemory]:
-    """Select a small deterministic subset instead of injecting all Memory."""
+    """Select a bounded core profile plus a deterministic relevant subset."""
 
     now = utc_now()
     candidates = list(
@@ -657,9 +669,45 @@ def select_relevant_memories(
             )
         )
     )
+    selected: list[UserMemory] = []
+    selected_ids: set[str] = set()
+    remaining = max(0, character_budget)
+
+    def add_memory(memory: UserMemory) -> bool:
+        nonlocal remaining
+        text_length = _memory_storage_size(memory)
+        if text_length == 0 or text_length > remaining:
+            return False
+        selected.append(memory)
+        selected_ids.add(memory.id)
+        remaining -= text_length
+        return True
+
+    core_candidates = sorted(
+        (
+            memory
+            for memory in candidates
+            if memory.category in CORE_MEMORY_CATEGORY_PRIORITY
+        ),
+        key=lambda memory: (
+            CORE_MEMORY_CATEGORY_PRIORITY[memory.category],
+            memory.evidence_count,
+            memory.confidence,
+            memory.last_confirmed_at,
+            memory.id,
+        ),
+        reverse=True,
+    )
+    for memory in core_candidates:
+        if len(selected) >= min(max(0, limit), CORE_MEMORY_LIMIT):
+            break
+        add_memory(memory)
+
     query_terms = _memory_terms(query)
     ranked: list[tuple[int, int, float, str, UserMemory]] = []
     for memory in candidates:
+        if memory.id in selected_ids:
+            continue
         memory_terms = _memory_terms(
             " ".join(
                 (
@@ -678,22 +726,76 @@ def select_relevant_memories(
             (score, memory.evidence_count, memory.confidence, memory.id, memory)
         )
     ranked.sort(key=lambda item: item[:4], reverse=True)
-    selected: list[UserMemory] = []
-    remaining = max(0, character_budget)
     for _score, _evidence, _confidence, _id, memory in ranked:
-        text_length = (
-            len(memory.display_text.strip())
-            + len(memory.id)
-            + len(memory.category)
-            + 32
-        )
-        if text_length == 0 or text_length > remaining:
-            continue
-        selected.append(memory)
-        remaining -= text_length
+        add_memory(memory)
         if len(selected) >= max(0, limit):
             break
     return selected
+
+
+def _memory_storage_size(memory: UserMemory) -> int:
+    return (
+        len(memory.normalized_fact.strip())
+        + len(memory.display_text.strip())
+        + len(memory.category)
+        + len(memory.conflict_key or "")
+        + len(memory.id)
+        + 32
+    )
+
+
+def enforce_active_memory_quota(
+    db: Session,
+    *,
+    user_id: str,
+    max_count: int = ACTIVE_MEMORY_MAX_COUNT,
+    character_budget: int = ACTIVE_MEMORY_CHARACTER_BUDGET,
+) -> tuple[str, ...]:
+    """Retire low-value overflow while preserving rows and deletion history."""
+
+    active = list(
+        db.scalars(
+            select(UserMemory).where(
+                UserMemory.user_id == user_id,
+                UserMemory.status == "active",
+                UserMemory.deleted_at.is_(None),
+            )
+        )
+    )
+    ranked = sorted(
+        active,
+        key=lambda memory: (
+            memory.category in CORE_MEMORY_CATEGORY_PRIORITY,
+            memory.evidence_count,
+            memory.confidence,
+            memory.last_confirmed_at,
+            memory.id,
+        ),
+        reverse=True,
+    )
+    kept_ids: set[str] = set()
+    remaining = max(0, character_budget)
+    for memory in ranked:
+        if len(kept_ids) >= max(0, max_count):
+            break
+        size = _memory_storage_size(memory)
+        if size > remaining:
+            continue
+        kept_ids.add(memory.id)
+        remaining -= size
+
+    retired = [memory for memory in active if memory.id not in kept_ids]
+    now = utc_now()
+    for memory in retired:
+        memory.status = "superseded"
+        memory.updated_at = now
+        _append_memory_events(
+            db,
+            run_ids=memory.source_run_ids_json,
+            memory=memory,
+            action="quota_retired",
+        )
+    return tuple(sorted(memory.id for memory in retired))
 
 
 def require_memory(db: Session, user: User, memory_id: str) -> UserMemory:
@@ -774,6 +876,8 @@ def patch_memory(
     _append_memory_events(
         db, run_ids=memory.source_run_ids_json, memory=memory, action=action
     )
+    if memory.status == "active":
+        enforce_active_memory_quota(db, user_id=user.id)
     return memory
 
 

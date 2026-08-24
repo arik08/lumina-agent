@@ -386,7 +386,7 @@ Hermes처럼 초기부터 자율 Skill 개선을 강하게 도입하면 다중 �
 Hermes의 Memory를 파일이나 외부 Provider 형태로 그대로 복제하지 않고 다음 세 층으로 재해석합니다.
 
 1. **Curated UserMemory**: 사용자 역할·응답 방식·반복 선호처럼 안정된 항목을 구조화해 저장하고 자동 저장·확인·중지 정책과 출처를 유지합니다.
-2. **Relevant recall**: Run 생성 시 현재 요청과 관련된 소수의 UserMemory와 Project Memory를 선택해 snapshot으로 고정합니다. 회상 결과는 system prompt를 변경하지 않고 현재 사용자 Context tail에 주입해 prompt cache와 Run 재현성을 함께 보존합니다.
+2. **Core profile + relevant recall**: Run 생성 시 이름·역할·전역 응답 선호 같은 작은 핵심 프로필을 우선 포함하고, 남은 budget에는 현재 요청과 관련된 UserMemory와 Project Memory를 선택해 snapshot으로 고정합니다. 회상 결과는 system prompt를 변경하지 않고 현재 사용자 Context tail에 주입해 prompt cache와 Run 재현성을 함께 보존합니다.
 3. **Session search**: 장기 대화 전체를 Memory로 복제하지 않고 기존 대화 검색을 향후 Agent가 호출할 수 있는 읽기 전용 Tool로 확장합니다. “지난번에 무엇을 결정했지?”처럼 정확한 과거 근거가 필요할 때만 사용합니다.
 
 완료 Turn 뒤 학습은 Hermes의 범용 background-review Agent fork 대신 Lumina의 제한된 structured extractor를 유지합니다. extractor는 사용자 작성 Message만 입력받고 Memory 후보 schema만 출력하며 원래 Run의 Message·Session을 쓸 수 없습니다. 외부 Memory Provider는 사내 데이터 반출, 사용자·Project 격리, 삭제 전파와 audit 계약을 만족하는 Adapter가 준비되기 전까지 기본 범위에서 제외합니다.

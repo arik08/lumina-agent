@@ -1728,6 +1728,9 @@ def test_final_answer_captures_memory_inline_without_a_second_model_call(
         )
         assert started.status_code == 202, started.text
         snapshot = _wait_for_terminal(client, started.json()["run"]["runId"])
+        _wait_for_run_event(
+            started.json()["run"]["runId"], "memory_extraction_completed"
+        )
         memories = client.get("/api/memories").json()
 
     assert snapshot["status"] == "completed"
@@ -1737,6 +1740,79 @@ def test_final_answer_captures_memory_inline_without_a_second_model_call(
         "사용자는 주말마다 등산합니다."
     ]
     assert memories[0]["extractorVersion"] == "llm-inline-v1"
+
+
+def test_memory_persistence_failure_does_not_roll_back_completed_run(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'memory-failure.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+    )
+    envelope = json.dumps(
+        {
+            "candidates": [
+                {
+                    "category": "user_role",
+                    "fact": "사용자는 설비 엔지니어입니다.",
+                    "confidence": 0.95,
+                    "conflictKey": "user_role",
+                }
+            ]
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+    monkeypatch.setattr(
+        local_run_executor,
+        "_provider",
+        lambda *_args, **_kwargs: MockProvider(
+            text_chunks=(
+                "답변을 완료했습니다.<lumina_memory>",
+                envelope,
+                "</lumina_memory>",
+            )
+        ),
+    )
+
+    def fail_memory_persistence(*_args, **_kwargs):
+        raise RuntimeError("forced memory persistence failure")
+
+    monkeypatch.setattr(
+        executor_module, "learn_memories_for_run", fail_memory_persistence
+    )
+
+    with TestClient(create_app(settings)) as client:
+        csrf = _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+        conversation = client.post(
+            "/api/conversations",
+            headers={"X-CSRF-Token": csrf},
+            json={"projectId": project_id, "title": "Memory failure isolation"},
+        ).json()
+        started = client.post(
+            f"/api/conversations/{conversation['id']}/runs",
+            headers={
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": "memory-failure-0001",
+            },
+            json={"message": {"text": "저는 설비 엔지니어입니다."}},
+        )
+        assert started.status_code == 202, started.text
+        run_id = started.json()["run"]["runId"]
+        snapshot = _wait_for_terminal(client, run_id)
+        failure_event = _wait_for_run_event(run_id, "memory_extraction_failed")
+
+        assert client.get("/api/memories").json() == []
+
+    assert snapshot["status"] == "completed"
+    assert snapshot["assistantDraft"]["text"] == "답변을 완료했습니다."
+    assert failure_event.payload_json["errorType"] == "RuntimeError"
 
 
 def test_file_mode_accepts_model_selected_artifact_without_explicit_file_words(
@@ -2825,3 +2901,23 @@ def _wait_for_terminal(client: TestClient, run_id: str) -> dict[str, object]:
             return payload
         time.sleep(0.02)
     raise AssertionError(f"Run did not reach a terminal state: {payload}")
+
+
+def _wait_for_run_event(run_id: str, event_type: str) -> RunEvent:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        with SessionLocal() as db:
+            event = (
+                db.query(RunEvent)
+                .filter(
+                    RunEvent.run_id == run_id,
+                    RunEvent.event_type == event_type,
+                )
+                .order_by(RunEvent.sequence.desc())
+                .first()
+            )
+            if event is not None:
+                db.expunge(event)
+                return event
+        time.sleep(0.02)
+    raise AssertionError(f"Run event did not appear: {event_type}")

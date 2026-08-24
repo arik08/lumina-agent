@@ -617,7 +617,7 @@ System security policy
 ### 7.5 사용자 Memory와 Project 학습
 
 - `UserMemory`는 한 사용자의 여러 개인 Project와 Session에서 재사용하는 비공개 장기 정보입니다. 선호 언어·말투·형식, 반복 업무 방식, 자주 쓰는 용어, 역할과 명시된 장기 목표처럼 이후 응답에 실제로 도움이 되는 안정된 정보를 자동 학습합니다.
-- 각 완료 Turn 뒤 비동기 Memory extractor가 새 후보를 만들고 기존 항목과 중복·충돌을 비교합니다. chat 응답 완료의 critical path를 막지 않으며 extractor 실패가 원래 Run을 실패시키지 않습니다.
+- 각 완료 Turn 뒤 Memory 저장은 답변과 Run 완료 transaction을 먼저 commit한 다음 별도 background transaction에서 실행합니다. structured extractor가 새 후보를 만들고 기존 항목과 중복·충돌을 비교하며, 저장 실패는 `memory_extraction_failed` event로 남기되 완료된 Run을 롤백하거나 실패 상태로 바꾸지 않습니다.
 - 자동 학습 근거는 사용자가 직접 작성한 Message와 명시적 확인으로 제한합니다. assistant 추측, web·Tool 결과, 업로드 문서의 문장과 다른 사람이 공유한 대화를 사용자 사실로 학습하지 않습니다.
 
 ```text
@@ -636,7 +636,8 @@ UserMemory
 - password, token, 인증서, 주민·사번 같은 고유식별정보, 건강·정치·노조 등 민감정보, 일회성 코드, 임시 승인, 추측한 감정·성격과 제3자 비밀은 자동 저장하지 않습니다. 사용자가 명시적으로 기억을 요청해도 조직 정책이 금지하면 거부합니다.
 - 같은 사실의 반복은 evidence count와 last confirmed만 갱신합니다. 새 정보가 기존 정보와 충돌하면 덮어쓰지 않고 최신 명시 발언을 active로, 이전 항목을 superseded로 연결합니다.
 - 개인 Memory 화면의 `LLM 최적화`는 여러 active 항목을 구조화 입력으로 분석해 같은 사실의 표현·파편만 통합합니다. 관련만 있거나 범위가 다른 사실, 충돌 값과 불확실한 항목은 합치지 않습니다. 통합 Memory는 원본 Message·Run·evidence를 모두 승계하고 원본은 삭제하지 않고 `superseded`로 보존하며, Backend는 LLM이 반환한 Memory ID·중복 그룹·민감정보를 다시 검증합니다.
-- Run 시작 전 권한이 있는 active Memory 중 현재 요청과 관련된 소수만 token budget 안에서 선택해 stable ID와 함께 Context tail에 넣습니다. 전체 Memory를 매 Turn system prompt에 넣어 cache를 깨거나 token을 낭비하지 않습니다.
+- active UserMemory는 사용자당 최대 200개·정규화 사실과 표시 문구 합계 약 100,000자의 저장 quota를 적용합니다. 반복된 같은 사실은 기존처럼 evidence로 병합하고, quota를 넘으면 핵심 프로필·반복 근거·신뢰도·최근 확인 순으로 보존하며 초과 항목은 삭제하지 않고 `superseded`로 보존합니다. 의미가 같은 표현의 통합은 별도 `LLM 최적화`가 담당합니다.
+- Run 시작 전 `user_identity`, `user_role`, `communication_preference`, `output_preference` 중 근거가 강한 최대 4개를 작은 핵심 프로필로 우선 포함하고, 남은 budget에는 현재 요청과 관련된 active Memory를 선택해 stable ID와 함께 Context tail에 넣습니다. 전체 Memory를 매 Turn system prompt에 넣어 cache를 깨거나 token을 낭비하지 않습니다.
 - 선택된 UserMemory와 Project Memory의 ID·표시 내용·revision 또는 확인 시각은 Run 생성 시 snapshot으로 고정합니다. Queue 대기 중 Memory가 변경되어도 이미 생성된 Run의 recall 결과는 바뀌지 않으며 replay도 같은 내용을 사용합니다.
 - recall block은 명시적으로 `새 사용자 입력이 아닌 하위 우선순위 참고 Context`라고 표시해 현재 사용자 Message tail에 붙입니다. 동적으로 변하는 recall을 system prompt에 추가하지 않아 stable prefix와 Provider prompt cache를 보존하고, recall 내용 안의 지시는 실행 지침으로 승격하지 않습니다.
 - 전체 대화 이력은 UserMemory로 요약 복제하지 않습니다. 정확한 과거 결정이나 발언이 필요하면 기존 Session·Message 저장소를 검색하는 읽기 전용 `session_search` Tool을 사용하며 결과에 원본 Session·Message ID를 포함합니다.
