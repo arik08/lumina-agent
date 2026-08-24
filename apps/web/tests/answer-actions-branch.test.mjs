@@ -22,12 +22,13 @@ test("answer actions place usage first and branch immediately before share", () 
   assert.match(actions.slice(branchIndex, shareIndex), /BranchFromHereIcon size=\{16\}/);
 });
 
-test("answer actions and completion time stay quiet until the metadata row is engaged", () => {
+test("answer actions and completion time react only to their own hover areas", () => {
   assert.match(stylesheet, /\.final-answer-meta \{[^}]*--answer-meta-idle-color: color-mix\(in srgb, var\(--faint\) 55%, transparent\);/s);
   assert.match(stylesheet, /\.answer-actions button \{[^}]*color: var\(--answer-meta-idle-color\);[^}]*transition: color 160ms/s);
   assert.match(stylesheet, /\.answer-completed-time \{[^}]*color: var\(--answer-meta-idle-color\);[^}]*transition: color 160ms/s);
-  assert.match(stylesheet, /\.final-answer-meta:where\(:hover, :focus-within\) \.answer-actions button \{ color: var\(--muted\); \}/);
-  assert.match(stylesheet, /\.final-answer-meta:where\(:hover, :focus-within\) \.answer-completed-time \{ color: var\(--muted\); \}/);
+  assert.match(stylesheet, /\.answer-actions:where\(:hover, :focus-within\) button \{ color: var\(--muted\); \}/);
+  assert.match(stylesheet, /\.answer-completed-time:hover \{ color: var\(--muted\); \}/);
+  assert.doesNotMatch(stylesheet, /\.final-answer-meta:where\(:hover, :focus-within\) \.answer-(?:actions|completed-time)/);
   assert.match(stylesheet, /\.answer-actions button:hover \{[^}]*color: var\(--ink\);/s);
 });
 
