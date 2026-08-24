@@ -431,7 +431,7 @@ async def post_knowledge_document_batch_tags(
         metadata={
             "provider_id": payload.provider_id,
             "model_key": payload.model_key,
-            **result,
+            **{key: value for key, value in result.items() if key != "documentResults"},
         },
     )
     db.commit()

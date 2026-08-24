@@ -635,6 +635,21 @@ function KnowledgeTagging({ space, documents, onChanged }: { space: KnowledgeSpa
         <div>{error && <span className="knowledge-inline-error" role="alert">{error}</span>}{result && <span className="knowledge-tagging-result">{result.requestedCount}개 처리 · {result.taggedCount}개 태깅 · {result.proposedCount}개 제안{result.failedCount > 0 ? ` · ${result.failedCount}개 실패` : ""}</span>}</div>
         <button className={`lumina-primary-action ${running ? "is-tagging" : allArmed ? "is-delete-armed" : ""}`} type="button" disabled={!modelValue || !targetCount || running} onClick={() => void runTagging()}>{running ? <>태깅 중 <LoaderCircle className="is-running" size={14} /></> : allArmed ? <><AlertTriangle size={14} /> 한 번 더 눌러 전체 재태깅</> : `${targetCount}개 문서 태깅`}</button>
       </footer>
+      {result && result.documentResults.length > 0 && <section className="knowledge-tagging-details" aria-label="문서별 태깅 결과">
+        <header><div><strong>문서별 태깅 결과</strong><small>이번 실행에서 문서에 적용된 태그와 승인 대기 제안입니다.</small></div><span>{result.documentResults.length}개 문서</span></header>
+        <div className="knowledge-tagging-result-list">
+          {result.documentResults.map((document) => <article className={`knowledge-tagging-result-row is-${document.status}`} key={document.documentId}>
+            <div className="knowledge-tagging-result-title">
+              {document.status === "failed" ? <AlertTriangle size={14} /> : document.status === "proposed" ? <Tags size={14} /> : <Check size={14} />}
+              <strong>{document.title}</strong>
+              <span>{document.status === "tagged" ? "태깅 완료" : document.status === "proposed" ? "승인 대기" : "실패"}</span>
+            </div>
+            {document.tags.length > 0 && <div className="knowledge-tagging-result-tags"><small>적용 태그</small>{document.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}
+            {document.proposals.length > 0 && <div className="knowledge-tagging-result-tags is-proposal"><small>새 태그 제안</small>{document.proposals.map((tag) => <span key={tag}>{tag}</span>)}</div>}
+            {document.message && <p>{document.message}</p>}
+          </article>)}
+        </div>
+      </section>}
     </section>
   </div>;
 }

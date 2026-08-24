@@ -822,6 +822,15 @@ export interface KnowledgeBatchTagResult {
   remainingCount: number;
   target: KnowledgeTaggingTarget;
   newTagPolicy: KnowledgeNewTagPolicy;
+  documentResults: KnowledgeBatchTagDocumentResult[];
+}
+export interface KnowledgeBatchTagDocumentResult {
+  documentId: UUID;
+  title: string;
+  status: "tagged" | "proposed" | "failed";
+  tags: string[];
+  proposals: string[];
+  message: string | null;
 }
 export interface KnowledgeTagProposal {
   id: UUID;

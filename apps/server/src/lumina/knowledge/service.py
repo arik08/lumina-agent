@@ -122,7 +122,9 @@ def require_knowledge_space(
         or space.status != "active"
         or space.archived_at is not None
     ):
-        raise ApiProblem(404, "knowledge_space_not_found", "지식 공간을 찾을 수 없습니다.")
+        raise ApiProblem(
+            404, "knowledge_space_not_found", "지식 공간을 찾을 수 없습니다."
+        )
     return space
 
 
@@ -331,7 +333,9 @@ def save_message_as_knowledge_document(
         source_conversation_id=conversation.id,
         title=title,
         body=body,
-        researched_at=(run.started_at if run and run.started_at else message.created_at),
+        researched_at=(
+            run.started_at if run and run.started_at else message.created_at
+        ),
         citations_json=_citation_snapshot(message.metadata_json),
         content_digest=sha256(body.encode("utf-8")).hexdigest(),
         status="active",
@@ -384,9 +388,7 @@ def save_artifact_as_knowledge_document(
             "knowledge_artifact_unsupported",
             "텍스트 소스가 있는 Artifact만 지식 그래프에 등록할 수 있습니다.",
         )
-    raw = storage.read_bytes(
-        version.storage_key, expected_sha256=version.content_hash
-    )
+    raw = storage.read_bytes(version.storage_key, expected_sha256=version.content_hash)
     source = raw.decode("utf-8", errors="replace")
     body = source.strip()
     title = artifact.display_name
@@ -440,7 +442,7 @@ async def tag_untagged_knowledge_documents(
     model_key: str,
     target: str = "untagged",
     new_tag_policy: str = "propose",
-) -> dict[str, int | str]:
+) -> dict[str, object]:
     require_knowledge_space(db, user, space_id, write=True)
     statement = select(KnowledgeDocument).where(
         KnowledgeDocument.owner_user_id == user.id,
@@ -452,7 +454,9 @@ async def tag_untagged_knowledge_documents(
             KnowledgeDocument.id.not_in(select(KnowledgeDocumentTag.document_id))
         )
     documents = list(
-        db.scalars(statement.order_by(KnowledgeDocument.researched_at, KnowledgeDocument.id))
+        db.scalars(
+            statement.order_by(KnowledgeDocument.researched_at, KnowledgeDocument.id)
+        )
     )
     candidates = _tag_candidates(db, space_id)
     suggestions: list[DocumentTagSuggestion | None] = []
@@ -481,11 +485,23 @@ async def tag_untagged_knowledge_documents(
     proposal_document_count = 0
     failed_count = 0
     touched_proposal_ids: set[str] = set()
+    document_results: list[dict[str, object]] = []
     for document, suggestion in zip(documents, suggestions, strict=True):
         if suggestion is None:
             failed_count += 1
+            document_results.append(
+                {
+                    "documentId": document.id,
+                    "title": document.title,
+                    "status": "failed",
+                    "tags": [],
+                    "proposals": [],
+                    "message": "AI 태그 응답을 받지 못했습니다.",
+                }
+            )
             continue
         try:
+            proposal_names: list[str] = []
             if new_tag_policy == "auto_approve":
                 tag_ids = _resolve_document_tags(
                     db,
@@ -525,6 +541,7 @@ async def tag_untagged_knowledge_documents(
                         if proposal is not None:
                             touched_proposal_ids.add(proposal.id)
                             proposed = True
+                            proposal_names.append(proposal.canonical_name)
                         if resolved_tag_id and resolved_tag_id not in tag_ids:
                             tag_ids.append(resolved_tag_id)
                 elif target == "all" and tag_ids:
@@ -533,6 +550,16 @@ async def tag_untagged_knowledge_documents(
                     )
             if not tag_ids and not proposed:
                 failed_count += 1
+                document_results.append(
+                    {
+                        "documentId": document.id,
+                        "title": document.title,
+                        "status": "failed",
+                        "tags": [],
+                        "proposals": [],
+                        "message": "적용하거나 제안할 태그가 없습니다.",
+                    }
+                )
                 continue
             if target == "all":
                 db.execute(
@@ -548,8 +575,29 @@ async def tag_untagged_knowledge_documents(
                 tagged_count += 1
             if proposed:
                 proposal_document_count += 1
+            applied_tags = _document_tags(db, (document.id,)).get(document.id, [])
+            document_results.append(
+                {
+                    "documentId": document.id,
+                    "title": document.title,
+                    "status": "tagged" if applied_tags else "proposed",
+                    "tags": [str(item["name"]) for item in applied_tags],
+                    "proposals": proposal_names,
+                    "message": None,
+                }
+            )
         except Exception:
             failed_count += 1
+            document_results.append(
+                {
+                    "documentId": document.id,
+                    "title": document.title,
+                    "status": "failed",
+                    "tags": [],
+                    "proposals": [],
+                    "message": "태그 저장 중 오류가 발생했습니다.",
+                }
+            )
             logger.warning(
                 "Knowledge document batch tagging failed",
                 exc_info=True,
@@ -575,6 +623,7 @@ async def tag_untagged_knowledge_documents(
         "remainingCount": remaining_count,
         "target": target,
         "newTagPolicy": new_tag_policy,
+        "documentResults": document_results,
     }
 
 
@@ -758,7 +807,10 @@ def _document_title(conversation_title: str, body: str) -> str:
     heading = _MARKDOWN_HEADING.search(body)
     if heading:
         return " ".join(heading.group(1).split())[:500]
-    first_line = next((" ".join(line.split()) for line in body.splitlines() if line.strip()), "AI 답변")
+    first_line = next(
+        (" ".join(line.split()) for line in body.splitlines() if line.strip()),
+        "AI 답변",
+    )
     return first_line[:120]
 
 
@@ -787,7 +839,9 @@ def _citation_snapshot(metadata: Mapping[str, object]) -> list[dict[str, object]
             {
                 "sourceId": source_id,
                 "title": str(source.get("title") or source.get("domain") or "출처"),
-                "url": str(source.get("normalizedUrl") or source.get("originalUrl") or ""),
+                "url": str(
+                    source.get("normalizedUrl") or source.get("originalUrl") or ""
+                ),
                 "domain": str(source.get("domain") or ""),
                 "excerpt": str(source.get("verbatimExcerpt") or ""),
                 "evidenceKind": str(source.get("evidenceKind") or ""),
@@ -815,7 +869,9 @@ def list_knowledge_tags(
                 KnowledgeTag.space_id == space_id,
                 KnowledgeTag.status == "active",
             )
-            .order_by(KnowledgeTag.namespace, KnowledgeTag.canonical_name, KnowledgeTag.id)
+            .order_by(
+                KnowledgeTag.namespace, KnowledgeTag.canonical_name, KnowledgeTag.id
+            )
         )
     )
 
@@ -843,7 +899,10 @@ def knowledge_tag_payloads(
     usage_counts: dict[str, int] = {
         tag_id: int(count)
         for tag_id, count in db.execute(
-            select(KnowledgeDocumentTag.tag_id, func.count(KnowledgeDocumentTag.document_id))
+            select(
+                KnowledgeDocumentTag.tag_id,
+                func.count(KnowledgeDocumentTag.document_id),
+            )
             .join(
                 KnowledgeDocument,
                 KnowledgeDocument.id == KnowledgeDocumentTag.document_id,
@@ -880,14 +939,20 @@ def _require_knowledge_tag(
     return tag
 
 
-def _normalized_aliases(values: list[str], canonical_name: str) -> list[tuple[str, str]]:
+def _normalized_aliases(
+    values: list[str], canonical_name: str
+) -> list[tuple[str, str]]:
     canonical_key = _normalize_tag(canonical_name)
     result: list[tuple[str, str]] = []
     seen: set[str] = set()
     for value in values:
         alias = " ".join(value.split())[:160]
         normalized_alias = _normalize_tag(alias)[:160]
-        if not normalized_alias or normalized_alias == canonical_key or normalized_alias in seen:
+        if (
+            not normalized_alias
+            or normalized_alias == canonical_key
+            or normalized_alias in seen
+        ):
             continue
         seen.add(normalized_alias)
         result.append((normalized_alias, alias))
@@ -910,7 +975,11 @@ def _require_tag_name_available(
     if exclude_tag_id:
         statement = statement.where(KnowledgeTag.id != exclude_tag_id)
     if db.scalar(statement) is not None:
-        raise ApiProblem(409, "knowledge_tag_name_conflict", "같은 유형에 동일한 태그가 이미 있습니다.")
+        raise ApiProblem(
+            409,
+            "knowledge_tag_name_conflict",
+            "같은 유형에 동일한 태그가 이미 있습니다.",
+        )
 
 
 def _validated_parent(
@@ -939,9 +1008,13 @@ def _validated_parent(
     visited: set[str] = set()
     while cursor is not None and cursor.id not in visited:
         if tag_id is not None and cursor.id == tag_id:
-            raise ApiProblem(409, "knowledge_tag_cycle", "태그 계층에 순환을 만들 수 없습니다.")
+            raise ApiProblem(
+                409, "knowledge_tag_cycle", "태그 계층에 순환을 만들 수 없습니다."
+            )
         visited.add(cursor.id)
-        cursor = db.get(KnowledgeTag, cursor.parent_tag_id) if cursor.parent_tag_id else None
+        cursor = (
+            db.get(KnowledgeTag, cursor.parent_tag_id) if cursor.parent_tag_id else None
+        )
     return parent.id
 
 
@@ -1036,7 +1109,9 @@ def update_knowledge_tag(
         tag.scope_note = " ".join(payload.scope_note.split())
     if payload.aliases is not None:
         db.execute(delete(KnowledgeTagAlias).where(KnowledgeTagAlias.tag_id == tag.id))
-        for normalized_alias, alias in _normalized_aliases(payload.aliases, canonical_name):
+        for normalized_alias, alias in _normalized_aliases(
+            payload.aliases, canonical_name
+        ):
             db.add(
                 KnowledgeTagAlias(
                     tag_id=tag.id,
@@ -1089,9 +1164,7 @@ def list_knowledge_tag_proposals(
                 KnowledgeTagProposal.space_id == space_id,
                 KnowledgeTagProposal.status == "pending",
             )
-            .order_by(
-                KnowledgeTagProposal.updated_at.desc(), KnowledgeTagProposal.id
-            )
+            .order_by(KnowledgeTagProposal.updated_at.desc(), KnowledgeTagProposal.id)
         )
     )
 
@@ -1128,12 +1201,20 @@ def resolve_knowledge_tag_proposal(
 ) -> KnowledgeTagProposal:
     proposal = db.get(KnowledgeTagProposal, proposal_id)
     if proposal is None:
-        raise ApiProblem(404, "knowledge_tag_proposal_not_found", "태그 제안을 찾을 수 없습니다.")
+        raise ApiProblem(
+            404, "knowledge_tag_proposal_not_found", "태그 제안을 찾을 수 없습니다."
+        )
     require_knowledge_space(db, user, proposal.space_id, write=True)
     if proposal.status != "pending":
-        raise ApiProblem(409, "knowledge_tag_proposal_resolved", "이미 처리된 태그 제안입니다.")
+        raise ApiProblem(
+            409, "knowledge_tag_proposal_resolved", "이미 처리된 태그 제안입니다."
+        )
     if expected_revision is not None and proposal.revision != expected_revision:
-        raise ApiProblem(409, "knowledge_tag_proposal_revision_conflict", "태그 제안이 먼저 변경되었습니다. 목록을 새로 불러와 주세요.")
+        raise ApiProblem(
+            409,
+            "knowledge_tag_proposal_revision_conflict",
+            "태그 제안이 먼저 변경되었습니다. 목록을 새로 불러와 주세요.",
+        )
 
     resolved_tag_id: str | None = None
     if action == "approve":
@@ -1150,30 +1231,42 @@ def resolve_knowledge_tag_proposal(
         )
         resolved_tag_id = resolved[0] if resolved else None
         if resolved_tag_id is None:
-            raise ApiProblem(409, "knowledge_tag_proposal_invalid", "태그 제안을 승인할 수 없습니다.")
+            raise ApiProblem(
+                409, "knowledge_tag_proposal_invalid", "태그 제안을 승인할 수 없습니다."
+            )
         proposal.status = "approved"
     elif action == "merge":
         tag = db.get(KnowledgeTag, target_tag_id) if target_tag_id else None
         if tag is None or tag.space_id != proposal.space_id or tag.status != "active":
-            raise ApiProblem(404, "knowledge_tag_not_found", "병합할 태그를 찾을 수 없습니다.")
+            raise ApiProblem(
+                404, "knowledge_tag_not_found", "병합할 태그를 찾을 수 없습니다."
+            )
         resolved_tag_id = tag.id
         proposal.status = "merged"
     elif action == "reject":
         proposal.status = "rejected"
     else:
-        raise ApiProblem(422, "knowledge_tag_proposal_action_invalid", "지원하지 않는 처리 방식입니다.")
+        raise ApiProblem(
+            422,
+            "knowledge_tag_proposal_action_invalid",
+            "지원하지 않는 처리 방식입니다.",
+        )
 
     if resolved_tag_id:
-        documents = list(
-            db.scalars(
-                select(KnowledgeDocument).where(
-                    KnowledgeDocument.id.in_(proposal.document_ids_json),
-                    KnowledgeDocument.space_id == proposal.space_id,
-                    KnowledgeDocument.owner_user_id == user.id,
-                    KnowledgeDocument.status == "active",
+        documents = (
+            list(
+                db.scalars(
+                    select(KnowledgeDocument).where(
+                        KnowledgeDocument.id.in_(proposal.document_ids_json),
+                        KnowledgeDocument.space_id == proposal.space_id,
+                        KnowledgeDocument.owner_user_id == user.id,
+                        KnowledgeDocument.status == "active",
+                    )
                 )
             )
-        ) if proposal.document_ids_json else []
+            if proposal.document_ids_json
+            else []
+        )
         for document in documents:
             if db.get(KnowledgeDocumentTag, (document.id, resolved_tag_id)) is None:
                 db.add(

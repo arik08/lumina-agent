@@ -12,6 +12,7 @@ from lumina.db import SessionLocal
 from lumina.knowledge.tagger import DocumentTagSuggestion, NewTagSuggestion
 from lumina.main import create_app
 from lumina.models import (
+    AuditEvent,
     Conversation,
     KnowledgeDocument,
     KnowledgeDocumentTag,
@@ -124,9 +125,7 @@ def test_knowledge_documents_remain_available_beyond_the_latest_200(
                 name="search_knowledge",
                 arguments={"query": "legacyneedle"},
             )
-            assert [item["title"] for item in result["results"]] == [
-                "Document 204"
-            ]
+            assert [item["title"] for item in result["results"]] == ["Document 204"]
 
         listing = client.get(
             "/api/knowledge/documents", params={"spaceId": space.json()["id"]}
@@ -305,7 +304,12 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
             },
         )
         assert tagged.status_code == 200, tagged.text
-        assert tagged.json() == {
+        tagged_payload = tagged.json()
+        assert {
+            key: value
+            for key, value in tagged_payload.items()
+            if key != "documentResults"
+        } == {
             "requestedCount": 2,
             "taggedCount": 2,
             "proposedCount": 0,
@@ -315,6 +319,32 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
             "target": "untagged",
             "newTagPolicy": "auto_approve",
         }
+        assert tagged_payload["documentResults"] == [
+            {
+                "documentId": saved["id"],
+                "title": "LLM Wiki 설계",
+                "status": "tagged",
+                "tags": ["인공지능"],
+                "proposals": [],
+                "message": None,
+            },
+            {
+                "documentId": second_document_id,
+                "title": "두 번째 문서",
+                "status": "tagged",
+                "tags": ["인공지능"],
+                "proposals": [],
+                "message": None,
+            },
+        ]
+        with SessionLocal() as db:
+            audit = db.scalar(
+                select(AuditEvent).where(
+                    AuditEvent.action == "knowledge_documents_batch_tagged"
+                )
+            )
+            assert audit is not None
+            assert "documentResults" not in audit.metadata_json
         assert tag_batches == [("mock-agent", 2)]
         assert (
             client.get(f"/api/knowledge/documents/{saved['id']}").json()["tags"][0][
@@ -358,7 +388,22 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
         assert proposed.status_code == 200, proposed.text
         assert proposed.json()["proposedCount"] == 1
         assert proposed.json()["taggedCount"] == 0
-        assert client.get(f"/api/knowledge/documents/{proposal_document_id}").json()["tags"] == []
+        assert proposed.json()["documentResults"] == [
+            {
+                "documentId": proposal_document_id,
+                "title": "태그 제안 문서",
+                "status": "proposed",
+                "tags": [],
+                "proposals": ["인공지능"],
+                "message": None,
+            }
+        ]
+        assert (
+            client.get(f"/api/knowledge/documents/{proposal_document_id}").json()[
+                "tags"
+            ]
+            == []
+        )
 
         proposal_items = client.get(
             "/api/knowledge/tag-proposals",
@@ -375,13 +420,24 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
         )
         assert approved.status_code == 200, approved.text
         assert approved.json()["status"] == "approved"
-        assert client.get(f"/api/knowledge/documents/{proposal_document_id}").json()["tags"][0]["name"] == "인공지능"
-        assert client.get(
-            "/api/knowledge/tag-proposals", params={"spaceId": saved["spaceId"]}
-        ).json() == []
-        assert client.delete(
-            f"/api/knowledge/documents/{proposal_document_id}", headers=headers
-        ).status_code == 204
+        assert (
+            client.get(f"/api/knowledge/documents/{proposal_document_id}").json()[
+                "tags"
+            ][0]["name"]
+            == "인공지능"
+        )
+        assert (
+            client.get(
+                "/api/knowledge/tag-proposals", params={"spaceId": saved["spaceId"]}
+            ).json()
+            == []
+        )
+        assert (
+            client.delete(
+                f"/api/knowledge/documents/{proposal_document_id}", headers=headers
+            ).status_code
+            == 204
+        )
 
         workflow_document_ids: dict[str, str] = {}
         with SessionLocal() as db:
@@ -426,9 +482,9 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
             "/api/knowledge/tag-proposals", params={"spaceId": saved["spaceId"]}
         ).json()
         proposals_by_name = {item["canonicalName"]: item for item in workflow_proposals}
-        existing_tag_id = client.get(
-            f"/api/knowledge/documents/{saved['id']}"
-        ).json()["tags"][0]["id"]
+        existing_tag_id = client.get(f"/api/knowledge/documents/{saved['id']}").json()[
+            "tags"
+        ][0]["id"]
         merged = client.post(
             f"/api/knowledge/tag-proposals/{proposals_by_name['AI 기술']['id']}/resolve",
             headers=headers,
@@ -458,19 +514,31 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
             },
         )
         assert bulk_rejected.json() == {"resolvedCount": 1}
-        assert client.get(
-            f"/api/knowledge/documents/{workflow_document_ids['병합 후보 문서']}"
-        ).json()["tags"][0]["id"] == existing_tag_id
-        assert client.get(
-            f"/api/knowledge/documents/{workflow_document_ids['일괄 승인 문서']}"
-        ).json()["tags"][0]["name"] == "자동화 승인"
-        assert client.get(
-            f"/api/knowledge/documents/{workflow_document_ids['일괄 거절 문서']}"
-        ).json()["tags"] == []
+        assert (
+            client.get(
+                f"/api/knowledge/documents/{workflow_document_ids['병합 후보 문서']}"
+            ).json()["tags"][0]["id"]
+            == existing_tag_id
+        )
+        assert (
+            client.get(
+                f"/api/knowledge/documents/{workflow_document_ids['일괄 승인 문서']}"
+            ).json()["tags"][0]["name"]
+            == "자동화 승인"
+        )
+        assert (
+            client.get(
+                f"/api/knowledge/documents/{workflow_document_ids['일괄 거절 문서']}"
+            ).json()["tags"]
+            == []
+        )
         for document_id in workflow_document_ids.values():
-            assert client.delete(
-                f"/api/knowledge/documents/{document_id}", headers=headers
-            ).status_code == 204
+            assert (
+                client.delete(
+                    f"/api/knowledge/documents/{document_id}", headers=headers
+                ).status_code
+                == 204
+            )
 
         failed_retag = client.post(
             "/api/knowledge/documents/tag-batch",
@@ -485,7 +553,17 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
         )
         assert failed_retag.status_code == 200, failed_retag.text
         assert failed_retag.json()["failedCount"] == 2
-        assert client.get(f"/api/knowledge/documents/{saved['id']}").json()["tags"][0]["name"] == "인공지능"
+        assert all(
+            item["status"] == "failed"
+            and item["message"] == "적용하거나 제안할 태그가 없습니다."
+            for item in failed_retag.json()["documentResults"]
+        )
+        assert (
+            client.get(f"/api/knowledge/documents/{saved['id']}").json()["tags"][0][
+                "name"
+            ]
+            == "인공지능"
+        )
         second_deleted = client.delete(
             f"/api/knowledge/documents/{second_document_id}", headers=headers
         )
@@ -494,7 +572,9 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
         linked_body = "같은 태그를 공유하는 두 번째 지식 문서"
         with SessionLocal() as db:
             user = db.scalar(select(User).where(User.login_name == "admin"))
-            tag = db.scalar(select(KnowledgeTag).where(KnowledgeTag.space_id == saved["spaceId"]))
+            tag = db.scalar(
+                select(KnowledgeTag).where(KnowledgeTag.space_id == saved["spaceId"])
+            )
             assert user is not None
             assert tag is not None
             linked_document = KnowledgeDocument(
@@ -519,14 +599,20 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
 
         listing = client.get("/api/knowledge/documents")
         assert listing.status_code == 200
-        assert {item["id"] for item in listing.json()} == {saved["id"], linked_document_id}
+        assert {item["id"] for item in listing.json()} == {
+            saved["id"],
+            linked_document_id,
+        }
         assert {item["linkedDocumentCount"] for item in listing.json()} == {1}
 
         deleted = client.delete(
             f"/api/knowledge/documents/{linked_document_id}", headers=headers
         )
         assert deleted.status_code == 204, deleted.text
-        assert client.get(f"/api/knowledge/documents/{linked_document_id}").status_code == 404
+        assert (
+            client.get(f"/api/knowledge/documents/{linked_document_id}").status_code
+            == 404
+        )
         listing_after_delete = client.get("/api/knowledge/documents").json()
         assert [item["id"] for item in listing_after_delete] == [saved["id"]]
         assert listing_after_delete[0]["linkedDocumentCount"] == 0
@@ -537,7 +623,12 @@ def test_answer_is_saved_without_tags_then_batch_tagged_with_selected_model(
         assert graph.json()["edges"] == []
 
         with SessionLocal() as db:
-            assert db.scalar(select(KnowledgeDocument).where(KnowledgeDocument.id == saved["id"])) is not None
+            assert (
+                db.scalar(
+                    select(KnowledgeDocument).where(KnowledgeDocument.id == saved["id"])
+                )
+                is not None
+            )
             deleted_document = db.get(KnowledgeDocument, linked_document_id)
             assert deleted_document is not None
             assert deleted_document.status == "deleted"
@@ -612,8 +703,16 @@ def test_document_tags_can_be_replaced_with_existing_and_new_names(
             headers=headers,
             json={
                 "tags": [
-                    "하나", "둘", "셋", "넷", "다섯",
-                    "여섯", "일곱", "여덟", "아홉", "열",
+                    "하나",
+                    "둘",
+                    "셋",
+                    "넷",
+                    "다섯",
+                    "여섯",
+                    "일곱",
+                    "여덟",
+                    "아홉",
+                    "열",
                 ]
             },
         )
@@ -633,8 +732,17 @@ def test_document_tags_can_be_replaced_with_existing_and_new_names(
             headers=headers,
             json={
                 "tags": [
-                    "하나", "둘", "셋", "넷", "다섯", "여섯",
-                    "일곱", "여덟", "아홉", "열", "열하나",
+                    "하나",
+                    "둘",
+                    "셋",
+                    "넷",
+                    "다섯",
+                    "여섯",
+                    "일곱",
+                    "여덟",
+                    "아홉",
+                    "열",
+                    "열하나",
                 ]
             },
         )

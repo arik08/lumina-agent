@@ -166,6 +166,26 @@
 .knowledge-tagging-card > footer button.is-tagging { justify-content: flex-end; text-align: right; }
 .knowledge-tagging-card > footer button.is-delete-armed { border-color: var(--danger-border); background: var(--danger-surface); color: var(--danger); }
 .knowledge-tagging-card button:disabled, .knowledge-tag-proposal-card button:disabled { opacity: .55; cursor: default; }
+.knowledge-tagging-details { border-top: 1px solid var(--line); }
+.knowledge-tagging-details > header { display: flex; min-height: 58px; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; }
+.knowledge-tagging-details > header > div { display: grid; gap: 3px; }
+.knowledge-tagging-details > header strong { font-size: var(--conversation-font-size); }
+.knowledge-tagging-details > header small, .knowledge-tagging-details > header > span { color: var(--muted); font-size: calc(var(--conversation-font-size) - 1px); }
+.knowledge-tagging-result-list { max-height: min(360px, 42vh); overflow-y: auto; overscroll-behavior: contain; border-top: 1px solid var(--line); }
+.knowledge-tagging-result-row { display: grid; gap: 7px; border-bottom: 1px solid var(--line); padding: 11px 14px; }
+.knowledge-tagging-result-row:last-child { border-bottom: 0; }
+.knowledge-tagging-result-title { display: flex; min-width: 0; align-items: center; gap: 7px; }
+.knowledge-tagging-result-title > svg { flex: none; color: var(--success); }
+.knowledge-tagging-result-title > strong { min-width: 0; overflow: hidden; font-size: var(--conversation-font-size); text-overflow: ellipsis; white-space: nowrap; }
+.knowledge-tagging-result-title > span { margin-left: auto; color: var(--success); font-size: calc(var(--conversation-font-size) - 1px); font-weight: 650; white-space: nowrap; }
+.knowledge-tagging-result-row.is-proposed .knowledge-tagging-result-title > :is(svg, span) { color: var(--cobalt); }
+.knowledge-tagging-result-row.is-failed { background: var(--danger-surface); }
+.knowledge-tagging-result-row.is-failed .knowledge-tagging-result-title > :is(svg, span), .knowledge-tagging-result-row > p { color: var(--danger); }
+.knowledge-tagging-result-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding-left: 21px; }
+.knowledge-tagging-result-tags small { margin-right: 2px; color: var(--muted); font-size: calc(var(--conversation-font-size) - 1px); }
+.knowledge-tagging-result-tags > span { border-radius: var(--radius-pill); padding: 2px 7px; background: var(--success-surface); color: var(--success); font-size: calc(var(--conversation-font-size) - 1px); }
+.knowledge-tagging-result-tags.is-proposal > span { background: color-mix(in srgb, var(--cobalt) 10%, var(--surface)); color: var(--cobalt); }
+.knowledge-tagging-result-row > p { margin: 0; padding-left: 21px; color: var(--muted); font-size: calc(var(--conversation-font-size) - 1px); }
 .knowledge-tag-management-tabs { display: flex; flex: none; gap: 3px; }
 .knowledge-tag-management-tabs button { display: inline-flex; min-height: var(--control-height-md); align-items: center; gap: 6px; border: 1px solid transparent; border-radius: var(--radius-control); padding: 0 10px; background: transparent; color: var(--muted); font-size: var(--conversation-font-size); font-weight: 650; }
 .knowledge-tag-management-tabs button span { min-width: 18px; border-radius: var(--radius-pill); padding: 1px 5px; background: var(--surface-soft); color: var(--faint); font-size: calc(var(--conversation-font-size) - 1px); font-variant-numeric: tabular-nums; }
