@@ -13,6 +13,7 @@ from lumina.knowledge.tagger import (
     suggest_document_tag_batch,
 )
 from lumina.providers.types import ProviderEvent, ProviderRequest
+from lumina.providers.mock import MockProvider
 
 
 def test_new_tag_scope_note_is_limited_to_a_short_disambiguating_phrase() -> None:
@@ -33,6 +34,25 @@ def test_new_tag_scope_note_is_limited_to_a_short_disambiguating_phrase() -> Non
                 "aliases": [],
             }
         )
+
+
+@pytest.mark.asyncio
+async def test_mock_provider_returns_valid_korean_batch_tagging_json() -> None:
+    suggestions = await suggest_document_tag_batch(
+        provider=MockProvider(),
+        model="mock-agent",
+        documents=(
+            DocumentTagInput(
+                title="한글 문서 제목",
+                body="인공지능을 업무에 활용하는 방법을 설명합니다.",
+            ),
+        ),
+        candidates=[],
+    )
+
+    assert suggestions[0].tag_ids == ()
+    assert suggestions[0].new_tags[0].canonical_name == "AI 활용"
+    assert suggestions[0].new_tags[0].aliases == ["인공지능 활용"]
 
 
 @pytest.mark.asyncio

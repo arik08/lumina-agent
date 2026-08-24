@@ -52,13 +52,23 @@ class MockProvider:
         )
 
     async def stream(self, request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
+        knowledge_tag_payload = _knowledge_tag_payload(request)
         title_requested = any(
             message.role == "system"
             and message.content
             and "LUMINA_SESSION_TITLE_JSON_V1" in message.content
             for message in request.messages
         )
-        if title_requested:
+        if knowledge_tag_payload is not None:
+            yield ProviderEvent(
+                type="text_delta",
+                text=json.dumps(
+                    knowledge_tag_payload,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+            )
+        elif title_requested:
             user_text = next(
                 (
                     message.content
@@ -78,9 +88,10 @@ class MockProvider:
                 )
                 + "\n",
             )
-        for chunk in self._text_chunks:
-            await asyncio.sleep(0)
-            yield ProviderEvent(type="text_delta", text=chunk)
+        if knowledge_tag_payload is None:
+            for chunk in self._text_chunks:
+                await asyncio.sleep(0)
+                yield ProviderEvent(type="text_delta", text=chunk)
 
         stop_reason = "stop"
         if self._tool_calls:
@@ -112,3 +123,62 @@ class MockProvider:
 
         yield ProviderEvent(type="usage", usage=self._usage)
         yield ProviderEvent(type="completed", stop_reason=stop_reason)
+
+
+def _knowledge_tag_payload(request: ProviderRequest) -> dict[str, object] | None:
+    if request.metadata.get("purpose") != "knowledge_document_batch_tagging":
+        return None
+    response_format = request.response_format
+    if not isinstance(response_format, Mapping):
+        return None
+    json_schema = response_format.get("json_schema")
+    if not isinstance(json_schema, Mapping):
+        return None
+    schema = json_schema.get("schema")
+    if not isinstance(schema, Mapping):
+        return None
+    properties = schema.get("properties")
+    if not isinstance(properties, Mapping):
+        return None
+    documents_schema = properties.get("documents")
+    if not isinstance(documents_schema, Mapping):
+        return None
+    document_count = documents_schema.get("minItems")
+    if not isinstance(document_count, int) or document_count < 1:
+        return None
+    item_schema = documents_schema.get("items")
+    item_properties = (
+        item_schema.get("properties") if isinstance(item_schema, Mapping) else None
+    )
+    candidate_indexes_schema = (
+        item_properties.get("candidateIndexes")
+        if isinstance(item_properties, Mapping)
+        else None
+    )
+    candidate_item_schema = (
+        candidate_indexes_schema.get("items")
+        if isinstance(candidate_indexes_schema, Mapping)
+        else None
+    )
+    has_candidates = (
+        isinstance(candidate_item_schema, Mapping)
+        and isinstance(candidate_item_schema.get("maximum"), int)
+    )
+    return {
+        "documents": [
+            {
+                "documentIndex": index,
+                "candidateIndexes": [0] if has_candidates else [],
+                "newTags": []
+                if has_candidates
+                else [
+                    {
+                        "canonicalName": "AI 활용",
+                        "scopeNote": "AI 적용 사례",
+                        "aliases": ["인공지능 활용"],
+                    }
+                ],
+            }
+            for index in range(document_count)
+        ]
+    }
