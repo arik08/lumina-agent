@@ -2718,7 +2718,9 @@ button.schedule-run-row:disabled { cursor: wait; opacity: 1; }
 .answer-usage-popover :is(th, td) { padding: 3px 7px; text-align: right; white-space: nowrap; }
 .answer-usage-popover .answer-usage-label-column { width: 24%; }
 .answer-usage-popover th:first-child { text-align: left; }
-.answer-usage-popover thead th { padding-bottom: 5px; border-bottom: 1px solid var(--line); color: var(--cobalt); font-weight: 700; }
+.answer-usage-popover thead th { padding-bottom: 5px; color: var(--cobalt); font-weight: 700; }
+.answer-usage-popover thead th[rowspan] { vertical-align: bottom; }
+.answer-usage-popover thead tr:last-child th, .answer-usage-popover thead th[rowspan] { border-bottom: 1px solid var(--line); }
 .answer-usage-popover thead tr:first-child th:not(:first-child) { text-align: center; }
 .answer-usage-popover thead tr:nth-child(2) th { color: var(--muted); font-size: 11.5px; font-weight: 600; }
 .answer-usage-popover tbody th { font-weight: 650; }

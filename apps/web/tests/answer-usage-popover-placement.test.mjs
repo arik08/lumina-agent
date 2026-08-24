@@ -22,3 +22,11 @@ test("usage popover uses the global layer and only flips below at the viewport e
   assert.match(styles, /\.global-tooltip-layer\s*\{[^}]*position:\s*fixed;[^}]*z-index:\s*10000/s);
   assert.doesNotMatch(styles, /\.answer-usage-control\.is-below/);
 });
+
+test("usage popover aligns the row-spanning model heading with the leaf column headings", async () => {
+  const styles = await readFile(stylesUrl, "utf8");
+
+  assert.match(styles, /\.answer-usage-popover thead th\[rowspan\]\s*\{[^}]*vertical-align:\s*bottom;/s);
+  assert.match(styles, /\.answer-usage-popover thead tr:last-child th, \.answer-usage-popover thead th\[rowspan\]\s*\{[^}]*border-bottom:\s*1px solid var\(--line\);/s);
+  assert.doesNotMatch(styles, /\.answer-usage-popover thead th\s*\{[^}]*border-bottom:/s);
+});
