@@ -1361,7 +1361,7 @@ def test_context_window_budget_avoids_character_only_compaction(tmp_path: Path) 
         assert db.scalar(select(func.count(CompactedContextEntry.id))) == 0
 
 
-def test_pgpt_gpt54_uses_myharness_large_context_budget(
+def test_pgpt_gpt56sol_uses_myharness_large_context_budget(
     tmp_path: Path,
 ) -> None:
     user, project, conversation = _configure(tmp_path, "pgpt-context-budget")
@@ -1375,7 +1375,7 @@ def test_pgpt_gpt54_uses_myharness_large_context_budget(
             context_window=1_050_000,
         )
         run.provider_id = "pgpt"
-        run.runtime_model_id = "gpt-5.4"
+        run.runtime_model_id = "gpt-5.6-sol"
         prepared = compact_runtime_messages(
             run,
             (ProviderMessage(role="user", content="short context"),),
@@ -1401,7 +1401,7 @@ def test_reactive_runtime_compaction_forces_recovery_below_soft_threshold(
             context_window=1_050_000,
         )
         run.provider_id = "pgpt"
-        run.runtime_model_id = "gpt-5.4"
+        run.runtime_model_id = "gpt-5.6-sol"
         messages = tuple(
             ProviderMessage(
                 role="user" if index % 2 == 0 else "assistant",

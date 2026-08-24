@@ -1,4 +1,4 @@
-"""Order Codex models by the reviewed 5.6 family before older models.
+"""Order Codex models by the reviewed 5.6 family.
 
 Revision ID: 0026
 Revises: 0025
@@ -41,8 +41,6 @@ def upgrade() -> None:
             ("gpt-5.6-sol", 10),
             ("gpt-5.6-terra", 20),
             ("gpt-5.6-luna", 30),
-            ("gpt-5.5", 40),
-            ("gpt-5.4", 50),
         )
     )
 
@@ -53,7 +51,5 @@ def downgrade() -> None:
             ("gpt-5.6-sol", 10),
             ("gpt-5.6-terra", 20),
             ("gpt-5.6-luna", 30),
-            ("gpt-5.5", 10),
-            ("gpt-5.4", 20),
         )
     )

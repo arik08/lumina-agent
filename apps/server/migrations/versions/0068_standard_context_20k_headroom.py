@@ -19,8 +19,6 @@ depends_on = None
 
 
 _MODELS = (
-    ("pgpt", "gpt-5.4"),
-    ("pgpt", "gpt-5.5"),
     ("pgpt", "gpt-5.6-sol"),
     ("pgpt", "gpt-5.6-terra"),
     ("pgpt", "gpt-5.6-luna"),

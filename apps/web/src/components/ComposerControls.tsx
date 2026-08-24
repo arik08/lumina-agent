@@ -3,7 +3,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, FileText, LoaderCircle, WandSparkles } from "lucide-react";
 
-import type { OutputMode, PromptEnhancementOption } from "../api-types";
+import type { ContextCapacityMode, OutputMode, PromptEnhancementOption } from "../api-types";
 import { GlobalTooltipLayer } from "./GlobalTooltip";
 
 export interface ComposerPickerOption {
@@ -31,6 +31,10 @@ export const defaultArtifactOutputTokens = 10_000;
 
 function formatContextTokens(value: number) {
   if (value < 1_000) return value.toLocaleString("ko-KR");
+  if (value >= 1_000_000) {
+    const millions = Math.floor((value / 1_000_000) * 10) / 10;
+    return `${millions.toFixed(Number.isInteger(millions) ? 0 : 1)}M`;
+  }
   const thousands = value / 1_000;
   return `${thousands >= 10 || Number.isInteger(thousands) ? thousands.toFixed(0) : thousands.toFixed(1)}k`;
 }
@@ -38,9 +42,15 @@ function formatContextTokens(value: number) {
 export function ContextUsageIndicator({
   usedTokens,
   contextWindow,
+  mode,
+  disabled,
+  onToggle,
 }: {
   usedTokens: number;
   contextWindow: number;
+  mode: ContextCapacityMode;
+  disabled: boolean;
+  onToggle: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLSpanElement>(null);
@@ -61,10 +71,13 @@ export function ContextUsageIndicator({
       }}
     >
       <button
-        className="context-usage-trigger"
+        className={`context-usage-trigger is-${mode}`}
         type="button"
-        aria-label={`컨텍스트 ${usagePercent}% 사용`}
+        aria-label={`${mode === "maximum" ? "1M" : "272k"} 컨텍스트 모드, ${usagePercent}% 사용`}
         aria-describedby={open ? popoverId : undefined}
+        aria-pressed={mode === "maximum"}
+        disabled={disabled}
+        onClick={onToggle}
       >
         <svg aria-hidden="true" viewBox="0 0 20 20">
           <circle className="context-usage-track" cx="10" cy="10" r="7.5" />
@@ -83,6 +96,9 @@ export function ContextUsageIndicator({
         <span>컨텍스트 길이:</span>
         <strong>{usagePercent}% 사용 ({remainingPercent}% 남음)</strong>
         <small>{formatContextTokens(safeUsedTokens)} / {formatContextTokens(contextWindow)} 토큰 사용</small>
+        {mode === "maximum" && (
+          <span className="context-usage-warning" role="status">주의: 1M 모드는 비용이 2배입니다.</span>
+        )}
       </GlobalTooltipLayer>
     </span>
   );

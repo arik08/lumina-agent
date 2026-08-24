@@ -9,6 +9,7 @@ import type {
   AttachmentSummary,
   ChatMessage,
   ConversationListItem,
+  ContextCapacityMode,
   CurrentSettings,
   MessageFeedback,
   ModelSummary,
@@ -1601,6 +1602,7 @@ export function useLuminaWorkspace() {
     targetOutputTokens?: number,
     analysisDepth: AnalysisDepth = "auto",
     answerLength: AnswerLength = "auto",
+    contextCapacityMode?: ContextCapacityMode,
   ) => {
     const messageText = text.trim();
     if (!messageText || sending) return null;
@@ -1657,7 +1659,10 @@ export function useLuminaWorkspace() {
         mutation = await api.runs.start(conversationId, {
           idempotencyKey: createClientId(),
           message: input,
-          execution: currentSettings.execution,
+          execution: {
+            ...currentSettings.execution,
+            ...(contextCapacityMode ? { contextCapacityMode } : {}),
+          },
         });
       }
       mergeRunMutation(mutation);

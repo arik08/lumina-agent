@@ -33,7 +33,7 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
             json={
                 "execution": {
                     "providerId": "pgpt",
-                    "modelKey": "gpt-5.4",
+                    "modelKey": "gpt-5.6-sol",
                     "effortId": "high",
                 }
             },
@@ -42,7 +42,7 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         assert configured_initial_execution.json() == {
             "execution": {
                 "providerId": "pgpt",
-                "modelKey": "gpt-5.4",
+                "modelKey": "gpt-5.6-sol",
                 "effortId": "high",
             },
             "source": "organization",
@@ -89,7 +89,7 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
             json={
                 "execution": {
                     "providerId": "pgpt",
-                    "modelKey": "gpt-5.4-mini",
+                    "modelKey": "gpt-5.6-luna",
                     "effortId": "low",
                 },
                 "expectedRevision": current_settings["revision"],
@@ -103,7 +103,7 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
             json={
                 "execution": {
                     "providerId": "codex",
-                    "modelKey": "gpt-5.4",
+                    "modelKey": "gpt-5.6-sol",
                     "effortId": "medium",
                 }
             },
@@ -119,7 +119,7 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
             json={
                 "execution": {
                     "providerId": "pgpt",
-                    "modelKey": "gpt-5.4",
+                    "modelKey": "gpt-5.6-sol",
                     "effortId": "extreme",
                 }
             },
@@ -130,41 +130,38 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         pgpt_models = client.get("/api/admin/providers/pgpt/models")
         assert pgpt_models.status_code == 200
         assert [model["modelKey"] for model in pgpt_models.json()] == [
-            "gpt-5.4",
-            "gpt-5.4-mini",
-            "gpt-5.5",
             "gpt-5.6-sol",
             "gpt-5.6-terra",
             "gpt-5.6-luna",
         ]
-        gpt_54 = next(
-            model for model in pgpt_models.json() if model["modelKey"] == "gpt-5.4"
+        gpt_56_sol = next(
+            model for model in pgpt_models.json() if model["modelKey"] == "gpt-5.6-sol"
         )
-        assert gpt_54["defaultContextWindow"] == 272_000
-        assert gpt_54["defaultContextUsageRatio"] == 1.0
-        assert gpt_54["contextCapacityMode"] == "standard"
-        assert gpt_54["maximumContextWindow"] == 1_050_000
-        assert gpt_54["maximumInputTokens"] == 911_900
-        assert gpt_54["maximumContextUsageRatio"] == 0.75
-        assert gpt_54["standardContextReserveTokens"] == 40_800
+        assert gpt_56_sol["defaultContextWindow"] == 272_000
+        assert gpt_56_sol["defaultContextUsageRatio"] == 1.0
+        assert gpt_56_sol["contextCapacityMode"] == "standard"
+        assert gpt_56_sol["maximumContextWindow"] == 1_050_000
+        assert gpt_56_sol["maximumInputTokens"] is None
+        assert gpt_56_sol["maximumContextUsageRatio"] == 0.75
+        assert gpt_56_sol["standardContextReserveTokens"] == 40_800
         assert (
-            gpt_54["capabilities"]["standard_context_compaction_reserve_tokens"]
+            gpt_56_sol["capabilities"]["standard_context_compaction_reserve_tokens"]
             == 40_800
         )
-        assert gpt_54["contextPolicyLocked"] is False
-        assert gpt_54["maxInputTokens"] == 272_000
-        assert gpt_54["defaultMaxInputTokens"] == 272_000
-        assert gpt_54["maxOutputTokens"] == 128_000
-        assert gpt_54["defaultMaxOutputTokens"] == 42_000
-        assert gpt_54["configuredMaxOutputTokens"] == 42_000
-        assert gpt_54["outputTokenStep"] == 1_000
+        assert gpt_56_sol["contextPolicyLocked"] is False
+        assert gpt_56_sol["maxInputTokens"] is None
+        assert gpt_56_sol["defaultMaxInputTokens"] is None
+        assert gpt_56_sol["maxOutputTokens"] == 128_000
+        assert gpt_56_sol["defaultMaxOutputTokens"] == 42_000
+        assert gpt_56_sol["configuredMaxOutputTokens"] == 42_000
+        assert gpt_56_sol["outputTokenStep"] == 1_000
 
         configured = client.patch(
-            "/api/admin/providers/pgpt/models/gpt-5.4",
+            "/api/admin/providers/pgpt/models/gpt-5.6-sol",
             headers={"X-CSRF-Token": csrf},
             json={
                 "capabilities": {
-                    **gpt_54["capabilities"],
+                    **gpt_56_sol["capabilities"],
                     "configured_max_output_tokens": 64_000,
                 }
             },
@@ -173,14 +170,13 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         assert configured.json()["configuredMaxOutputTokens"] == 64_000
 
         configured_maximum_context = client.patch(
-            "/api/admin/providers/pgpt/models/gpt-5.4",
+            "/api/admin/providers/pgpt/models/gpt-5.6-sol",
             headers={"X-CSRF-Token": csrf},
             json={
                 "capabilities": {
                     **configured.json()["capabilities"],
                     "context_capacity_mode": "maximum",
                     "context_window": 1_050_000,
-                    "max_input_tokens": 911_900,
                     "context_compaction_threshold": 0.75,
                 }
             },
@@ -193,11 +189,11 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
             configured_maximum_context.json()["capabilities"]["context_window"]
             == 1_050_000
         )
-        assert configured_maximum_context.json()["maxInputTokens"] == 911_900
-        assert configured_maximum_context.json()["defaultMaxInputTokens"] == 272_000
+        assert configured_maximum_context.json()["maxInputTokens"] is None
+        assert configured_maximum_context.json()["defaultMaxInputTokens"] is None
 
         configured_ratio = client.patch(
-            "/api/admin/providers/pgpt/models/gpt-5.4",
+            "/api/admin/providers/pgpt/models/gpt-5.6-sol",
             headers={"X-CSRF-Token": csrf},
             json={
                 "capabilities": {
@@ -210,7 +206,7 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         assert configured_ratio.json()["code"] == "context_capacity_profile_mismatch"
 
         rejected_ratio = client.patch(
-            "/api/admin/providers/pgpt/models/gpt-5.4",
+            "/api/admin/providers/pgpt/models/gpt-5.6-sol",
             headers={"X-CSRF-Token": csrf},
             json={
                 "capabilities": {
@@ -223,7 +219,7 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
         assert rejected_ratio.json()["code"] == "invalid_context_usage_ratio"
 
         rejected_output_limit = client.patch(
-            "/api/admin/providers/pgpt/models/gpt-5.4",
+            "/api/admin/providers/pgpt/models/gpt-5.6-sol",
             headers={"X-CSRF-Token": csrf},
             json={
                 "capabilities": {
@@ -239,14 +235,6 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
 
         codex_models = client.get("/api/admin/providers/codex/models")
         assert codex_models.status_code == 200
-        codex_gpt_54 = next(
-            model for model in codex_models.json() if model["modelKey"] == "gpt-5.4"
-        )
-        assert codex_gpt_54["defaultContextWindow"] == 272_000
-        assert codex_gpt_54["defaultContextUsageRatio"] == 0.85
-        assert codex_gpt_54["contextPolicyLocked"] is True
-        assert codex_gpt_54["maxInputTokens"] is None
-        assert codex_gpt_54["defaultMaxInputTokens"] is None
         codex_gpt_56 = next(
             model for model in codex_models.json() if model["modelKey"] == "gpt-5.6-sol"
         )
@@ -267,7 +255,12 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
             for model in standard_public_models.json()
             if model["modelKey"] == "gpt-5.6-sol"
         )
+        assert standard_public_gpt_56["capabilities"]["contextWindow"] == 272_000
         assert standard_public_gpt_56["capabilities"]["contextInputLimit"] == 231_200
+        assert (
+            standard_public_gpt_56["capabilities"]["maximumContextWindow"]
+            == 1_050_000
+        )
 
         codex_gpt_56_maximum = client.patch(
             "/api/admin/providers/codex/models/gpt-5.6-sol",
@@ -297,34 +290,28 @@ def test_admin_model_discovery_requires_explicit_activation(tmp_path: Path) -> N
             if model["modelKey"] == "gpt-5.6-sol"
         )
         assert public_codex_gpt_56["capabilities"]["contextInputLimit"] == 783_700
-        public_codex_gpt_54 = next(
-            model
-            for model in public_codex_models.json()
-            if model["modelKey"] == "gpt-5.4"
-        )
-        assert public_codex_gpt_54["capabilities"]["contextWindow"] == 272_000
         provider_catalog = client.get("/api/provider-catalog")
         assert provider_catalog.status_code == 200
-        catalog_codex_gpt_54 = next(
+        catalog_codex_gpt_56_sol = next(
             model
             for model in provider_catalog.json()["modelsByProvider"]["codex"]
-            if model["modelKey"] == "gpt-5.4"
+            if model["modelKey"] == "gpt-5.6-sol"
         )
-        assert catalog_codex_gpt_54["capabilities"]["contextWindow"] == 272_000
+        assert catalog_codex_gpt_56_sol["capabilities"]["contextWindow"] == 272_000
 
         rejected_codex_policy = client.patch(
-            "/api/admin/providers/codex/models/gpt-5.4",
+            "/api/admin/providers/codex/models/gpt-5.6-sol",
             headers={"X-CSRF-Token": csrf},
             json={
                 "capabilities": {
-                    **codex_gpt_54["capabilities"],
+                    **codex_gpt_56["capabilities"],
                     "context_window": 200_000,
                     "context_compaction_threshold": 0.75,
                 }
             },
         )
         assert rejected_codex_policy.status_code == 422
-        assert rejected_codex_policy.json()["code"] == "model_context_policy_locked"
+        assert rejected_codex_policy.json()["code"] == "invalid_model_input_token_limit"
 
         discovered = client.post(
             "/api/admin/providers/pgpt/models/discover",

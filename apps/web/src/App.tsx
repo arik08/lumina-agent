@@ -100,6 +100,7 @@ import type {
   ArtifactVersion,
   OutputMode,
   ComposerSuggestion,
+  ContextCapacityMode,
   ConversationListItem,
   DeepAnalysisMissionSummary,
   ExecutionSelection,
@@ -962,6 +963,7 @@ function App() {
   const [targetOutputTokens, setTargetOutputTokens] = useState<number | null>(defaultArtifactOutputTokens);
   const [analysisDepth, setAnalysisDepth] = useState<AnalysisDepth>("auto");
   const [answerLength, setAnswerLength] = useState<AnswerLength>("auto");
+  const [contextCapacityMode, setContextCapacityMode] = useState<ContextCapacityMode>("standard");
   const [promptEnhancementState, setPromptEnhancementState] = useState<PromptEnhancementState | null>(null);
   const [promptEnhancementLoading, setPromptEnhancementLoading] = useState(false);
   const [promptEnhancementError, setPromptEnhancementError] = useState<string | null>(null);
@@ -1854,6 +1856,7 @@ function App() {
         modelLabel: model.displayName,
         contextWindow: model.capabilities.contextWindow,
         contextInputLimit: model.capabilities.contextInputLimit ?? model.capabilities.contextWindow,
+        maximumContextWindow: model.capabilities.maximumContextWindow,
         effortOptions: model.capabilities.effortOptions,
       })),
   );
@@ -1863,6 +1866,19 @@ function App() {
   )?.id ?? "";
   const selectedCandidate = candidateModelOptions.find((option) => option.id === selectedCandidateId);
   const latestContextInputTokens = activeRun?.modelTurnMetrics.at(-1)?.inputTokens ?? 0;
+  const contextCapacityModeAvailable = Boolean(selectedCandidate?.maximumContextWindow);
+  const activeRunContextCapacityMode = activeRun
+    && !isTerminalRunStatus(activeRun.status)
+    && activeRun.execution.providerId === selectedCandidate?.providerId
+    && activeRun.execution.modelKey === selectedCandidate.modelKey
+    ? activeRun.execution.contextCapacityMode
+    : undefined;
+  const selectedContextCapacityMode = contextCapacityModeAvailable
+    ? activeRunContextCapacityMode ?? contextCapacityMode
+    : "standard";
+  const selectedContextWindow = selectedContextCapacityMode === "maximum"
+    ? selectedCandidate?.maximumContextWindow
+    : selectedCandidate?.contextWindow;
 
   const hideModelNameTooltip = () => {
     if (modelNameTooltipTimerRef.current !== null) {
@@ -2650,6 +2666,7 @@ function App() {
       targetOutputTokens ?? undefined,
       analysisDepth,
       answerLength,
+      contextCapacityModeAvailable ? contextCapacityMode : undefined,
     );
     if (!mode) return;
     if (resetFileModeAfterSend) void workspace.selectOutputMode("auto");
@@ -4284,10 +4301,13 @@ function App() {
                       {pendingComposerMode === "queue_next" ? "Queue" : "Steering"}
                     </span>
                   )}
-                  {selectedCandidate?.contextInputLimit && (
+                  {selectedContextWindow && (
                     <ContextUsageIndicator
                       usedTokens={latestContextInputTokens}
-                      contextWindow={selectedCandidate.contextInputLimit}
+                      contextWindow={selectedContextWindow}
+                      mode={selectedContextCapacityMode}
+                      disabled={Boolean(activeRun && !isTerminalRunStatus(activeRun.status)) || !contextCapacityModeAvailable}
+                      onToggle={() => setContextCapacityMode((current) => current === "standard" ? "maximum" : "standard")}
                     />
                   )}
                   <ComposerPicker

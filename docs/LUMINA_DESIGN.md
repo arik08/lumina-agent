@@ -896,7 +896,7 @@ CompactedContextEntry
 └─ compacted_at
 ```
 
-- 매 model 호출 전 `effective_input_budget = model_context_window - reserved_output_tokens - tool_schema_tokens - safety_margin`을 계산합니다. 추정 입력이 기본 soft threshold인 유효 예산의 75%를 넘으면 선제 압축하고, Provider가 보고한 실제 token 값을 추정치보다 우선합니다. 272K 이후 장문 입력 가격이 달라지는 P-GPT·OpenAI GPT의 표준 용량 모드는 가격 경계에 20K만 남긴 약 252K 추정 입력을 압축 시작점으로 사용하며, 최대 용량 모드만 1.05M 유효 예산의 75%와 보수적 token 추정 padding을 사용합니다. Codex GPT-5.4·5.5·5.6 계열은 서비스 정책상 272K Context와 85% 임계값을 사용합니다. 그 밖의 P-GPT·OpenAI·Gemini·Claude API는 Model Catalog에 검증된 각 표준 API Context window를 사용하고 Codex 제한을 상속하지 않습니다. model profile의 상향 임계값은 낮추지 않으며 메시지 개수만으로 압축을 결정하지 않습니다.
+- 매 model 호출 전 `effective_input_budget = model_context_window - reserved_output_tokens - tool_schema_tokens - safety_margin`을 계산합니다. 추정 입력이 기본 soft threshold인 유효 예산의 75%를 넘으면 선제 압축하고, Provider가 보고한 실제 token 값을 추정치보다 우선합니다. 272K 이후 장문 입력 가격이 달라지는 P-GPT·OpenAI GPT의 표준 용량 모드는 가격 경계에 20K만 남긴 약 252K 추정 입력을 압축 시작점으로 사용하며, 최대 용량 모드만 1.05M 유효 예산의 75%와 보수적 token 추정 padding을 사용합니다. Codex GPT-5.6 계열도 기본 272K Context와 선택 가능한 1.05M 최대 모드를 사용합니다. 그 밖의 P-GPT·OpenAI·Gemini·Claude API는 Model Catalog에 검증된 각 표준 API Context window를 사용하고 Codex 제한을 상속하지 않습니다. model profile의 상향 임계값은 낮추지 않으며 메시지 개수만으로 압축을 결정하지 않습니다.
 - 최근 사용자·assistant Turn과 미완료 Tool Call/Result pair는 그대로 남기고, 오래된 중간 구간을 구조화 요약 하나로 교체합니다.
 - 요약에는 목표, 사용자 제약과 선호, 현재 Plan·Step, 완료 작업, 실패·차단 상태, 핵심 결정, 미해결 질문, 승인 상태, 부작용 결과, idempotency key, 관련 파일·Artifact·citation/source ID와 다음 확인 항목을 보존합니다.
 - 오래된 Tool 출력은 Artifact 또는 source reference로 전환합니다.
@@ -1096,22 +1096,17 @@ apps/server/src/lumina/providers/
 
 | Provider | UI 표시명 | `runtime_model_id` 기본값 | 초기 기본 Model | 결정 근거 |
 |---|---|---|---|---|
-| `pgpt` | `GPT-5.4` | `gpt-5.4` | 예 | 사용자 지정 |
-| `pgpt` | `GPT-5.4-mini` | `gpt-5.4-mini` | 아니요 | 사용자 지정 |
-| `pgpt` | `GPT-5.5` | `gpt-5.5` | 아니요 | 사용자 지정 |
 | `pgpt` | `GPT-5.6-Sol` | `gpt-5.6-sol` | 아니요 | 사용자 지정 |
 | `pgpt` | `GPT-5.6-Terra` | `gpt-5.6-terra` | 아니요 | 사용자 지정 |
-| `pgpt` | `GPT-5.6-Luna` | `gpt-5.6-luna` | 아니요 | 사용자 지정 |
+| `pgpt` | `GPT-5.6-Luna` | `gpt-5.6-luna` | 예 | 사용자 지정 |
 | `codex` | `GPT-5.6-Sol` | `gpt-5.6-sol` | 아니요 | ChatGPT OAuth 실호출 검증 |
 | `codex` | `GPT-5.6-Terra` | `gpt-5.6-terra` | 아니요 | ChatGPT OAuth 실호출 검증 |
-| `codex` | `GPT-5.6-Luna` | `gpt-5.6-luna` | 아니요 | ChatGPT OAuth 실호출 검증 |
-| `codex` | `GPT-5.5` | `gpt-5.5` | 예 | ChatGPT OAuth App Server 공개 catalog |
-| `codex` | `GPT-5.4` | `gpt-5.4` | 아니요 | ChatGPT OAuth App Server 공개 catalog |
+| `codex` | `GPT-5.6-Luna` | `gpt-5.6-luna` | 예 | ChatGPT OAuth 실호출 검증 |
 | `google` | `Gemini-3.1-Pro` | `gemini-3.1-pro` | 예 | 사용자 지정 |
 | `google` | `Gemini-3.5-flash` | `gemini-3.5-flash` | 아니요 | 사용자 지정 |
-| `openai` | `GPT-5.6-Sol` | `gpt-5.6-sol` | 예 | OpenAI 최신 flagship |
+| `openai` | `GPT-5.6-Sol` | `gpt-5.6-sol` | 아니요 | OpenAI 최신 flagship |
 | `openai` | `GPT-5.6-Terra` | `gpt-5.6-terra` | 아니요 | OpenAI 최신 균형형 |
-| `openai` | `GPT-5.6-Luna` | `gpt-5.6-luna` | 아니요 | OpenAI 최신 효율형 |
+| `openai` | `GPT-5.6-Luna` | `gpt-5.6-luna` | 예 | OpenAI 최신 효율형 |
 | `anthropic` | `Claude Opus 4.8` | `claude-opus-4-8` | 아니요 | 복잡한 Agent 작업 |
 | `anthropic` | `Claude Sonnet 5` | `claude-sonnet-5` | 예 | 품질·속도 균형 |
 | `anthropic` | `Claude Haiku 4.5` | `claude-haiku-4-5` | 아니요 | 고속·저비용 |
@@ -1130,7 +1125,7 @@ Model Catalog item은 최소한 `provider_id`, 안정된 `model_key`, `display_n
 - 표시명과 런타임 ID를 분리합니다. 예를 들어 Codex의 `GPT-5.6-Terra` pill은 `gpt-5.6-terra`로 전송하되 과거 Message와 Run에는 당시 표시명과 ID를 모두 snapshot합니다.
 - P-GPT의 `runtime_model_id`는 실제 사내 deployment name과 다를 수 있으므로 관리자 mapping으로 바꿀 수 있습니다. 사용자에게 보이는 제품명은 mapping 변경 때문에 바뀌지 않습니다.
 - Provider capability를 같은 Provider의 모든 Model에 일괄 적용하지 않습니다. Tool Call, image input·generation, structured output, effort, context window와 cache 지원 여부를 Model별로 병합·검증합니다.
-- P-GPT의 공식 전체 Context window와 실측 입력 상한을 별도 설정으로 구분합니다. 2026-07-17 VS Code Codex 확장 경로 실측 기준 `gpt-5.4-mini`의 입력 상한은 270,000 Token, `gpt-5.5`는 911,900 Token입니다. `gpt-5.4`는 사용자 관측상 `gpt-5.5`와 같은 계열로 추정하여 911,900 Token을 보수적 상한으로 적용하되, 추후 직접 실측값이 나오면 Model Catalog revision으로 교체합니다. 관리자 Context 화면은 공식 전체 Context와 실측 입력 상한을 각각 저장·초기화하며, `min(전체 Context - 출력 예약, 실측 입력 상한) - 안전 여유 - Tool schema`로 실제 입력 예산을 계산합니다. 실측값을 바꿔도 공식 전체 Context나 출력 한도 값은 변경하지 않습니다.
+- GPT-5.6 Sol·Terra·Luna의 기본 Context는 272K이고 최대 모드는 1.05M입니다. 관리자 Context 화면은 공식 전체 Context와 검증된 입력 상한을 각각 저장·초기화하며, `min(전체 Context - 출력 예약, 입력 상한) - 안전 여유 - Tool schema`로 실제 입력 예산을 계산합니다. 입력 상한을 바꿔도 공식 전체 Context나 출력 한도 값은 변경하지 않습니다.
 - 실행 중인 Run은 `provider_id`, `model_key`, `runtime_model_id`, capability snapshot과 `catalog_revision`을 고정합니다. catalog 변경은 다음 Run부터 적용합니다.
 - 저장된 Model이 disabled·삭제·권한 회수되면 같은 Provider의 허용 기본 Model로 fallback하고 변경 사실을 알립니다. Provider 자체가 불가능할 때만 전체 app default로 이동합니다.
 - 관리자가 명시적으로 추가하지 않는 한 새 출시 Model을 자동 활성화하지 않습니다. 자동 discovery는 후보 갱신일 뿐 권한 부여가 아닙니다.

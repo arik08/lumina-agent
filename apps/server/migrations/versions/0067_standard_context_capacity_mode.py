@@ -20,8 +20,6 @@ depends_on = None
 
 _MODELS = {
     "pgpt": {
-        "gpt-5.4": 911_900,
-        "gpt-5.5": 911_900,
         "gpt-5.6-sol": None,
         "gpt-5.6-terra": None,
         "gpt-5.6-luna": None,

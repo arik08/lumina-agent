@@ -15,7 +15,7 @@ from ...conversations.service import default_project
 from ...db import get_db
 from ...models import Project, ProjectSetting, ProviderModel, User, UserSetting
 from ...providers.codex import codex_oauth_available
-from ...providers.catalog import catalog_model
+from ...providers.catalog import STANDARD_CONTEXT_WINDOW, catalog_model
 from ...providers.execution_defaults import initial_execution_selection
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
@@ -284,6 +284,7 @@ def get_provider_catalog(
 
 def _provider_model_capabilities(model: ProviderModel) -> dict[str, object]:
     catalog_entry = catalog_model(model.provider_id, model.model_key)
+    supports_composer_context_modes = model.model_key.casefold().startswith("gpt-5.6-")
     return _capabilities(
         model.capabilities_json,
         fallback_context_window=(
@@ -292,6 +293,12 @@ def _provider_model_capabilities(model: ProviderModel) -> dict[str, object]:
         fallback_max_input_tokens=(
             catalog_entry.capabilities.max_input_tokens if catalog_entry else None
         ),
+        fallback_maximum_context_window=(
+            catalog_entry.capabilities.maximum_context_window
+            if catalog_entry and supports_composer_context_modes
+            else None
+        ),
+        allow_context_capacity_modes=supports_composer_context_modes,
     )
 
 
@@ -300,6 +307,8 @@ def _capabilities(
     *,
     fallback_context_window: int | None = None,
     fallback_max_input_tokens: int | None = None,
+    fallback_maximum_context_window: int | None = None,
+    allow_context_capacity_modes: bool = False,
 ) -> dict[str, object]:
     provider_efforts = raw.get("effort_options") or ("low", "medium", "high")
     efforts = ("auto", *(value for value in provider_efforts if value != "auto"))
@@ -309,18 +318,33 @@ def _capabilities(
     max_input_tokens = _positive_capability_int(
         raw.get("max_input_tokens", raw.get("maxInputTokens"))
     ) or _positive_capability_int(fallback_max_input_tokens)
+    maximum_context_window = (
+        _positive_capability_int(
+            raw.get("maximum_context_window", raw.get("maximumContextWindow"))
+        )
+        or _positive_capability_int(fallback_maximum_context_window)
+        if allow_context_capacity_modes
+        else None
+    )
+    composer_context_window = (
+        STANDARD_CONTEXT_WINDOW if maximum_context_window is not None else context_window
+    )
     return {
         "toolCalling": bool(raw.get("tools", raw.get("tool_calling", True))),
         "structuredOutput": bool(raw.get("structured_output", True)),
         "imageInput": bool(raw.get("image_input", False)),
         "imageGeneration": bool(raw.get("image_generation", False)),
-        "contextWindow": context_window,
+        "contextWindow": composer_context_window,
         "contextInputLimit": _context_input_limit(
             raw,
             context_window=context_window,
             max_input_tokens=max_input_tokens,
         ),
         "maxInputTokens": max_input_tokens,
+        "contextCapacityMode": (
+            "standard" if maximum_context_window is not None else None
+        ),
+        "maximumContextWindow": maximum_context_window,
         "effortOptions": [
             {
                 "id": value,

@@ -927,11 +927,13 @@ export type DeepAnalysisOutputFormat = string;
 export type ClarificationMode = "autonomous" | "balanced" | "confirming";
 export type AnalysisDepth = "auto" | "brief" | "standard" | "deep";
 export type AnswerLength = "auto" | "brief" | "standard" | "detailed";
+export type ContextCapacityMode = "standard" | "maximum";
 
 export interface ExecutionSelection {
   providerId: string;
   modelKey: string;
   effortId: string | null;
+  contextCapacityMode?: ContextCapacityMode;
 }
 
 export interface AdminInitialExecutionSettings {
@@ -1002,6 +1004,8 @@ export interface ModelCapabilities {
   contextWindow: number | null;
   contextInputLimit: number | null;
   maxInputTokens: number | null;
+  contextCapacityMode: ContextCapacityMode | null;
+  maximumContextWindow: number | null;
   effortOptions: EffortOption[];
 }
 

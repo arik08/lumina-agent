@@ -109,6 +109,7 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
     finally:
         engine.dispose()
 
+
     assert revision is not None
     assert {
         "organizations",
@@ -225,7 +226,7 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
         "last_warm_input_tokens",
         "last_warm_cached_tokens",
     } <= prompt_cache_seed_columns
-    assert revision == "0077"
+    assert revision == "0080"
     assert "replay_policy_json" in tool_execution_columns
     assert "ix_run_events_run_type" in run_event_indexes
     assert "ix_run_events_replay" not in run_event_indexes
@@ -249,6 +250,117 @@ def test_alembic_upgrades_the_injected_database_url(tmp_path: Path) -> None:
     assert "ix_runs_worker_lease" in run_indexes
     assert "uq_runs_conversation_user_idempotency" in run_unique_constraints
     assert {"worker_id", "heartbeat_at", "lease_expires_at"}.issubset(run_columns)
+
+
+def test_retired_gpt_catalog_rows_are_removed_and_default_moves_to_luna(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "retired-models.db"
+    database_url = f"sqlite:///{database.as_posix()}"
+    upgrade_database(database_url, "0078")
+    engine = create_engine(database_url)
+    retired_key = f"gpt-5.{4}"
+    with engine.begin() as connection:
+        for model_id, model_key, is_default in (
+            ("current-model", "gpt-5.6-sol", False),
+            ("new-default-model", "gpt-5.6-luna", False),
+            ("retired-model", retired_key, True),
+        ):
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO provider_models (
+                        id, provider_id, model_key, display_name, runtime_model_id,
+                        aliases_json, enabled, is_default, sort_order,
+                        capabilities_json, source, catalog_revision, verified_at,
+                        created_at, updated_at
+                    ) VALUES (
+                        :id, 'codex', :model_key, :model_key, :model_key,
+                        '[]', 1, :is_default, 10, '{}', 'test', 'test', NULL,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
+                    """
+                ),
+                {
+                    "id": model_id,
+                    "model_key": model_key,
+                    "is_default": is_default,
+                },
+            )
+    engine.dispose()
+
+    upgrade_database(database_url, "0079")
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT model_key, is_default FROM provider_models "
+                    "WHERE provider_id = 'codex' ORDER BY model_key"
+                )
+            ).all()
+        assert rows == [("gpt-5.6-luna", 1), ("gpt-5.6-sol", 0)]
+    finally:
+        engine.dispose()
+
+
+def test_migration_0080_moves_existing_gpt_provider_defaults_to_luna(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "luna-default.db"
+    database_url = f"sqlite:///{database.as_posix()}"
+    upgrade_database(database_url, "0079")
+    engine = create_engine(database_url)
+    with engine.begin() as connection:
+        for provider_id in ("pgpt", "codex", "openai"):
+            for model_key, enabled, is_default in (
+                ("gpt-5.6-sol", True, True),
+                ("gpt-5.6-luna", provider_id == "codex", False),
+            ):
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO provider_models (
+                            id, provider_id, model_key, display_name,
+                            runtime_model_id, aliases_json, enabled, is_default,
+                            sort_order, capabilities_json, source,
+                            catalog_revision, verified_at, created_at, updated_at
+                        ) VALUES (
+                            :id, :provider_id, :model_key, :model_key,
+                            :model_key, '[]', :enabled, :is_default, 10, '{}',
+                            'test', 'test', NULL, CURRENT_TIMESTAMP,
+                            CURRENT_TIMESTAMP
+                        )
+                        """
+                    ),
+                    {
+                        "id": f"{provider_id}-{model_key}",
+                        "provider_id": provider_id,
+                        "model_key": model_key,
+                        "enabled": enabled,
+                        "is_default": is_default,
+                    },
+                )
+    engine.dispose()
+
+    upgrade_database(database_url, "0080")
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            defaults = connection.execute(
+                text(
+                    "SELECT provider_id, model_key FROM provider_models "
+                    "WHERE provider_id IN ('pgpt', 'codex', 'openai') "
+                    "AND is_default = 1 ORDER BY provider_id"
+                )
+            ).all()
+        assert defaults == [
+            ("codex", "gpt-5.6-luna"),
+            ("openai", "gpt-5.6-luna"),
+            ("pgpt", "gpt-5.6-luna"),
+        ]
+    finally:
+        engine.dispose()
 
 
 def test_migration_0072_cleans_legacy_mission_orphans(tmp_path: Path) -> None:
@@ -906,7 +1018,7 @@ def test_context_migration_adopts_legacy_create_all_table(tmp_path: Path) -> Non
         }
         with engine.connect() as connection:
             assert (
-                MigrationContext.configure(connection).get_current_revision() == "0077"
+                MigrationContext.configure(connection).get_current_revision() == "0080"
             )
     finally:
         engine.dispose()
@@ -936,7 +1048,7 @@ def test_recent_migrations_adopt_tables_precreated_by_runtime_schema(
     try:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-        assert revision == "0077"
+        assert revision == "0080"
     finally:
         engine.dispose()
 

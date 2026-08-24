@@ -53,9 +53,9 @@ def _seed_run(settings: Settings) -> tuple[str, str]:
             user_id=user.id,
             status="preparing",
             provider_id="codex",
-            model_key="gpt-5.5",
-            runtime_model_id="gpt-5.5",
-            model_display_name="GPT-5.5",
+            model_key="gpt-5.6-terra",
+            runtime_model_id="gpt-5.6-terra",
+            model_display_name="GPT-5.6-Terra",
         )
         db.add(run)
         db.flush()
@@ -64,7 +64,7 @@ def _seed_run(settings: Settings) -> tuple[str, str]:
 
 def _request(cache_key: str, *, tool_name: str = "lookup") -> ProviderRequest:
     return ProviderRequest(
-        model="gpt-5.5",
+        model="gpt-5.6-terra",
         messages=(
             ProviderMessage(role="system", content="stable system prompt"),
             ProviderMessage(role="system", content="dynamic turn contract"),

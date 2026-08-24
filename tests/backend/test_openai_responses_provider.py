@@ -134,10 +134,10 @@ def test_latest_compaction_prunes_prior_input_but_keeps_system_prefix() -> None:
     ]
 
 
-def test_pre_5_6_model_does_not_replay_5_6_encrypted_state() -> None:
+def test_non_5_6_model_does_not_replay_5_6_encrypted_state() -> None:
     payload = build_responses_payload(
         ProviderRequest(
-            model="gpt-5.5",
+            model="archived-responses-model",
             messages=(
                 ProviderMessage(role="user", content="Old input"),
                 ProviderMessage(

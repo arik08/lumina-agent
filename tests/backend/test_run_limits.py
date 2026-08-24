@@ -30,7 +30,7 @@ from lumina.runs.service import _usage_snapshot
 from lumina.runs.state import TERMINAL_STATUSES
 
 
-def test_usage_payload_estimates_codex_gpt_5_4_cost() -> None:
+def test_usage_payload_estimates_codex_gpt_5_6_sol_cost() -> None:
     payload = _usage_payload(
         ProviderUsage(
             input_tokens=20_053,
@@ -39,18 +39,18 @@ def test_usage_payload_estimates_codex_gpt_5_4_cost() -> None:
             output_tokens=2_335,
         ),
         provider_id="codex",
-        model="gpt-5.4",
+        model="gpt-5.6-sol",
     )
 
-    assert payload["cost_usd"] == pytest.approx(0.065974)
+    assert payload["cost_usd"] == pytest.approx(0.131948)
     assert payload["estimated_cost_breakdown_usd"] == pytest.approx(
         {
-            "uncached_input": 0.0288175,
-            "cached_input": 0.0021315,
+            "uncached_input": 0.057635,
+            "cached_input": 0.004263,
             "cache_write_input": 0.0,
-            "input": 0.030949,
-            "output": 0.035025,
-            "total": 0.065974,
+            "input": 0.061898,
+            "output": 0.07005,
+            "total": 0.131948,
         }
     )
     assert payload["cost_basis"] == "price_table_estimate"
@@ -81,12 +81,12 @@ def test_usage_payload_labels_subscription_cost_as_management_estimate() -> None
             raw={"auth_mode": "chatgpt", "billing": "subscription_usage"},
         ),
         provider_id="codex",
-        model="gpt-5.5",
+        model="gpt-5.6-terra",
     )
 
     assert payload["cost_basis"] == "subscription_price_table_estimate"
     assert payload["cost_usd"] > 0
-    assert payload["pricing_version"] == "public-list-2026-07-12"
+    assert payload["pricing_version"] == "public-list-2026-08-06"
 
 
 def test_usage_snapshot_backfills_cost_breakdown_for_existing_runs() -> None:
@@ -95,7 +95,7 @@ def test_usage_snapshot_backfills_cost_breakdown_for_existing_runs() -> None:
         (),
         {
             "provider_id": "codex",
-            "model_key": "gpt-5.4",
+            "model_key": "gpt-5.6-sol",
             "usage_json": {
                 "input_tokens": 20_053,
                 "cached_input_tokens": 8_526,
@@ -108,7 +108,7 @@ def test_usage_snapshot_backfills_cost_breakdown_for_existing_runs() -> None:
     usage = _usage_snapshot(run)
 
     assert usage["cost_usd"] == pytest.approx(0.065974)
-    assert usage["estimated_cost_breakdown_usd"]["total"] == pytest.approx(0.065974)
+    assert usage["estimated_cost_breakdown_usd"]["total"] == pytest.approx(0.131948)
 
 
 @pytest.mark.parametrize(
@@ -116,8 +116,8 @@ def test_usage_snapshot_backfills_cost_breakdown_for_existing_runs() -> None:
     [
         ("pgpt", "gpt-5.6-terra", 1.4),
         ("pgpt", "gpt-5.6-luna", 0.14),
-        ("codex", "gpt-5.5", 3.5),
-        ("codex", "gpt-5.4", 1.75),
+        ("codex", "gpt-5.6-terra", 1.4),
+        ("codex", "gpt-5.6-sol", 3.5),
         ("openai", "gpt-5.6-sol", 3.5),
         ("openai", "gpt-5.6-terra", 1.4),
         ("openai", "gpt-5.6-luna", 0.14),
@@ -174,7 +174,7 @@ def test_usage_payload_does_not_guess_private_provider_pricing(
     payload = _usage_payload(
         ProviderUsage(input_tokens=100_000, output_tokens=100_000),
         provider_id=provider_id,
-        model="gpt-5.4",
+        model="gpt-5.6-sol",
     )
 
     assert "cost_usd" not in payload

@@ -53,23 +53,15 @@ def upgrade() -> None:
                 ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
             ),
         )
-        .values(enabled=False)
+        .values(enabled=True)
     )
     bind.execute(
         provider_models.update()
         .where(
             provider_models.c.provider_id == "codex",
-            provider_models.c.model_key == "gpt-5.5",
+            provider_models.c.model_key == "gpt-5.6-sol",
         )
         .values(enabled=True, is_default=True, sort_order=10)
-    )
-    bind.execute(
-        provider_models.update()
-        .where(
-            provider_models.c.provider_id == "codex",
-            provider_models.c.model_key == "gpt-5.4",
-        )
-        .values(enabled=True, is_default=False, sort_order=20)
     )
 
 
@@ -121,20 +113,4 @@ def downgrade() -> None:
             provider_models.c.model_key == "gpt-5.6-luna",
         )
         .values(sort_order=30)
-    )
-    bind.execute(
-        provider_models.update()
-        .where(
-            provider_models.c.provider_id == "codex",
-            provider_models.c.model_key == "gpt-5.5",
-        )
-        .values(sort_order=40)
-    )
-    bind.execute(
-        provider_models.update()
-        .where(
-            provider_models.c.provider_id == "codex",
-            provider_models.c.model_key == "gpt-5.4",
-        )
-        .values(sort_order=50)
     )

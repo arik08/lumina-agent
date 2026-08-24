@@ -66,7 +66,7 @@ def test_bootstrap_is_idempotent_and_seeds_contract_data(
     db_session.commit()
 
     assert first.admin_created is True
-    assert first.provider_models_created == 19
+    assert first.provider_models_created == 14
     assert second.admin_created is False
     assert second.provider_models_created == 0
 
@@ -98,7 +98,7 @@ def test_bootstrap_is_idempotent_and_seeds_contract_data(
     organization = db_session.get(Organization, admin.organization_id)
     assert organization is not None
     assert organization.marketplace_permission_mode == "admin_review"
-    assert db_session.scalar(select(func.count()).select_from(ProviderModel)) == 19
+    assert db_session.scalar(select(func.count()).select_from(ProviderModel)) == 14
 
 
 def test_bootstrap_refreshes_contract_display_names_without_overwriting_admin_names(
@@ -108,15 +108,15 @@ def test_bootstrap_refreshes_contract_display_names_without_overwriting_admin_na
     codex_model = db_session.scalar(
         select(ProviderModel).where(
             ProviderModel.provider_id == "codex",
-            ProviderModel.model_key == "gpt-5.4",
+            ProviderModel.model_key == "gpt-5.6-sol",
         )
     )
     assert codex_model is not None
 
-    codex_model.display_name = "Codex 5.4"
+    codex_model.display_name = "Codex Legacy"
     db_session.commit()
     bootstrap_database(db_session, settings=test_settings)
-    assert codex_model.display_name == "GPT-5.4"
+    assert codex_model.display_name == "GPT-5.6-Sol"
 
     codex_model.display_name = "Team Codex"
     codex_model.source = "admin_manual"
@@ -132,10 +132,10 @@ def test_bootstrap_refreshes_contract_display_names_without_overwriting_admin_na
     }
     assert defaults == {
         "anthropic": "claude-sonnet-5",
-        "codex": "gpt-5.5",
+        "codex": "gpt-5.6-luna",
         "google": "gemini-3.1-pro",
-        "openai": "gpt-5.6-sol",
-        "pgpt": "gpt-5.4",
+        "openai": "gpt-5.6-luna",
+        "pgpt": "gpt-5.6-luna",
     }
 
 
@@ -147,14 +147,14 @@ def test_bootstrap_never_overwrites_existing_admin_password_or_model_mapping(
     admin = db_session.scalar(select(User).where(User.login_id == "admin@posco.com"))
     model = db_session.scalar(
         select(ProviderModel).where(
-            ProviderModel.provider_id == "pgpt", ProviderModel.model_key == "gpt-5.4"
+            ProviderModel.provider_id == "pgpt", ProviderModel.model_key == "gpt-5.6-sol"
         )
     )
     assert admin is not None and model is not None
 
     changed_hash = hash_password("changed-by-admin")
     admin.password_hash = changed_hash
-    model.runtime_model_id = "company-deployment-gpt54"
+    model.runtime_model_id = "company-deployment-gpt56sol"
     db_session.commit()
 
     bootstrap_database(db_session, settings=test_settings)
@@ -162,7 +162,7 @@ def test_bootstrap_never_overwrites_existing_admin_password_or_model_mapping(
     db_session.refresh(admin)
     db_session.refresh(model)
     assert admin.password_hash == changed_hash
-    assert model.runtime_model_id == "company-deployment-gpt54"
+    assert model.runtime_model_id == "company-deployment-gpt56sol"
 
 
 def test_bootstrap_upgrades_legacy_admin_password_and_revokes_sessions(

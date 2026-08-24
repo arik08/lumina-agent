@@ -21,8 +21,6 @@ depends_on = None
 
 _POLICY_REVISION = "2026-08-06.4-standard-context-85pct"
 _MODELS = (
-    ("pgpt", "gpt-5.4", 20_000, "2026-07-29.2-standard-context-20k-headroom"),
-    ("pgpt", "gpt-5.5", 20_000, "2026-07-29.2-standard-context-20k-headroom"),
     ("pgpt", "gpt-5.6-sol", 20_000, "2026-07-29.2-standard-context-20k-headroom"),
     ("pgpt", "gpt-5.6-terra", 20_000, "2026-08-06.3-gpt-5.6-pricing"),
     ("pgpt", "gpt-5.6-luna", 20_000, "2026-08-06.3-gpt-5.6-pricing"),

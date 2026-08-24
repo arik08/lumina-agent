@@ -82,16 +82,14 @@ def test_context_policy_falls_back_to_catalog_metadata() -> None:
     run = SimpleNamespace(
         snapshot_json={"execution": {"capabilities": {}}},
         provider_id="codex",
-        model_key="gpt-5.5",
+        model_key="gpt-5.6-terra",
         runtime_model_id="deployment-alias",
     )
 
     context_window, effective_input_budget = _context_budget(run, ())
 
-    assert context_window == 272_000
-    assert _compaction_threshold(run, effective_input_budget) == int(
-        effective_input_budget * 0.85
-    )
+    assert context_window == 1_050_000
+    assert _compaction_threshold(run, effective_input_budget) == effective_input_budget
 
 
 def test_codex_gpt56_standard_mode_compacts_at_eighty_five_percent_of_boundary() -> None:
@@ -163,8 +161,8 @@ def test_context_budget_honors_measured_input_limit() -> None:
             }
         },
         provider_id="pgpt",
-        model_key="gpt-5.5",
-        runtime_model_id="gpt-5.5",
+        model_key="gpt-5.6-terra",
+        runtime_model_id="gpt-5.6-terra",
     )
 
     context_window, effective_input_budget = _context_budget(run, ())
@@ -188,8 +186,8 @@ def test_standard_context_mode_compacts_at_eighty_five_percent_of_boundary() -> 
             }
         },
         provider_id="pgpt",
-        model_key="gpt-5.4",
-        runtime_model_id="gpt-5.4",
+        model_key="gpt-5.6-sol",
+        runtime_model_id="gpt-5.6-sol",
     )
 
     context_window, effective_input_budget = _context_budget(run, ())

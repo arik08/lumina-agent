@@ -1058,7 +1058,7 @@ async def test_pgpt_adapter_uses_streaming_cache_payload_and_normalizes_response
             event
             async for event in adapter.stream(
                 ProviderRequest(
-                    model="gpt-5.4",
+                    model="company-chat-model",
                     messages=(ProviderMessage(role="user", content="Hello"),),
                     tools=(_report_tool_schema(10_000),),
                     max_output_tokens=42_000,
@@ -1170,7 +1170,7 @@ async def test_pgpt_adapter_strips_unsupported_conditional_tool_schema_only_on_w
 ):
     unsupported_keywords = {"allOf", "oneOf", "if", "then", "const"}
     request = ProviderRequest(
-        model="gpt-5.4",
+        model="company-chat-model",
         messages=(ProviderMessage(role="user", content="Use the Python tool"),),
         tools=(PYTHON_EXECUTION_TOOL_SCHEMA,),
     )
@@ -1246,7 +1246,7 @@ async def test_pgpt_adapter_negotiates_rejected_optional_cache_fields() -> None:
             event
             async for event in adapter.stream(
                 ProviderRequest(
-                    model="gpt-5.4",
+                    model="company-chat-model",
                     messages=(ProviderMessage(role="user", content="Hello"),),
                     metadata={
                         "prompt_cache_key": "lumina:user:v1:opaque",
@@ -1300,7 +1300,7 @@ async def test_pgpt_adapter_negotiates_rejected_reasoning_effort() -> None:
             event
             async for event in adapter.stream(
                 ProviderRequest(
-                    model="gpt-5.4",
+                    model="company-chat-model",
                     messages=(ProviderMessage(role="user", content="Hello"),),
                     effort="medium",
                 )
@@ -1351,7 +1351,7 @@ async def test_pgpt_optional_negotiation_is_safe_for_concurrent_runs() -> None:
             client=client,
         )
         request = ProviderRequest(
-            model="gpt-5.4",
+            model="company-chat-model",
             messages=(ProviderMessage(role="user", content="Hello"),),
             metadata={"prompt_cache_key": "lumina:user:v1:opaque"},
         )
@@ -1409,7 +1409,7 @@ async def test_pgpt_adapter_reuses_owned_http_client_until_close(
         ),
     )
     request = ProviderRequest(
-        model="gpt-5.4",
+        model="company-chat-model",
         messages=(ProviderMessage(role="user", content="Hello"),),
     )
 
@@ -1427,7 +1427,7 @@ async def test_pgpt_adapter_reuses_owned_http_client_until_close(
 def test_pgpt_payload_uses_myharness_interactive_output_cap_by_default() -> None:
     payload = build_pgpt_payload(
         ProviderRequest(
-            model="gpt-5.4",
+            model="company-chat-model",
             messages=(ProviderMessage(role="user", content="Hello"),),
         )
     )
@@ -1463,7 +1463,7 @@ async def test_pgpt_adapter_classifies_context_overflow_without_exposing_body() 
                 event
                 async for event in adapter.stream(
                     ProviderRequest(
-                        model="gpt-5.4",
+                        model="company-chat-model",
                         messages=(ProviderMessage(role="user", content="Hello"),),
                     )
                 )

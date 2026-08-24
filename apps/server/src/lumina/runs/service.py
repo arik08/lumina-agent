@@ -64,6 +64,8 @@ from ..project_files.folders import build_project_folder_references
 from ..project_memories import select_relevant_project_memories
 from ..projects.memberships import effective_project_role
 from ..providers.catalog import (
+    STANDARD_CONTEXT_COMPACTION_RESERVE_TOKENS,
+    STANDARD_CONTEXT_WINDOW,
     catalog_model,
     estimate_model_cost_parts,
 )
@@ -212,7 +214,10 @@ def resolve_execution(
         "model_display_name": model.display_name,
         "effort": requested.effort_id,
         "catalog_revision": model.catalog_revision,
-        "capabilities": _model_capabilities_snapshot(model),
+        "capabilities": _model_capabilities_snapshot(
+            model,
+            context_capacity_mode=requested.context_capacity_mode,
+        ),
         "fallback_messages": fallback_messages,
     }
     if model.provider_id == "codex" and bool(
@@ -224,12 +229,44 @@ def resolve_execution(
     return resolved
 
 
-def _model_capabilities_snapshot(model: ProviderModel) -> dict[str, Any]:
+def _model_capabilities_snapshot(
+    model: ProviderModel,
+    *,
+    context_capacity_mode: str | None = None,
+) -> dict[str, Any]:
     """Pin reviewed hard limits and the admin-selected operating limit to a Run."""
     capabilities = dict(model.capabilities_json)
     catalog_entry = catalog_model(model.provider_id, model.model_key)
     if catalog_entry is None:
         return capabilities
+    if context_capacity_mode is not None:
+        maximum_context_window = catalog_entry.capabilities.maximum_context_window
+        if (
+            maximum_context_window is None
+            or not model.model_key.casefold().startswith("gpt-5.6-")
+        ):
+            raise ApiProblem(
+                409,
+                "context_capacity_mode_unsupported",
+                "선택한 모델은 컨텍스트 용량 모드 전환을 지원하지 않습니다.",
+            )
+        capabilities["context_capacity_mode"] = context_capacity_mode
+        if context_capacity_mode == "maximum":
+            capabilities["context_window"] = maximum_context_window
+            capabilities["max_input_tokens"] = (
+                catalog_entry.capabilities.maximum_input_tokens
+                or maximum_context_window
+            )
+        else:
+            capabilities["context_window"] = STANDARD_CONTEXT_WINDOW
+            capabilities["max_input_tokens"] = STANDARD_CONTEXT_WINDOW
+            capabilities["standard_context_compaction_reserve_tokens"] = (
+                STANDARD_CONTEXT_COMPACTION_RESERVE_TOKENS
+            )
+        capabilities.pop("contextCapacityMode", None)
+        capabilities.pop("contextWindow", None)
+        capabilities.pop("maxInputTokens", None)
+        capabilities.pop("standardContextCompactionReserveTokens", None)
     hard_max = catalog_entry.capabilities.max_output_tokens
     if hard_max is not None:
         capabilities["max_output_tokens"] = hard_max
@@ -1785,6 +1822,11 @@ def run_snapshot(
             "providerId": run.provider_id,
             "modelKey": run.model_key,
             "effortId": run.effort,
+            "contextCapacityMode": (
+                execution.get("capabilities", {}).get("context_capacity_mode")
+                if isinstance(execution.get("capabilities"), dict)
+                else None
+            ),
             "runtimeModelId": run.runtime_model_id,
             "catalogRevision": execution.get("catalog_revision", "unknown"),
         },

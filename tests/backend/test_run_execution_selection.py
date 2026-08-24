@@ -73,7 +73,7 @@ def test_organization_initial_execution_only_applies_before_user_selection(
         assert organization is not None
         organization.initial_execution_settings_json = {
             "providerId": "pgpt",
-            "modelKey": "gpt-5.4-mini",
+            "modelKey": "gpt-5.6-luna",
             "effortId": "high",
         }
         db_session.flush()
@@ -87,7 +87,7 @@ def test_organization_initial_execution_only_applies_before_user_selection(
         )
         assert (initial["provider_id"], initial["model_key"], initial["effort"]) == (
             "pgpt",
-            "gpt-5.4-mini",
+            "gpt-5.6-luna",
             "high",
         )
 
@@ -97,14 +97,14 @@ def test_organization_initial_execution_only_applies_before_user_selection(
                 key="execution.default",
                 value_json={
                     "providerId": "pgpt",
-                    "modelKey": "gpt-5.4",
+                    "modelKey": "gpt-5.6-sol",
                     "effortId": "low",
                 },
             )
         )
         organization.initial_execution_settings_json = {
             "providerId": "codex",
-            "modelKey": "gpt-5.5",
+            "modelKey": "gpt-5.6-terra",
             "effortId": "medium",
         }
         db_session.flush()
@@ -120,7 +120,7 @@ def test_organization_initial_execution_only_applies_before_user_selection(
             returning["provider_id"],
             returning["model_key"],
             returning["effort"],
-        ) == ("pgpt", "gpt-5.4", "low")
+        ) == ("pgpt", "gpt-5.6-sol", "low")
     engine.dispose()
 
 
@@ -142,7 +142,7 @@ def test_maximum_context_mode_is_pinned_to_the_run_snapshot(tmp_path: Path) -> N
         model = db_session.scalar(
             select(ProviderModel).where(
                 ProviderModel.provider_id == "pgpt",
-                ProviderModel.model_key == "gpt-5.4",
+                ProviderModel.model_key == "gpt-5.6-sol",
             )
         )
         assert project is not None
@@ -160,7 +160,7 @@ def test_maximum_context_mode_is_pinned_to_the_run_snapshot(tmp_path: Path) -> N
             db_session,
             _payload(ExecutionSelection(
                 provider_id="pgpt",
-                model_key="gpt-5.4",
+                model_key="gpt-5.6-sol",
                 effort_id="high",
             )),
             user=user,
@@ -259,7 +259,10 @@ def _assert_execution_selection(db_session: Session, tmp_path: Path) -> None:
         project=project,
         settings=production,
     )
-    assert (fallback["provider_id"], fallback["model_key"]) == ("pgpt", "gpt-5.4")
+    assert (fallback["provider_id"], fallback["model_key"]) == (
+        "pgpt",
+        "gpt-5.6-luna",
+    )
     assert fallback["fallback_messages"]
     assert fallback["capabilities"]["context_window"] == 272_000
     assert fallback["capabilities"]["context_capacity_mode"] == "standard"
@@ -308,3 +311,69 @@ def test_codex_gpt56_snapshot_preserves_selected_context_mode_threshold() -> Non
 
     assert _model_capabilities_snapshot(standard)["context_compaction_threshold"] == 1.0
     assert _model_capabilities_snapshot(maximum)["context_compaction_threshold"] == 0.85
+
+
+def test_gpt56_composer_context_mode_overrides_are_pinned_to_snapshot() -> None:
+    model = SimpleNamespace(
+        provider_id="codex",
+        model_key="gpt-5.6-sol",
+        capabilities_json={
+            "context_capacity_mode": "standard",
+            "context_window": 1_050_000,
+            "max_input_tokens": 922_000,
+            "standard_context_compaction_reserve_tokens": 818_800,
+        },
+    )
+
+    standard = _model_capabilities_snapshot(
+        model,
+        context_capacity_mode="standard",
+    )
+    maximum = _model_capabilities_snapshot(
+        model,
+        context_capacity_mode="maximum",
+    )
+
+    assert standard["context_capacity_mode"] == "standard"
+    assert standard["context_window"] == 272_000
+    assert standard["max_input_tokens"] == 272_000
+    assert standard["standard_context_compaction_reserve_tokens"] == 40_800
+    assert standard["context_compaction_threshold"] == 1.0
+    assert maximum["context_capacity_mode"] == "maximum"
+    assert maximum["context_window"] == 1_050_000
+    assert maximum["max_input_tokens"] == 922_000
+    assert maximum["context_compaction_threshold"] == 0.85
+
+
+def test_composer_context_mode_rejects_non_gpt_56_models() -> None:
+    unsupported_model = SimpleNamespace(
+        provider_id="anthropic",
+        model_key="claude-sonnet-5",
+        capabilities_json={},
+    )
+
+    with pytest.raises(ApiProblem) as unsupported:
+        _model_capabilities_snapshot(
+            unsupported_model,
+            context_capacity_mode="maximum",
+        )
+
+    assert unsupported.value.code == "context_capacity_mode_unsupported"
+
+
+def test_composer_context_mode_parses_from_run_input_without_leaking_to_settings() -> None:
+    payload = RunCreate.model_validate(
+        {
+            "message": {"text": "최대 컨텍스트로 실행해 주세요."},
+            "execution": {
+                "providerId": "openai",
+                "modelKey": "gpt-5.6-sol",
+                "effortId": "high",
+                "contextCapacityMode": "maximum",
+            },
+        }
+    )
+
+    assert payload.execution is not None
+    assert payload.execution.context_capacity_mode == "maximum"
+    assert "contextCapacityMode" not in payload.execution.model_dump(by_alias=True)

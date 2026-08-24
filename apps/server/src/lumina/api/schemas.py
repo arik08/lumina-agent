@@ -217,6 +217,10 @@ class ExecutionSelection(ApiModel):
     provider_id: str = "mock"
     model_key: str = "mock-agent"
     effort_id: str | None = "auto"
+    context_capacity_mode: Literal["standard", "maximum"] | None = Field(
+        default=None,
+        exclude=True,
+    )
 
 
 class RunMessageInput(ApiModel):

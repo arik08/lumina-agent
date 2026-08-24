@@ -2932,6 +2932,8 @@ button.schedule-run-row:disabled { cursor: wait; opacity: 1; }
 .composer-footer .composer-command-mode { margin-right: 3px; color: var(--cobalt); font-size: 11.5px; font-weight: 650; white-space: nowrap; }
 .context-usage-control { display: inline-flex; }
 .composer-footer .context-usage-trigger { display: grid; width: 31px; min-width: 31px; place-items: center; padding: 0; color: var(--muted); }
+.composer-footer .context-usage-trigger.is-maximum { background: color-mix(in srgb, var(--warning) 9%, var(--surface)); color: var(--warning); }
+.composer-footer .context-usage-trigger:disabled { cursor: default; }
 .context-usage-trigger svg { width: 18px; height: 18px; overflow: visible; transform: rotate(-90deg); }
 .context-usage-trigger circle { fill: none; stroke-width: 2.4; }
 .context-usage-track { stroke: var(--line-strong); }
@@ -2940,6 +2942,7 @@ button.schedule-run-row:disabled { cursor: wait; opacity: 1; }
 .context-usage-popover > span { color: var(--muted); font-size: 13px; }
 .context-usage-popover > strong { color: var(--ink); font-size: 13px; font-weight: 680; }
 .context-usage-popover > small { color: var(--ink); font-size: 13px; font-variant-numeric: tabular-nums; }
+.context-usage-popover > .context-usage-warning { margin-top: 3px; padding-top: 7px; border-top: 1px solid color-mix(in srgb, var(--warning) 35%, var(--line)); color: var(--warning); font-weight: 650; }
 .composer-footer .composer-picker-trigger { gap: 5px; }
 .composer-footer .model-control { max-width: 156px; padding: 0 8px; font-weight: 620; }
 .composer-footer .effort-control { font-weight: 700; }

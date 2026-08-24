@@ -315,7 +315,7 @@ async def test_codex_oauth_prewarm_returns_direct_usage(
 ) -> None:
     adapter = CodexResponsesAdapter()
     request = ProviderRequest(
-        model="gpt-5.5",
+        model="gpt-5.6-terra",
         messages=(ProviderMessage(role="user", content="prime"),),
     )
 

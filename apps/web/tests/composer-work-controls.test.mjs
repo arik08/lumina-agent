@@ -67,9 +67,16 @@ test("composer keeps model controls intact and sends independent analysis and an
   assert.match(app, /<ComposerPicker[\s\S]*?controlClassName="model-control"[\s\S]*?<ComposerPicker[\s\S]*?controlClassName=\{`effort-control/);
   assert.match(app, /contextInputLimit: model\.capabilities\.contextInputLimit \?\? model\.capabilities\.contextWindow/);
   assert.match(app, /saveAdminContextCapacityMode[\s\S]*?setAdminSettingsModels[\s\S]*?await workspace\.refreshProviderCatalog\(\)/);
-  assert.match(app, /<ContextUsageIndicator[\s\S]*?usedTokens=\{latestContextInputTokens\}[\s\S]*?contextWindow=\{selectedCandidate\.contextInputLimit\}[\s\S]*?<ComposerPicker[\s\S]*?controlClassName="model-control"/);
+  assert.match(app, /<ContextUsageIndicator[\s\S]*?usedTokens=\{latestContextInputTokens\}[\s\S]*?contextWindow=\{selectedContextWindow\}[\s\S]*?mode=\{selectedContextCapacityMode\}[\s\S]*?<ComposerPicker[\s\S]*?controlClassName="model-control"/);
   assert.match(app, /activeRun\?\.modelTurnMetrics\.at\(-1\)\?\.inputTokens \?\? 0/);
   assert.match(app, /컨텍스트 길이[\s\S]*?usagePercent[\s\S]*?remainingPercent[\s\S]*?formatContextTokens\(safeUsedTokens\)[\s\S]*?formatContextTokens\(contextWindow\)/);
+  assert.match(app, /aria-pressed=\{mode === "maximum"\}/);
+  assert.match(app, /주의: 1M 모드는 비용이 2배입니다\./);
+  assert.match(app, /contextCapacityModeAvailable \? contextCapacityMode : undefined/);
+  assert.match(app, /activeRun\.execution\.contextCapacityMode/);
+  assert.match(app, /maximumContextWindow: model\.capabilities\.maximumContextWindow/);
+  assert.match(workspace, /contextCapacityMode\?: ContextCapacityMode/);
+  assert.match(workspace, /\.\.\.\(contextCapacityMode \? \{ contextCapacityMode \} : \{\}\)/);
   assert.match(styles, /\.composer-footer \.context-usage-trigger \{[^}]*width: 31px;[^}]*color: var\(--muted\)/);
   assert.match(styles, /\.context-usage-popover \{[^}]*background: var\(--menu-surface\)[^}]*text-align: center/);
   assert.match(workspace, /analysisDepth: AnalysisDepth = "auto"/);
@@ -83,4 +90,6 @@ test("composer keeps model controls intact and sends independent analysis and an
   assert.match(types, /analysisDepth: AnalysisDepth/);
   assert.match(types, /answerLength: AnswerLength/);
   assert.match(types, /contextInputLimit: number \| null/);
+  assert.match(types, /contextCapacityMode: ContextCapacityMode \| null/);
+  assert.match(types, /maximumContextWindow: number \| null/);
 });

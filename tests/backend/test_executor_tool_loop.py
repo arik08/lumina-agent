@@ -167,14 +167,14 @@ def test_prompt_cache_key_tracks_static_prefix_not_dynamic_messages() -> None:
     first_key, first_digest = executor_module._provider_prompt_cache_key(
         user_scope="lumina:user:v1:user-a",
         provider_id="codex",
-        model="gpt-5.5",
+        model="gpt-5.6-terra",
         messages=first_messages,
         tools=tools,
     )
     later_key, later_digest = executor_module._provider_prompt_cache_key(
         user_scope="lumina:user:v1:user-a",
         provider_id="codex",
-        model="gpt-5.5",
+        model="gpt-5.6-terra",
         messages=later_messages,
         tools=tools,
     )
@@ -187,7 +187,7 @@ def test_prompt_cache_key_tracks_static_prefix_not_dynamic_messages() -> None:
     reordered_key, reordered_digest = executor_module._provider_prompt_cache_key(
         user_scope="lumina:user:v1:user-a",
         provider_id="codex",
-        model="gpt-5.5",
+        model="gpt-5.6-terra",
         messages=later_messages,
         tools=tuple(reversed(tools)),
     )
@@ -197,7 +197,7 @@ def test_prompt_cache_key_tracks_static_prefix_not_dynamic_messages() -> None:
     other_user_key, _ = executor_module._provider_prompt_cache_key(
         user_scope="lumina:user:v1:user-b",
         provider_id="codex",
-        model="gpt-5.5",
+        model="gpt-5.6-terra",
         messages=first_messages,
         tools=tools,
     )

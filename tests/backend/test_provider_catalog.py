@@ -43,22 +43,17 @@ def test_initial_model_catalog_matches_detailed_design_section_12_3() -> None:
         for item in initial_model_catalog()
     ]
     assert actual == [
-        ("pgpt", "GPT-5.4", "gpt-5.4", True),
-        ("pgpt", "GPT-5.4-mini", "gpt-5.4-mini", False),
-        ("pgpt", "GPT-5.5", "gpt-5.5", False),
         ("pgpt", "GPT-5.6-Sol", "gpt-5.6-sol", False),
         ("pgpt", "GPT-5.6-Terra", "gpt-5.6-terra", False),
-        ("pgpt", "GPT-5.6-Luna", "gpt-5.6-luna", False),
+        ("pgpt", "GPT-5.6-Luna", "gpt-5.6-luna", True),
         ("codex", "GPT-5.6-Sol", "gpt-5.6-sol", False),
         ("codex", "GPT-5.6-Terra", "gpt-5.6-terra", False),
-        ("codex", "GPT-5.6-Luna", "gpt-5.6-luna", False),
-        ("codex", "GPT-5.5", "gpt-5.5", True),
-        ("codex", "GPT-5.4", "gpt-5.4", False),
+        ("codex", "GPT-5.6-Luna", "gpt-5.6-luna", True),
         ("google", "Gemini-3.1-Pro", "gemini-3.1-pro", True),
         ("google", "Gemini-3.5-flash", "gemini-3.5-flash", False),
-        ("openai", "GPT-5.6-Sol", "gpt-5.6-sol", True),
+        ("openai", "GPT-5.6-Sol", "gpt-5.6-sol", False),
         ("openai", "GPT-5.6-Terra", "gpt-5.6-terra", False),
-        ("openai", "GPT-5.6-Luna", "gpt-5.6-luna", False),
+        ("openai", "GPT-5.6-Luna", "gpt-5.6-luna", True),
         ("anthropic", "Claude Opus 4.8", "claude-opus-4-8", False),
         ("anthropic", "Claude Sonnet 5", "claude-sonnet-5", True),
         ("anthropic", "Claude Haiku 4.5", "claude-haiku-4-5", False),
@@ -77,13 +72,8 @@ def test_initial_model_catalog_matches_detailed_design_section_12_3() -> None:
         10,
         20,
         30,
-        40,
-        50,
     ]
     assert [item.model_key for item in initial_model_catalog("pgpt")] == [
-        "gpt-5.4",
-        "gpt-5.4-mini",
-        "gpt-5.5",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
@@ -91,10 +81,10 @@ def test_initial_model_catalog_matches_detailed_design_section_12_3() -> None:
 
     pgpt = initial_model_catalog("pgpt")[0]
     assert pgpt.capabilities.context_window == 272_000
-    assert pgpt.capabilities.max_input_tokens == 272_000
+    assert pgpt.capabilities.max_input_tokens is None
     assert pgpt.capabilities.context_capacity_mode == "standard"
     assert pgpt.capabilities.maximum_context_window == 1_050_000
-    assert pgpt.capabilities.maximum_input_tokens == 911_900
+    assert pgpt.capabilities.maximum_input_tokens is None
     assert pgpt.context_compaction_threshold == 1.0
     assert pgpt.capabilities.maximum_context_compaction_threshold == 0.75
     assert pgpt.capabilities.standard_context_compaction_reserve_tokens == 40_800
@@ -102,13 +92,10 @@ def test_initial_model_catalog_matches_detailed_design_section_12_3() -> None:
     assert pgpt.default_max_output_tokens == 42_000
     assert pgpt.output_token_step == 1_000
 
-    pgpt_mini = initial_model_catalog("pgpt")[1]
-    assert pgpt_mini.capabilities.context_window == 400_000
-    assert pgpt_mini.capabilities.max_input_tokens == 270_000
-
-    pgpt_55 = initial_model_catalog("pgpt")[2]
-    assert pgpt_55.capabilities.max_input_tokens == 272_000
-    assert pgpt_55.capabilities.maximum_input_tokens == 911_900
+    for model in initial_model_catalog("pgpt"):
+        assert model.capabilities.context_window == 272_000
+        assert model.capabilities.context_capacity_mode == "standard"
+        assert model.capabilities.maximum_context_window == 1_050_000
 
 
 def test_application_default_execution_tracks_the_catalog_default() -> None:
@@ -236,13 +223,13 @@ def test_pgpt_auth_envelope_and_profile_preserve_contract() -> None:
     assert PgptProfile.from_env({}).base_url == DEFAULT_PGPT_BASE_URL
     profile = PgptProfile.from_env(
         {"PGPT_BASE_URL": "https://example.test/company/gpt/v1/"},
-        deployment_mapping={"gpt-5.4": "deployment-54"},
+        deployment_mapping={"gpt-5.6-sol": "deployment-54"},
     )
     assert (
         profile.chat_completions_url
         == "https://example.test/company/gpt/v1/chat/completions"
     )
-    assert profile.resolve_runtime_model("gpt-5.4") == "deployment-54"
+    assert profile.resolve_runtime_model("gpt-5.6-sol") == "deployment-54"
 
 
 def test_pgpt_missing_credentials_fail_before_external_io() -> None:

@@ -188,13 +188,13 @@ def test_codex_catalog_and_legacy_seed_merge_preserve_adapter_capabilities(
         codex = db.scalar(
             select(ProviderModel).where(
                 ProviderModel.provider_id == "codex",
-                ProviderModel.model_key == "gpt-5.5",
+                ProviderModel.model_key == "gpt-5.6-terra",
             )
         )
         pgpt = db.scalar(
             select(ProviderModel).where(
                 ProviderModel.provider_id == "pgpt",
-                ProviderModel.model_key == "gpt-5.4",
+                ProviderModel.model_key == "gpt-5.6-sol",
             )
         )
         assert codex is not None and pgpt is not None
@@ -229,8 +229,6 @@ def test_codex_catalog_and_legacy_seed_merge_preserve_adapter_capabilities(
 
     catalog = initial_model_catalog("codex")
     assert [item.capabilities.image_generation for item in catalog] == [
-        False,
-        False,
         False,
         False,
         False,
@@ -499,7 +497,7 @@ def test_codex_image_tool_persists_immutable_versions_without_raw_payloads(
         async def generate(self, request: ImageGenerationRequest) -> GeneratedImage:
             self.calls += 1
             assert request.image_model == "gpt-image-2"
-            assert request.model == "gpt-5.5"
+            assert request.model == "gpt-5.6-terra"
             content = _PNG + (b"second-version" if self.calls == 2 else b"")
             return GeneratedImage(
                 content=content,
@@ -508,7 +506,7 @@ def test_codex_image_tool_persists_immutable_versions_without_raw_payloads(
                 actual_backend="openai_responses.image_generation",
                 actual_model="gpt-image-2",
                 actual_model_reported=True,
-                response_model="gpt-5.5",
+                response_model="gpt-5.6-terra",
                 revised_prompt_hash="b" * 64,
             )
 
@@ -522,7 +520,7 @@ def test_codex_image_tool_persists_immutable_versions_without_raw_payloads(
             model = db.scalar(
                 select(ProviderModel).where(
                     ProviderModel.provider_id == "codex",
-                    ProviderModel.model_key == "gpt-5.5",
+                    ProviderModel.model_key == "gpt-5.6-terra",
                 )
             )
             assert model is not None
@@ -696,7 +694,7 @@ def _start_codex_run(
             },
             "execution": {
                 "providerId": "codex",
-                "modelKey": "gpt-5.5",
+                "modelKey": "gpt-5.6-terra",
                 "effortId": "medium",
             },
         },
