@@ -5,7 +5,6 @@ import {
   Braces,
   Check,
   CircleOff,
-  Clock3,
   FileJson2,
   KeyRound,
   Network,
@@ -19,66 +18,119 @@ type A2AView = "catalog" | "connected";
 
 const demoAgents = [
   {
-    id: "procurement-research",
-    name: "조달 리서치 코디네이터",
-    publisher: "Lumina Labs",
-    description: "공급사 조사부터 비교표와 RFQ 초안까지, 근거 자료를 보존하며 조달 검토 업무를 분담하는 원격 Agent입니다.",
-    version: "0.1.0-demo",
+    id: "posco-cost-analysis",
+    name: "원가분석 AI Agent",
+    publisher: "Enhans",
+    description: "POSCO Data Lake의 표준·실적 원가 데이터를 조회해 제품, 공정과 기간별 원가 차이를 설명하고 의사결정용 시나리오를 만드는 원격 Agent입니다.",
+    version: "1.4.2-demo",
     protocol: "A2A v0.3",
-    endpoint: "https://agents.demo.lumina.local/procurement/a2a",
-    tags: ["조달", "리서치", "문서화"],
-    capabilities: ["Streaming task updates", "Multi-turn task context", "Artifact handoff", "Cancellation and status polling"],
-    boundaries: ["Project 단위 연결과 대화 격리", "외부 발송 전 사용자 승인", "위임 기록과 Artifact provenance 보존"],
+    connected: true,
+    endpoint: "https://a2a.enhans.example/v1/posco-cost-analysis",
+    dataSource: "POSCO Data Lake · Cost Mart",
+    tags: ["원가분석", "POSCO", "Data Lake"],
+    capabilities: ["Streaming analysis updates", "Structured data input", "Artifact handoff", "Dataset revision traceability"],
+    boundaries: [
+      "POSCO Data Lake 원가 Mart 읽기 전용",
+      "사업장·품종·기간은 Project 권한 범위로 제한",
+      "계약단가와 개인 식별 정보는 결과에서 마스킹",
+      "조회 조건·데이터 기준일·산출 근거를 Artifact에 보존",
+    ],
     skills: [
       {
-        name: "공급사 후보 조사",
-        description: "요구 조건과 지역을 기준으로 후보를 조사하고 출처가 연결된 shortlist를 반환합니다.",
-        input: "SourcingBrief",
-        output: "SupplierShortlist",
+        name: "표준·실적 원가 차이 분석",
+        description: "사업장, 품종과 기간을 기준으로 재료비·에너지비·노무비·가공비의 표준 대비 실적 차이를 브리지로 분해합니다.",
+        input: "CostVarianceRequest",
+        output: "CostVarianceBridge",
       },
       {
-        name: "제안 비교 및 위험 검토",
-        description: "가격, 납기, 인증, 계약 조건을 비교하고 추가 확인이 필요한 위험을 표시합니다.",
-        input: "ProposalBundle",
-        output: "ComparisonReport",
+        name: "원가 변동 원인 Drill-down",
+        description: "원료 단가, 투입 원단위, 수율, 환율과 조업 조건을 단계별로 추적해 주요 원가 변동 요인과 기여도를 설명합니다.",
+        input: "CostDriverQuery",
+        output: "CostDriverAnalysis",
       },
       {
-        name: "RFQ 초안 작성",
-        description: "승인된 요구사항과 비교 결과를 바탕으로 발송 전 검토용 RFQ 초안을 만듭니다.",
-        input: "ApprovedRequirements",
-        output: "RfqDraft",
+        name: "원가 개선 시나리오",
+        description: "원료 가격, 에너지 단가와 수율 가정을 조정해 예상 원가와 손익 민감도를 비교하고 검토용 분석표를 생성합니다.",
+        input: "CostScenarioAssumptions",
+        output: "CostScenarioWorkbook",
       },
     ],
   },
   {
-    id: "maintenance-response",
-    name: "설비 이상 대응 Agent",
-    publisher: "Smart Operations Lab",
-    description: "설비 알람과 정비 이력을 받아 이상 징후를 정리하고, 현장 확인 순서와 교대 인수인계 초안을 만드는 원격 Agent입니다.",
-    version: "0.2.0-demo",
+    id: "salesforce-mih",
+    name: "MIH Agent",
+    publisher: "Salesforce",
+    description: "Marketing Information Hub의 시장·고객·경쟁 정보를 연결해 지역과 제품별 수요 신호를 분석하고 마케팅 의사결정 자료를 만드는 원격 Agent입니다.",
+    version: "2.3.0-demo",
     protocol: "A2A v0.3",
-    endpoint: "https://agents.demo.lumina.local/maintenance/a2a",
-    tags: ["설비", "이상진단", "안전"],
-    capabilities: ["Streaming task updates", "Long-running task support", "Artifact handoff", "Cancellation and status polling"],
-    boundaries: ["원시 센서 데이터의 Project 단위 격리", "위험 작업 제안 전 작업허가 승인", "진단 근거와 참조 정비 이력 보존"],
+    connected: true,
+    endpoint: "https://a2a.salesforce.example/v1/mih-intelligence",
+    dataSource: "Salesforce MIH · Marketing Data Mart",
+    tags: ["마케팅", "시장정보", "Salesforce"],
+    capabilities: ["Multi-source intelligence retrieval", "Streaming task updates", "Structured insight output", "Artifact handoff"],
+    boundaries: [
+      "승인된 MIH 시장·고객 데이터셋만 읽기 전용 조회",
+      "고객 식별 정보와 영업 기밀은 집계 수준으로 제한",
+      "지역·제품·기간별 Project 접근 권한 적용",
+      "출처·갱신 시각·분석 기준을 결과에 함께 표시",
+    ],
     skills: [
       {
-        name: "알람 맥락 정리",
-        description: "동시 발생 알람, 운전 조건과 최근 정비 이력을 시간순으로 정리해 우선 확인 대상을 좁힙니다.",
-        input: "EquipmentAlertBundle",
-        output: "IncidentContext",
+        name: "시장 수요 Signal 분석",
+        description: "지역·산업·제품별 시장 지표와 고객 접점을 결합해 수요 변화와 조기 경보 신호를 정리합니다.",
+        input: "MarketSignalRequest",
+        output: "DemandSignalBrief",
       },
       {
-        name: "원인 가설 및 점검 순서",
-        description: "관측 증상과 설비 계통을 바탕으로 원인 가설을 제시하고 안전 조건을 포함한 현장 점검 순서를 만듭니다.",
-        input: "IncidentContext",
-        output: "InspectionPlan",
+        name: "고객·제품 Opportunity Map",
+        description: "고객군, 제품 포트폴리오와 판매 접점을 교차 분석해 우선 대응할 시장 기회와 공백을 식별합니다.",
+        input: "OpportunityScope",
+        output: "OpportunityMap",
       },
       {
-        name: "교대 인수인계 초안",
-        description: "확인 결과, 미해결 위험과 다음 조치를 교대조가 이어받을 수 있는 구조화 문서로 정리합니다.",
-        input: "InspectionFindings",
-        output: "ShiftHandoverDraft",
+        name: "경쟁·캠페인 Intelligence Brief",
+        description: "경쟁 동향과 캠페인 성과를 비교해 핵심 변화, 근거와 다음 마케팅 액션을 한 문서로 정리합니다.",
+        input: "IntelligenceBriefRequest",
+        output: "MarketingIntelligenceBrief",
+      },
+    ],
+  },
+  {
+    id: "facility-management-gpt",
+    name: "설비관리 GPT",
+    publisher: "POSCO",
+    description: "설비 기준정보와 점검·정비 이력을 바탕으로 설비 상태를 요약하고 예방정비 우선순위와 현장 작업 준비사항을 안내하는 사내 원격 Agent입니다.",
+    version: "1.8.1-demo",
+    protocol: "A2A v0.3",
+    connected: true,
+    endpoint: "https://a2a.posco.example/v1/facility-management-gpt",
+    dataSource: "설비관리 GPT · 설비 기준정보/정비 이력",
+    tags: ["설비관리", "예방정비", "POSCO"],
+    capabilities: ["Multi-turn equipment context", "Long-running task support", "Maintenance artifact handoff", "Status polling and cancellation"],
+    boundaries: [
+      "사용자에게 허용된 사업장·설비 범위만 조회",
+      "설비 제어와 작업지시 확정은 수행하지 않음",
+      "안전·정비 기준 변경은 담당자 승인 후 반영",
+      "참조한 설비·점검·정비 이력을 결과에 보존",
+    ],
+    skills: [
+      {
+        name: "설비 상태·이력 요약",
+        description: "설비번호를 기준으로 현재 상태, 최근 점검 결과, 고장과 정비 이력을 시간순으로 요약합니다.",
+        input: "EquipmentContextRequest",
+        output: "EquipmentHealthSummary",
+      },
+      {
+        name: "예방정비 우선순위 추천",
+        description: "점검 주기, 이상 징후, 고장 영향도와 정비 이력을 종합해 우선 확인할 설비와 근거를 제시합니다.",
+        input: "MaintenancePriorityRequest",
+        output: "MaintenancePriorityPlan",
+      },
+      {
+        name: "현장 작업 준비사항",
+        description: "승인된 정비 범위에 맞춰 관련 매뉴얼, 안전 확인사항, 필요 자재와 과거 유사 작업을 작업 전 검토용으로 정리합니다.",
+        input: "MaintenanceWorkScope",
+        output: "WorkPreparationBrief",
       },
     ],
   },
@@ -88,13 +140,16 @@ export function A2AMarketplacePanel() {
   const [view, setView] = useState<A2AView>("catalog");
   const [query, setQuery] = useState("");
   const [selectedAgentId, setSelectedAgentId] = useState<string>(demoAgents[0].id);
+  const connectedAgents = useMemo(() => demoAgents.filter((agent) => agent.connected), []);
+  const agentsInView = view === "connected" ? connectedAgents : demoAgents;
   const normalizedQuery = query.trim().toLocaleLowerCase("ko-KR");
-  const visibleAgents = useMemo(() => demoAgents.filter((agent) => (
-    !normalizedQuery
+  const visibleAgents = useMemo(() => agentsInView.filter((agent) => (
+    view === "connected"
+    || !normalizedQuery
     || `${agent.name} ${agent.publisher} ${agent.description} ${agent.tags.join(" ")}`
       .toLocaleLowerCase("ko-KR")
       .includes(normalizedQuery)
-  )), [normalizedQuery]);
+  )), [agentsInView, normalizedQuery, view]);
   const selectedAgent = visibleAgents.find((agent) => agent.id === selectedAgentId) ?? visibleAgents[0] ?? null;
 
   return (
@@ -105,7 +160,7 @@ export function A2AMarketplacePanel() {
             <Network size={14} /> 카탈로그 <span>{demoAgents.length}</span>
           </button>
           <button type="button" role="tab" aria-selected={view === "connected"} onClick={() => setView("connected")}>
-            <Radio size={14} /> 연결됨 <span>0</span>
+            <Radio size={14} /> 연결됨 <span>{connectedAgents.length}</span>
           </button>
         </div>
         {view === "catalog" && <label className="marketplace-search">
@@ -120,7 +175,7 @@ export function A2AMarketplacePanel() {
         </label>}
       </div>
 
-      {view === "connected" ? <section className="a2a-connected-empty">
+      {view === "connected" && connectedAgents.length === 0 ? <section className="a2a-connected-empty">
         <CircleOff size={22} />
         <strong>연결된 A2A Agent가 없습니다.</strong>
         <p>카탈로그에서 Agent Card와 권한 범위를 검토한 뒤 프로젝트에 연결할 수 있습니다.</p>
@@ -133,7 +188,7 @@ export function A2AMarketplacePanel() {
       </section> : <div className="a2a-catalog-layout">
         <aside className="a2a-catalog-list" aria-label="A2A Agent 목록">
           <header>
-            <div><strong>A2A Agent</strong><span>조직에서 검토 가능한 원격 Agent</span></div>
+            <div><strong>A2A Agent</strong><span>{view === "connected" ? "현재 Project에 데모 연결된 Agent" : "조직에서 검토 가능한 원격 Agent"}</span></div>
             <small>{visibleAgents.length}개</small>
           </header>
           <div className="a2a-agent-rows">
@@ -155,7 +210,7 @@ export function A2AMarketplacePanel() {
           </div>
           <footer>
             <ShieldCheck size={14} />
-            <span>등록 전 보안·권한·데이터 경계 검토가 필요합니다.</span>
+            <span>데모 연결입니다. 실제 연결 전 보안·권한·데이터 경계 검토가 필요합니다.</span>
           </footer>
         </aside>
 
@@ -164,15 +219,15 @@ export function A2AMarketplacePanel() {
             <div className="a2a-agent-identity">
               <span className="a2a-agent-mark"><Bot size={20} /></span>
               <div>
-                <span className="a2a-eyebrow"><BadgeCheck size={13} /> 설계 미리보기</span>
+                <span className="a2a-eyebrow"><BadgeCheck size={13} /> A2A Agent Card · 데모</span>
                 <h2>{selectedAgent.name}</h2>
                 <p>{selectedAgent.description}</p>
               </div>
             </div>
             <div className="a2a-agent-actions">
-              <span><Clock3 size={13} /> 연결 준비 전</span>
-              <button type="button" disabled aria-describedby="a2a-availability-note">프로젝트에 연결</button>
-              <small id="a2a-availability-note">A2A Runtime 적용 후 사용할 수 있습니다.</small>
+              <span><Radio size={13} /> 데모 연결됨</span>
+              <button type="button" disabled aria-describedby="a2a-availability-note">연결됨</button>
+              <small id="a2a-availability-note">표시 전용 연결이며 실제 작업은 실행되지 않습니다.</small>
             </div>
           </header>
 
@@ -204,6 +259,7 @@ export function A2AMarketplacePanel() {
                 <dl>
                   <div><dt>Provider</dt><dd>{selectedAgent.publisher}</dd></div>
                   <div><dt>Endpoint</dt><dd><code>{selectedAgent.endpoint}</code></dd></div>
+                  <div><dt>Data source</dt><dd>{selectedAgent.dataSource}</dd></div>
                   <div><dt>Input modes</dt><dd>text, file, structured data</dd></div>
                   <div><dt>Output modes</dt><dd>text, artifact, status event</dd></div>
                 </dl>

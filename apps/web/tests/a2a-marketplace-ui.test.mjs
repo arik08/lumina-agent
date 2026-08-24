@@ -6,7 +6,7 @@ const viewPath = new URL("../src/components/MarketplaceView.tsx", import.meta.ur
 const panelPath = new URL("../src/components/A2AMarketplacePanel.tsx", import.meta.url);
 const stylesPath = new URL("../src/styles.css", import.meta.url);
 
-test("Marketplace exposes A2A beside Skill and MCP without pretending runtime support exists", async () => {
+test("Marketplace exposes realistic but explicitly demo-only A2A connections", async () => {
   const [view, panel] = await Promise.all([
     readFile(viewPath, "utf8"),
     readFile(panelPath, "utf8"),
@@ -17,18 +17,26 @@ test("Marketplace exposes A2A beside Skill and MCP without pretending runtime su
   assert.match(view, /marketKind === "a2a" \? <A2AMarketplacePanel \/>/);
   assert.match(view, /marketKind !== "a2a" && <button type="button" aria-label="새로 고침"/);
   assert.match(panel, /A2A v0\.3/);
-  assert.match(panel, /설비 이상 대응 Agent/);
-  assert.match(panel, /Smart Operations Lab/);
-  assert.match(panel, /EquipmentAlertBundle/);
-  assert.match(panel, /ShiftHandoverDraft/);
+  assert.match(panel, /원가분석 AI Agent/);
+  assert.match(panel, /publisher: "Enhans"/);
+  assert.match(panel, /POSCO Data Lake · Cost Mart/);
+  assert.match(panel, /CostScenarioWorkbook/);
+  assert.match(panel, /name: "MIH Agent"/);
+  assert.match(panel, /publisher: "Salesforce"/);
+  assert.match(panel, /MarketingIntelligenceBrief/);
+  assert.match(panel, /설비관리 GPT/);
+  assert.match(panel, /EquipmentHealthSummary/);
+  assert.doesNotMatch(panel, /조달 리서치 코디네이터/);
+  assert.doesNotMatch(panel, /설비 이상 대응 Agent/);
   assert.match(panel, /JSON-RPC · HTTP\/SSE/);
   assert.match(panel, /OAuth 2\.0 \+ mTLS/);
   assert.match(panel, /Agent Card/);
   assert.match(panel, /Streaming task updates/);
   assert.match(panel, /Artifact handoff/);
-  assert.match(panel, /외부 발송 전 사용자 승인/);
-  assert.match(panel, /<button type="button" disabled aria-describedby="a2a-availability-note">프로젝트에 연결<\/button>/);
-  assert.match(panel, /A2A Runtime 적용 후 사용할 수 있습니다\./);
+  assert.match(panel, /실제 연결 전 보안·권한·데이터 경계 검토가 필요합니다/);
+  assert.match(panel, /연결됨 <span>\{connectedAgents\.length\}<\/span>/);
+  assert.match(panel, /<button type="button" disabled aria-describedby="a2a-availability-note">연결됨<\/button>/);
+  assert.match(panel, /표시 전용 연결이며 실제 작업은 실행되지 않습니다\./);
   assert.match(panel, /setSelectedAgentId\(agent\.id\)/);
   assert.match(panel, /aria-current=\{agent\.id === selectedAgent\.id \? "true" : undefined\}/);
 });
