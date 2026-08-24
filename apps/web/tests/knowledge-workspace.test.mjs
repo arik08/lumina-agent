@@ -164,9 +164,11 @@ test("Knowledge runs configurable batch tagging in a dedicated workspace", async
   assert.match(view, /value: "propose", label: "새 태그 제안 \(권장\)"/);
   assert.match(view, /value: "auto_approve", label: "새 태그 자동 승인"/);
   assert.match(view, /allArmed \? <><AlertTriangle/);
+  assert.match(view, /running \? "is-tagging"[\s\S]*?running \? <>태깅 중 <LoaderCircle/);
   assert.match(view, /batchTagDocuments\(\{[\s\S]*?target,[\s\S]*?newTagPolicy: policy/);
   assert.doesNotMatch(view.match(/if \(isDocumentView\(tab\)\)[\s\S]*?if \(tab === "tagging"\)/)?.[0] ?? "", /batchTagDocuments/);
   assert.match(styles, /\.knowledge-tagging-card/);
+  assert.match(styles, /\.knowledge-tagging-card > footer button\.is-tagging \{ justify-content: flex-end; text-align: right; \}/);
   assert.doesNotMatch(styles, /knowledge-graph-tag-actions/);
 });
 

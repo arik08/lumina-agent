@@ -633,7 +633,7 @@ function KnowledgeTagging({ space, documents, onChanged }: { space: KnowledgeSpa
       </div>
       <footer>
         <div>{error && <span className="knowledge-inline-error" role="alert">{error}</span>}{result && <span className="knowledge-tagging-result">{result.requestedCount}개 처리 · {result.taggedCount}개 태깅 · {result.proposedCount}개 제안{result.failedCount > 0 ? ` · ${result.failedCount}개 실패` : ""}</span>}</div>
-        <button className={`lumina-primary-action ${allArmed ? "is-delete-armed" : ""}`} type="button" disabled={!modelValue || !targetCount || running} onClick={() => void runTagging()}>{running ? <><LoaderCircle className="is-running" size={14} /> 태깅 중</> : allArmed ? <><AlertTriangle size={14} /> 한 번 더 눌러 전체 재태깅</> : `${targetCount}개 문서 태깅`}</button>
+        <button className={`lumina-primary-action ${running ? "is-tagging" : allArmed ? "is-delete-armed" : ""}`} type="button" disabled={!modelValue || !targetCount || running} onClick={() => void runTagging()}>{running ? <>태깅 중 <LoaderCircle className="is-running" size={14} /></> : allArmed ? <><AlertTriangle size={14} /> 한 번 더 눌러 전체 재태깅</> : `${targetCount}개 문서 태깅`}</button>
       </footer>
     </section>
   </div>;
