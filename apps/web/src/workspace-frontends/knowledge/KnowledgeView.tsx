@@ -644,8 +644,8 @@ function KnowledgeTagging({ space, documents, onChanged }: { space: KnowledgeSpa
               <strong>{document.title}</strong>
               <span>{document.status === "tagged" ? "태깅 완료" : document.status === "proposed" ? "승인 대기" : "실패"}</span>
             </div>
-            {document.tags.length > 0 && <div className="knowledge-tagging-result-tags"><small>적용 태그</small>{document.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}
-            {document.proposals.length > 0 && <div className="knowledge-tagging-result-tags is-proposal"><small>새 태그 제안</small>{document.proposals.map((tag) => <span key={tag}>{tag}</span>)}</div>}
+            {document.tags.length > 0 && <div className="knowledge-tagging-result-tags"><small>적용 태그 {document.tags.length}개</small>{document.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}
+            {document.proposals.length > 0 && <div className="knowledge-tagging-result-tags is-proposal"><small>새 태그 제안 {document.proposals.length}개</small>{document.proposals.map((tag) => <span key={tag}>{tag}</span>)}</div>}
             {document.message && <p>{document.message}</p>}
           </article>)}
         </div>

@@ -176,7 +176,17 @@ def _knowledge_tag_payload(request: ProviderRequest) -> dict[str, object] | None
                         "canonicalName": "AI 활용",
                         "scopeNote": "AI 적용 사례",
                         "aliases": ["인공지능 활용"],
-                    }
+                    },
+                    {
+                        "canonicalName": "업무 자동화",
+                        "scopeNote": "업무 절차 자동화",
+                        "aliases": ["프로세스 자동화"],
+                    },
+                    {
+                        "canonicalName": "데이터 분석",
+                        "scopeNote": "데이터 기반 분석",
+                        "aliases": ["데이터 애널리틱스"],
+                    },
                 ],
             }
             for index in range(document_count)

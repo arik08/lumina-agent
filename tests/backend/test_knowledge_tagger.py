@@ -51,7 +51,11 @@ async def test_mock_provider_returns_valid_korean_batch_tagging_json() -> None:
     )
 
     assert suggestions[0].tag_ids == ()
-    assert suggestions[0].new_tags[0].canonical_name == "AI 활용"
+    assert [item.canonical_name for item in suggestions[0].new_tags] == [
+        "AI 활용",
+        "업무 자동화",
+        "데이터 분석",
+    ]
     assert suggestions[0].new_tags[0].aliases == ["인공지능 활용"]
 
 
