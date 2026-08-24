@@ -117,11 +117,26 @@ export function UserInputRequestCard({
       className={`clarification-card${collapsing ? " is-collapsing" : ""}`}
       aria-label="AI 확인 질문"
     >
-      <header className="clarification-header">
-        <span className="clarification-title">
-          <MessageCircleQuestion size={19} aria-hidden="true" />
-          <strong>확인 질문</strong>
-        </span>
+      <header className={`clarification-header${pending ? "" : " is-collapsible"}`}>
+        {pending ? (
+          <span className="clarification-title">
+            <MessageCircleQuestion size={19} aria-hidden="true" />
+            <strong>확인 질문</strong>
+          </span>
+        ) : (
+          <button
+            className="clarification-header-collapse"
+            type="button"
+            aria-label="확인 질문 다시 접기"
+            aria-expanded="true"
+            onClick={() => setCompact(true)}
+          >
+            <span className="clarification-title">
+              <MessageCircleQuestion size={19} aria-hidden="true" />
+              <strong>확인 질문</strong>
+            </span>
+          </button>
+        )}
         {pending && (
           <span className="clarification-header-actions">
             <button

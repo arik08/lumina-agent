@@ -2323,6 +2323,10 @@ button.schedule-run-row:disabled { cursor: wait; opacity: 1; }
 .clarification-card.is-compact > svg:last-child { color: var(--muted); }
 .run-activity-timeline .clarification-card { width: 100%; margin: 3px 0 1px; }
 .clarification-header { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 13px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--cobalt-pale) 55%, var(--surface)); }
+.clarification-header.is-collapsible { padding: 0; }
+.clarification-header-collapse { display: flex; width: 100%; min-height: 47px; align-items: center; padding: 0 13px; border: 0; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.clarification-header-collapse:hover { background: color-mix(in srgb, var(--cobalt) 6%, transparent); }
+.clarification-header-collapse:focus-visible { outline-offset: -2px; }
 .clarification-title { display: inline-flex; align-items: center; gap: 8px; }
 .clarification-title > svg { color: var(--cobalt); }
 .clarification-title strong { font-size: 13.5px; }

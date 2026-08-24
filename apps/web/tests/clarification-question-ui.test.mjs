@@ -32,11 +32,15 @@ test("clarification card identifies questions and supports objective, custom, an
   assert.match(cardSource, /busy \? "보내는 중" : "보내기"/);
   assert.match(cardSource, /is-collapsing/);
   assert.match(cardSource, /답변한 확인 질문 다시 보기/);
+  assert.match(cardSource, /className="clarification-header-collapse"[\s\S]*aria-label="확인 질문 다시 접기"[\s\S]*aria-expanded="true"[\s\S]*onClick=\{\(\) => setCompact\(true\)\}/);
   assert.match(cardSource, /다시 접기/);
   assert.match(turnSource, /inputRequestActivity[\s\S]*<UserInputRequestCard/);
   assert.match(turnSource, /activity\.type === "input_request" \|\| groups\.length === 0/);
   assert.doesNotMatch(turnSource, /assistant-content">[\s\S]{0,300}inputRequests/);
   assert.match(stylesheet, /\.run-activity-timeline \.clarification-card \{[^}]*margin: 3px 0 1px/);
+  assert.match(stylesheet, /\.clarification-header-collapse \{[^}]*width: 100%;[^}]*cursor: pointer;/);
+  assert.match(stylesheet, /\.clarification-header-collapse:hover \{/);
+  assert.match(stylesheet, /\.clarification-header-collapse:focus-visible \{/);
   assert.match(stylesheet, /\.clarification-question:disabled :is\(button, input\) \{ opacity: 0\.78; \}/);
   assert.match(stylesheet, /\.clarification-footer \.clarification-submit \{[^}]*background: var\(--cobalt\);[^}]*color: var\(--surface\);/);
 });
