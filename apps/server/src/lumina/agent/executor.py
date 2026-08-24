@@ -3647,9 +3647,6 @@ class LocalRunExecutor:
             if previous_question_ids.intersection(question_ids):
                 call["input_request_error"] = "user_input_question_repeated"
                 return False
-            if len(previous_questions) + len(questions) > _MAX_USER_INPUT_QUESTIONS:
-                call["input_request_error"] = "user_input_question_limit_reached"
-                return False
             completed_batches = _checkpoint_completed_batches(run.snapshot_json)
             previous_checkpoint = read_tool_checkpoint(run.snapshot_json)
             post_batch_user_message_ids = (
@@ -5324,13 +5321,13 @@ class LocalRunExecutor:
             "three for ordinary clarification. Represent each independent fact or decision as a "
             "separate question object in "
             "that bundle; never pack multiple facts into one prompt or its free-form answer "
-            "instruction. For an explicit interview or intake, put every currently foreseeable "
-            "high-value question in the first bundle, up to the Run limit; do not intentionally "
-            "split known questions across repeated submit-and-wait cycles. Request another bundle "
-            "only if an answer reveals a material blocking question that could not reasonably have "
-            "been anticipated. "
-            "Across the Run, never exceed ten "
-            "questions or repeat a resolved question. Never use it for tool permission or "
+            "instruction. For an explicit interview or intake, put the current frontier of "
+            "independent high-value decisions in one bundle; do not intentionally split that "
+            "frontier across repeated submit-and-wait cycles. Request another bundle when earlier "
+            "answers unlock or materially reshape dependent decisions. Each bundle may contain at "
+            "most twenty questions, with no cumulative Run limit. Stop when the material decisions "
+            "are actionable, and never repeat "
+            "a resolved question. Never use it for tool permission or "
             "approval. If the user "
             "explicitly asks you to interview them, ask follow-up or reverse questions, gather "
             "facts or preferences through questions, or otherwise make questioning the requested "
@@ -6212,9 +6209,9 @@ class LocalRunExecutor:
                 "instruction": (
                     "Continue the same task using these answers. For answers marked "
                     "AI judgment, choose the most reasonable option and state any material "
-                    "assumption briefly. Do not ask the same question again. Do not request another "
-                    "question bundle unless these answers reveal a material blocking question that "
-                    "could not reasonably have been anticipated before the first bundle."
+                    "assumption briefly. Do not ask the same question again. Request another "
+                    "question bundle only when these answers unlock or materially reshape a "
+                    "dependent decision that still matters to an actionable result."
                 ),
             }
         analysis_depth = "auto"

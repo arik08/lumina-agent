@@ -1,0 +1,6 @@
+interface:
+  display_name: "Grill Me"
+  short_description: "계획과 아이디어의 허점을 집요하게 검증합니다"
+  default_prompt: "Use $grill-me to pressure-test this plan until we reach a confirmed shared understanding."
+policy:
+  allow_implicit_invocation: false

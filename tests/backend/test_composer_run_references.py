@@ -119,9 +119,9 @@ def test_skill_interface_can_disable_implicit_invocation() -> None:
     assert (
         _skill_allows_implicit_invocation(
             {
-                "SKILL.md": "---\nname: ask-me\ndescription: Ask questions.\n---\n",
+                "SKILL.md": "---\nname: grill-me\ndescription: Grill a plan.\n---\n",
                 "agents/openai.yaml": (
-                    "interface:\n  display_name: Ask Me\npolicy:\n"
+                    "interface:\n  display_name: Grill Me\npolicy:\n"
                     "  allow_implicit_invocation: false\n"
                 ),
             }

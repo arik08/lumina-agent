@@ -844,7 +844,7 @@ queued_message_promoted_to_run
 확인 질문은 일반 steer와 별도의 durable 입력 대기 흐름입니다.
 
 - 계정 설정은 `autonomous | balanced | confirming`이며 Run 생성 시 `clarification_mode`로 snapshot합니다.
-- Agent가 질문하기로 결정하면 visible assistant text에 질문을 흘리지 않고 `request_user_input` Tool을 단독 호출합니다. 독립적인 사실·결정은 각각 별도 질문으로 같은 묶음에 넣고 여러 사실을 한 질문에 합치지 않습니다. 인터뷰·접수에서는 현재 예상 가능한 고가치 질문을 첫 묶음에 모두 넣습니다. 묶음당 1~10개 질문과 각 2~4개 객관식 선택지를 허용하며, Run 전체 질문은 최대 10개이고 답변 전에는 합리적으로 예상할 수 없었던 차단 질문만 후속 묶음으로 요청합니다. UI는 직접 입력 선택지를 추가합니다.
+- Agent가 질문하기로 결정하면 visible assistant text에 질문을 흘리지 않고 `request_user_input` Tool을 단독 호출합니다. 독립적이고 현재 답할 수 있는 사실·결정은 각각 별도 질문으로 같은 묶음에 넣고 여러 사실을 한 질문에 합치지 않습니다. 인터뷰·접수에서는 현재 결정 frontier의 고가치 질문을 한 묶음에 넣고, 앞선 답변이 중요한 종속 결정을 열거나 실질적으로 바꾸면 후속 묶음으로 이어갑니다. 묶음당 1~20개 질문과 각 2~4개 객관식 선택지를 허용하며 Run 전체 누적 문항 제한은 없습니다. 이 수는 목표가 아니라 한 묶음의 상한이며, 결과에 중요한 결정만 묻고 실행 가능한 기준이 확보되면 종료합니다. UI는 직접 입력 선택지를 추가합니다.
 - Backend는 질문 묶음과 Tool checkpoint를 Run snapshot에 저장하고 `input_requested` event 뒤 상태를 `awaiting_input`으로 바꿉니다. 재시작·재접속에서도 질문 card와 이미 제출한 답을 복원합니다.
 - 사용자는 객관식, 직접 입력 또는 `AI가 판단`으로 답할 수 있습니다. `submit_user_input`은 모든 질문의 답과 중복을 검증하고 `input_submitted`를 저장한 뒤 Run을 Queue로 돌려 같은 checkpoint에서 재개합니다.
 - `awaiting_input` 동안 모델 작업 시간은 진행 중으로 누적하지 않고 pause·approval과 구분한 `Q&A` 상태를 표시합니다. Tool 승인은 이 흐름으로 대체하지 않습니다.
@@ -2570,7 +2570,7 @@ tests/evals     Agent quality, recovery and batch consistency
 - Tool Call마다 정확히 하나의 Tool Result
 - Session별 lock과 사용자별 병렬 한도
 - Queue action idempotency와 정확히 한 번 승격
-- `request_user_input` 단독 호출·원자적 질문 schema·독립 질문 묶음·Run 전체 10개 제한, `awaiting_input` snapshot/replay와 `submit_user_input` 후 정확한 checkpoint 재개
+- `request_user_input` 단독 호출·원자적 질문 schema·묶음당 20문항 상한·누적 제한 없는 종속 후속 라운드, `awaiting_input` snapshot/replay와 `submit_user_input` 후 정확한 checkpoint 재개
 - snapshot·replay의 누락·중복 없음
 - Conversation·설정·Help·Skill Draft·Artifact의 stale revision/CAS 거부와 no-op·explicit null validation
 - Attachment·Project File·Artifact storage write 뒤 commit·pointer 경합 실패 시 새 unreferenced blob만 정리하고 기존 version은 보존

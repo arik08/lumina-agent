@@ -158,11 +158,14 @@ def test_account_clarification_setting_and_durable_input_resume(
             provider_system_text
         )
         assert "never pack multiple facts into one prompt" in provider_system_text
-        assert "every currently foreseeable high-value question in the first bundle" in (
+        assert "current frontier of independent high-value decisions" in (
             provider_system_text
         )
-        assert "do not intentionally split known questions" in provider_system_text
+        assert "do not intentionally split that frontier" in provider_system_text
         assert "repeated submit-and-wait cycles" in provider_system_text
+        assert "with no cumulative Run limit" in (
+            provider_system_text
+        )
         assert "Personalized-guidance intake" in provider_system_text
         assert "generic list of conditional 'if X, then Y' advice" in (
             provider_system_text
@@ -268,7 +271,7 @@ def test_account_clarification_setting_and_durable_input_resume(
             } <= events
 
 
-def test_ten_question_bundle_can_be_submitted_in_one_action(
+def test_twenty_question_bundle_can_be_submitted_in_one_action(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -281,10 +284,10 @@ def test_ten_question_bundle_can_be_submitted_in_one_action(
                 {"id": "no", "label": "아니요"},
             ],
         }
-        for index in range(1, 11)
+        for index in range(1, 21)
     ]
 
-    def ten_question_provider(
+    def twenty_question_provider(
         _provider_id: str,
         *,
         wants_artifact: bool,
@@ -295,35 +298,35 @@ def test_ten_question_bundle_can_be_submitted_in_one_action(
             return MockProvider(
                 tool_call=MockToolCall(
                     name="request_user_input",
-                    call_id="ten-question-bundle",
+                    call_id="twenty-question-bundle",
                     arguments={"questions": questions},
                 )
             )
-        return MockProvider(text_chunks=("열 가지 답변을 반영했습니다.",))
+        return MockProvider(text_chunks=("스무 가지 답변을 반영했습니다.",))
 
-    monkeypatch.setattr(local_run_executor, "_provider", ten_question_provider)
+    monkeypatch.setattr(local_run_executor, "_provider", twenty_question_provider)
     with TestClient(create_app(_settings(tmp_path))) as client:
         headers = _login(client)
         project_id = client.get("/api/projects").json()[0]["id"]
         conversation = client.post(
             "/api/conversations",
             headers=headers,
-            json={"projectId": project_id, "title": "열 문항 제출 검증"},
+            json={"projectId": project_id, "title": "스무 문항 제출 검증"},
         )
         started = client.post(
             f"/api/conversations/{conversation.json()['id']}/runs",
-            headers={**headers, "Idempotency-Key": "ten-question-start"},
+            headers={**headers, "Idempotency-Key": "twenty-question-start"},
             json={"message": {"text": "인터뷰를 시작해 주세요."}},
         )
         assert started.status_code == 202, started.text
         run_id = started.json()["run"]["runId"]
         waiting = _wait_for_status(client, run_id, {"awaiting_input"})
         request = waiting["inputRequests"][0]
-        assert len(request["questions"]) == 10
+        assert len(request["questions"]) == 20
 
         submitted = client.post(
             f"/api/runs/{run_id}/actions",
-            headers={**headers, "Idempotency-Key": "ten-question-submit"},
+            headers={**headers, "Idempotency-Key": "twenty-question-submit"},
             json={
                 "type": "submit_user_input",
                 "inputRequestId": request["id"],
@@ -338,7 +341,7 @@ def test_ten_question_bundle_can_be_submitted_in_one_action(
         assert completed["inputRequests"][0]["status"] == "submitted"
 
 
-def test_explicit_interview_can_resume_into_a_second_question_card(
+def test_explicit_interview_supports_dependent_rounds_without_cumulative_cap(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -361,13 +364,14 @@ def test_explicit_interview_can_resume_into_a_second_question_card(
                     arguments={
                         "questions": [
                             {
-                                "id": "goal",
-                                "prompt": "가장 중요한 목표는 무엇인가요?",
+                                "id": f"goal_{index}",
+                                "prompt": f"{index}번 목표의 우선순위는 무엇인가요?",
                                 "options": [
                                     {"id": "speed", "label": "빠른 실행"},
                                     {"id": "quality", "label": "높은 완성도"},
                                 ],
                             }
+                            for index in range(1, 21)
                         ]
                     },
                 )
@@ -380,13 +384,14 @@ def test_explicit_interview_can_resume_into_a_second_question_card(
                     arguments={
                         "questions": [
                             {
-                                "id": "quality_bar",
-                                "prompt": "완성도를 무엇으로 판단할까요?",
+                                "id": f"quality_bar_{index}",
+                                "prompt": f"{index}번 목표의 완성도를 무엇으로 판단할까요?",
                                 "options": [
                                     {"id": "review", "label": "검토 통과"},
                                     {"id": "test", "label": "테스트 통과"},
                                 ],
                             }
+                            for index in range(1, 2)
                         ]
                     },
                 )
@@ -405,7 +410,7 @@ def test_explicit_interview_can_resume_into_a_second_question_card(
         started = client.post(
             f"/api/conversations/{conversation.json()['id']}/runs",
             headers={**headers, "Idempotency-Key": "adaptive-interview-start"},
-            json={"message": {"text": "$ask-me로 계획을 구체화해 주세요."}},
+            json={"message": {"text": "$grill-me로 계획을 압박 검증해 주세요."}},
         )
         assert started.status_code == 202, started.text
         run_id = started.json()["run"]["runId"]
@@ -418,7 +423,10 @@ def test_explicit_interview_can_resume_into_a_second_question_card(
             json={
                 "type": "submit_user_input",
                 "inputRequestId": first_request["id"],
-                "answers": [{"questionId": "goal", "optionId": "quality"}],
+                "answers": [
+                    {"questionId": f"goal_{index}", "optionId": "quality"}
+                    for index in range(1, 21)
+                ],
             },
         )
         assert first_submit.status_code == 200, first_submit.text
@@ -428,14 +436,17 @@ def test_explicit_interview_can_resume_into_a_second_question_card(
         assert second_wait["inputRequests"][0]["status"] == "submitted"
         second_request = second_wait["inputRequests"][1]
         assert second_request["status"] == "pending"
-        assert second_request["questions"][0]["id"] == "quality_bar"
+        assert second_request["questions"][0]["id"] == "quality_bar_1"
         second_submit = client.post(
             f"/api/runs/{run_id}/actions",
             headers={**headers, "Idempotency-Key": "adaptive-interview-quality"},
             json={
                 "type": "submit_user_input",
                 "inputRequestId": second_request["id"],
-                "answers": [{"questionId": "quality_bar", "optionId": "test"}],
+                "answers": [
+                    {"questionId": f"quality_bar_{index}", "optionId": "test"}
+                    for index in range(1, 2)
+                ],
             },
         )
         assert second_submit.status_code == 200, second_submit.text
@@ -445,6 +456,9 @@ def test_explicit_interview_can_resume_into_a_second_question_card(
             "submitted",
             "submitted",
         ]
+        assert sum(
+            len(item["questions"]) for item in completed["inputRequests"]
+        ) == 21
         input_activities = [
             activity
             for activity in completed["activities"]

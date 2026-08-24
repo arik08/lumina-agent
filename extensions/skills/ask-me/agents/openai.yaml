@@ -1,6 +1,0 @@
-interface:
-  display_name: "Ask Me"
-  short_description: "질의응답으로 의도를 구체화하고 결과까지 검증합니다"
-  default_prompt: "Use $ask-me to question me as deeply as needed, make this task concrete, then execute and verify it."
-policy:
-  allow_implicit_invocation: false
