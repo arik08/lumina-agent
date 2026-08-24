@@ -110,30 +110,21 @@ test("tall Mermaid workflows keep readable geometry inside a bounded scroll surf
   assert.doesNotMatch(globalStyles, /\.mermaid-diagram svg/);
 });
 
-test("chat Mermaid cards provide button-only zoom controls beside the expand button", () => {
-  assert.match(rendererSource, /const \[zoom, setZoom\] = useState\(1\)/);
-  assert.match(rendererSource, /const \[initialZoom, setInitialZoom\] = useState\(1\)/);
-  assert.match(rendererSource, /setZoom\(clamp\(next, 0\.3, 2\)\)/);
+test("chat Mermaid cards show only a bordered diagram and its expand button", () => {
   assert.match(rendererSource, /baseWidthRef\.current = naturalWidth/);
   assert.match(rendererSource, /const fitZoom = Math\.min\(widthFit, heightFit, 1\)/);
   assert.match(rendererSource, /expanded[\s\S]*?clamp\(fitZoom, 0\.3, 1\)/);
   assert.match(rendererSource, /clamp\(Math\.floor\(fitZoom \* 10\) \/ 10, 0\.7, 1\)/);
-  assert.match(rendererSource, /aria-label="Mermaid 다이어그램 축소"[\s\S]*?zoom - 0\.2/);
-  assert.match(rendererSource, /aria-label="Mermaid 다이어그램 배율 초기화"[\s\S]*?setZoom\(initialZoom\)/);
-  assert.match(rendererSource, /aria-label="Mermaid 다이어그램 확대"[\s\S]*?zoom \+ 0\.2/);
-  assert.match(rendererSource, /<MermaidSurface source=\{source\} zoom=\{zoom\} onInitialFit=\{applyInitialFit\} \/>/);
-  assert.match(rendererSource, /className="interactive-response-expand-label" aria-label="Mermaid 다이어그램 크게 보기" onClick=\{\(\) => setExpanded\(true\)\}>Mermaid<\/button>/);
+  assert.match(rendererSource, /<section className="interactive-response-block mermaid-diagram"[\s\S]*?<button type="button" className="interactive-response-expand-icon"[\s\S]*?<MermaidSurface source=\{source\} \/>/);
+  assert.doesNotMatch(rendererSource, /className="interactive-response-expand-label"/);
+  assert.doesNotMatch(rendererSource, /className="mermaid-inline-zoom-controls"/);
   assert.match(rendererSource, /renderedSvg\.style\.maxWidth = "none"/);
   assert.match(rendererSource, /const positionAtFlowStart = \(surface: HTMLDivElement, renderedSvg: SVGSVGElement\)/);
   assert.match(rendererSource, /source\.match\(\/\^\\s\*\(\?:flowchart\|graph\)\\s\+\(TB\|TD\|BT\|LR\|RL\)\\b\/im\)/);
   assert.match(rendererSource, /querySelectorAll<SVGGraphicsElement>\("g\.node"\)/);
   assert.match(rendererSource, /positionAtFlowStart\(surface, renderedSvg\)/);
   assert.doesNotMatch(rendererSource, /surface\.scrollLeft = Math\.max\(\(surface\.scrollWidth - surface\.clientWidth\) \/ 2, 0\)/);
-  assert.doesNotMatch(rendererSource, /<MermaidSurface source=\{source\} zoom=\{zoom\}[^>]*onWheel/);
-  assert.match(rendererStyles, /\.mermaid-inline-zoom-controls \{[\s\S]*?border-right: 1px solid var\(--line\);/);
-  assert.match(rendererStyles, /\.interactive-response-toolbar button\.mermaid-inline-zoom-value \{[^}]*width: 3em;[^}]*flex: 0 0 3em;[^}]*white-space: nowrap;/s);
-  assert.match(rendererStyles, /\.interactive-response-toolbar \.interactive-response-expand-label \{[\s\S]*?flex: 1;[\s\S]*?justify-content: flex-start;[\s\S]*?cursor: pointer;/);
-  assert.match(rendererStyles, /\.interactive-response-toolbar \.interactive-response-expand-label:hover \{[^}]*border-color: transparent;[^}]*background: transparent;[^}]*\}/);
+  assert.match(rendererStyles, /\.mermaid-diagram > \.interactive-response-expand-icon \{[^}]*position: absolute;[^}]*top: 7px;[^}]*right: 7px;[^}]*border-color: var\(--line\);[^}]*background: var\(--surface\);/s);
 });
 
 test("Mermaid and structured charts expose a zoomable, pannable dialog", () => {

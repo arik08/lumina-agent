@@ -480,33 +480,12 @@ export async function renderMermaidSvg(source: string) {
 
 export function MermaidDiagram({ source }: { source: string }) {
   const [expanded, setExpanded] = useState(false);
-  const [zoom, setZoom] = useState(1);
-  const [initialZoom, setInitialZoom] = useState(1);
-  const changeZoom = (next: number) => setZoom(clamp(next, 0.3, 2));
-  const applyInitialFit = useCallback((next: number) => {
-    setInitialZoom(next);
-    setZoom(next);
-  }, []);
-  useEffect(() => {
-    setInitialZoom(1);
-    setZoom(1);
-  }, [source]);
   return (
     <>
       <section className="interactive-response-block mermaid-diagram" aria-label="Mermaid 다이어그램">
-        <div className="interactive-response-toolbar">
-          <button type="button" className="interactive-response-expand-label" aria-label="Mermaid 다이어그램 크게 보기" onClick={() => setExpanded(true)}>Mermaid</button>
-          <div className="interactive-response-toolbar-actions">
-            <div className="mermaid-inline-zoom-controls" aria-label="Mermaid 다이어그램 배율 조절">
-              <button type="button" aria-label="Mermaid 다이어그램 축소" data-tooltip="축소" disabled={zoom <= 0.3} onClick={() => changeZoom(zoom - 0.2)}><Minus size={15} /></button>
-              <button type="button" className="mermaid-inline-zoom-value" aria-label="Mermaid 다이어그램 배율 초기화" data-tooltip="초기 배율로" onClick={() => setZoom(initialZoom)}>{Math.round(zoom * 100)}%</button>
-              <button type="button" aria-label="Mermaid 다이어그램 확대" data-tooltip="확대" disabled={zoom >= 2} onClick={() => changeZoom(zoom + 0.2)}><Plus size={15} /></button>
-            </div>
-            <button type="button" className="interactive-response-expand-icon" aria-label="Mermaid 다이어그램 크게 보기" data-tooltip="크게 보기" onClick={() => setExpanded(true)}><Maximize2 size={15} /></button>
-          </div>
-        </div>
+        <button type="button" className="interactive-response-expand-icon" aria-label="Mermaid 다이어그램 크게 보기" data-tooltip="크게 보기" onClick={() => setExpanded(true)}><Maximize2 size={15} /></button>
         <div className="interactive-response-content" onDoubleClick={() => setExpanded(true)}>
-          <MermaidSurface source={source} zoom={zoom} onInitialFit={applyInitialFit} />
+          <MermaidSurface source={source} />
         </div>
       </section>
       <ZoomViewer title="Mermaid" open={expanded} onClose={() => setExpanded(false)}>

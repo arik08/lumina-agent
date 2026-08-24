@@ -31,29 +31,6 @@
 
 .interactive-chart .interactive-response-toolbar { padding-left: 12px; }
 
-.interactive-response-toolbar-actions,
-.mermaid-inline-zoom-controls {
-  display: flex;
-  align-items: center;
-}
-
-.interactive-response-toolbar-actions { gap: 3px; }
-
-.mermaid-inline-zoom-controls {
-  gap: 1px;
-  padding-right: 4px;
-  border-right: 1px solid var(--line);
-}
-
-.interactive-response-toolbar button.mermaid-inline-zoom-value {
-  width: 3em;
-  flex: 0 0 3em;
-  color: var(--muted);
-  font-size: 10.5px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
 .interactive-response-toolbar button:disabled {
   opacity: 0.35;
   pointer-events: none;
@@ -82,33 +59,22 @@
   color: var(--cobalt);
 }
 
-.interactive-response-toolbar .interactive-response-expand-label {
-  align-self: stretch;
-  flex: 1;
-  width: auto;
-  height: auto;
-  justify-content: flex-start;
-  padding: 0 11px;
-  border-radius: 0;
-  font-size: 11.5px;
-  font-weight: 650;
-  cursor: pointer;
-}
-
-.interactive-response-toolbar .interactive-response-expand-label:hover {
-  border-color: transparent;
-  background: transparent;
-}
-
-.interactive-response-expand-label:focus-visible {
-  position: relative;
-  z-index: 1;
+.interactive-response-expand-icon:focus-visible {
   outline: 2px solid var(--cobalt);
-  outline-offset: -2px;
+  outline-offset: 1px;
 }
 
 .interactive-response-content {
   padding: 12px;
+}
+
+.mermaid-diagram > .interactive-response-expand-icon {
+  position: absolute;
+  z-index: 2;
+  top: 7px;
+  right: 7px;
+  border-color: var(--line);
+  background: var(--surface);
 }
 
 .mermaid-surface {
