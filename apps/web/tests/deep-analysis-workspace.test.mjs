@@ -22,28 +22,24 @@ const eventStorePath = new URL(
   import.meta.url,
 );
 
-test("workflow layout orients vertical Edges by stable Node sequence", async () => {
-  const { orientWorkflowSequenceEdges, workflowSequenceEdgeEndpoints } = await import(layoutPath);
+test("workflow layout preserves the explicit Edge direction regardless of Node sequence", async () => {
+  const { normalizeWorkflowSequenceEdges } = await import(layoutPath);
   const nodes = [
     { nodeKey: "N010", sequence: 0, positionX: 272, positionY: 520 },
     { nodeKey: "N011", sequence: 1, positionX: 60, positionY: 250 },
     { nodeKey: "N012", sequence: 2, positionX: 272, positionY: 400 },
   ];
-  assert.deepEqual(workflowSequenceEdgeEndpoints(nodes[1], nodes[0]), {
-    sourceNodeKey: "N010",
-    targetNodeKey: "N011",
-  });
 
   const workflow = {
     nodes,
     edges: [
       { id: "reverse", sourceNodeKey: "N011", targetNodeKey: "N010", edgeType: "sequence" },
-      { id: "duplicate", sourceNodeKey: "N010", targetNodeKey: "N011", edgeType: "sequence" },
+      { id: "duplicate", sourceNodeKey: "N011", targetNodeKey: "N010", edgeType: "sequence" },
       { id: "loop", sourceNodeKey: "N012", targetNodeKey: "N010", edgeType: "loop_back" },
     ],
   };
-  assert.deepEqual(orientWorkflowSequenceEdges(workflow).edges, [
-    { id: "reverse", sourceNodeKey: "N010", targetNodeKey: "N011", edgeType: "sequence" },
+  assert.deepEqual(normalizeWorkflowSequenceEdges(workflow).edges, [
+    { id: "reverse", sourceNodeKey: "N011", targetNodeKey: "N010", edgeType: "sequence" },
     { id: "loop", sourceNodeKey: "N012", targetNodeKey: "N010", edgeType: "loop_back" },
   ]);
 });
@@ -216,7 +212,7 @@ test("Workflow Canvas connects Mission only to the first workflow start Node", a
   assert.match(view, /fitNodesToViewport\(\[[\s\S]*?workflowMissionRoot\.position[\s\S]*?shownWorkflow\?\.nodes/);
 });
 
-test("newly added isolated Nodes keep their position and do not affect connected layout", async () => {
+test("newly added isolated Nodes cascade as an overlapping stack and do not affect connected layout", async () => {
   const view = await readFile(viewPath, "utf8");
   const addDraftNode = view.slice(
     view.indexOf("function addDraftNode()"),
@@ -230,8 +226,11 @@ test("newly added isolated Nodes keep their position and do not affect connected
   assert.match(view, /if \(!layoutNodeKeys\.has\(node\.nodeKey\)\) continue/);
   assert.match(view, /if \(!layoutNodeKeys\.has\(node\.nodeKey\)\) return node/);
   assert.match(view, /setWorkflowDraft\(\{ \.\.\.workflowDraft, nodes: \[\.\.\.workflowDraft\.nodes, node\] \}\)/);
+  assert.match(view, /const workflowDraftCascadeOffset = \{ x: 26, y: 43 \} as const/);
+  assert.match(addDraftNode, /lastAddedNode\.positionX \+ workflowDraftCascadeOffset\.x/);
+  assert.match(addDraftNode, /lastAddedNode\.positionY \+ workflowDraftCascadeOffset\.y/);
   assert.match(view, /const occupiedPositions = \[\.\.\.workflowDraft\.nodes, workflowMissionRootPosition\]/);
-  assert.match(view, /while \(occupiedPositions\.some\(/);
+  assert.match(addDraftNode, /if \(!lastAddedNode\) \{[\s\S]*?while \(occupiedPositions\.some\(/);
   assert.doesNotMatch(addDraftNode, /setCanvasOffset\(/);
   assert.match(view, /nodes: current\.nodes\.map\(\(node\) => node\.nodeKey === pending\.nodeKey[\s\S]*?: node\)/);
 });
@@ -245,11 +244,11 @@ test("Node auto-arrange explicitly lays out isolated Nodes without creating Edge
   );
 
   assert.match(view, /function arrangeWorkflowTopDown\([\s\S]*?includeIsolatedNodes = false/);
-  assert.match(layout, /function orientWorkflowSequenceEdges\(workflow: DeepAnalysisWorkflowRevision\)/);
+  assert.match(layout, /function normalizeWorkflowSequenceEdges\(workflow: DeepAnalysisWorkflowRevision\)/);
   assert.match(layout, /if \(edge\.edgeType === "loop_back"\) return \[edge\]/);
-  assert.match(layout, /workflowSequenceEdgeEndpoints\(source, target\)/);
+  assert.match(layout, /const pairKey = `\$\{edge\.sourceNodeKey\}\\u0000\$\{edge\.targetNodeKey\}`/);
   assert.match(layout, /if \(sequencePairs\.has\(pairKey\)\) return \[\]/);
-  assert.match(view, /const arranged = arrangeWorkflowTopDown\(orientWorkflowSequenceEdges\(draft\), true\)/);
+  assert.match(view, /const arranged = arrangeWorkflowTopDown\(normalizeWorkflowSequenceEdges\(draft\), true\)/);
   assert.match(view, /fitNodesToViewport\(\[workflowMissionRootPosition, \.\.\.arranged\.nodes\]\)/);
   assert.match(view, /const workflowLayerTop = workflowMissionRootPosition\.positionY \+ workflowNodeHeight \+ workflowLayerGap/);
   assert.match(view, /positionX: workflowMissionRootPosition\.positionX \+ \(workflowNodeWidth - layerWidth\) \/ 2/);
@@ -426,7 +425,8 @@ test("Workflow connections keep sequence edges vertical and bounded loops latera
   assert.match(view, /function workflowConnectionType\([\s\S]*?if \(sourceIsLateral && targetIsLateral\) return "loop_back"/);
   assert.match(view, /if \(!sourceIsLateral && !targetIsLateral\) return "sequence"/);
   assert.match(view, /const edgeType = workflowConnectionType\(connectionDraft\.sourceSide, targetSide\)/);
-  assert.match(layout, /const sourceComesFirst = source\.sequence !== target\.sequence/);
+  assert.doesNotMatch(layout, /source\.sequence|target\.sequence|sourceComesFirst/);
+  assert.match(layout, /const pairKey = `\$\{edge\.sourceNodeKey\}\\u0000\$\{edge\.targetNodeKey\}`/);
   assert.match(view, /edgeType,\r?\n\s+\},/);
   assert.match(view, /const workflowConnectionHitRadius = 52/);
   assert.match(view, /function workflowConnectionTargetAtPoint/);

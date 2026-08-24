@@ -59,7 +59,7 @@ import { SelectMenu } from "../../components/SelectMenu";
 import { useCachedViewState } from "../../view-data-cache";
 import { useSharedNow } from "../../shared-clock";
 import { useFixedVirtualList } from "../../use-fixed-virtual-list";
-import { orientWorkflowSequenceEdges } from "./workflow-layout";
+import { normalizeWorkflowSequenceEdges } from "./workflow-layout";
 import {
   appendMissionEvent,
   setMissionEvents,
@@ -363,6 +363,7 @@ const workflowLayerGap = 74;
 const workflowMissionRootPosition = { positionX: 272, positionY: 88 } as const;
 const workflowLayerTop = workflowMissionRootPosition.positionY + workflowNodeHeight + workflowLayerGap;
 const workflowSiblingGap = 36;
+const workflowDraftCascadeOffset = { x: 26, y: 43 } as const;
 const workflowConnectionHitRadius = 52;
 const defaultInspectorWidth = 760;
 const minimumInspectorWidth = 420;
@@ -1713,7 +1714,7 @@ export function DeepAnalysisView({
     setError(null);
     try {
       const draft = workflowDraft ?? await api.deepAnalysis.createDraft(mission.id, mission.revision);
-      const arranged = arrangeWorkflowTopDown(orientWorkflowSequenceEdges(draft), true);
+      const arranged = arrangeWorkflowTopDown(normalizeWorkflowSequenceEdges(draft), true);
       setWorkflowDraft(arranged);
       setWorkflowDraftDirty(true);
       setEditingWorkflow(true);
@@ -2069,17 +2070,17 @@ export function DeepAnalysisView({
     const verticalPlacementStep = 118;
     const centeredPositionX = (viewport.clientWidth / 2 - canvasOffset.x) / canvasScale - workflowNodeWidth / 2;
     const centeredPositionY = (viewport.clientHeight / 2 - canvasOffset.y) / canvasScale - 43;
-    const minimumPositionX = centeredPositionX;
-    const cascadeOffset = 32;
     const lastAddedNode = [...workflowDraft.nodes].reverse().find((node) => node.id.startsWith("draft:"));
-    let positionX = Math.max(lastAddedNode ? lastAddedNode.positionX + cascadeOffset : centeredPositionX, minimumPositionX);
-    let positionY = lastAddedNode ? lastAddedNode.positionY + cascadeOffset : centeredPositionY;
+    let positionX = lastAddedNode ? lastAddedNode.positionX + workflowDraftCascadeOffset.x : centeredPositionX;
+    let positionY = lastAddedNode ? lastAddedNode.positionY + workflowDraftCascadeOffset.y : centeredPositionY;
     const occupiedPositions = [...workflowDraft.nodes, workflowMissionRootPosition];
-    while (occupiedPositions.some(
-      (node) => Math.abs(node.positionX - positionX) < workflowNodeWidth + 24
-        && Math.abs(node.positionY - positionY) < workflowNodeHeight + 24,
-    )) {
-      positionY += verticalPlacementStep;
+    if (!lastAddedNode) {
+      while (occupiedPositions.some(
+        (node) => Math.abs(node.positionX - positionX) < workflowNodeWidth + 24
+          && Math.abs(node.positionY - positionY) < workflowNodeHeight + 24,
+      )) {
+        positionY += verticalPlacementStep;
+      }
     }
     const node: DeepAnalysisWorkflowNode = {
       id: `draft:${nodeKey}`,
