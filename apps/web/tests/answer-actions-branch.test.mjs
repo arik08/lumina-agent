@@ -22,14 +22,14 @@ test("answer actions place usage first and branch immediately before share", () 
   assert.match(actions.slice(branchIndex, shareIndex), /BranchFromHereIcon size=\{16\}/);
 });
 
-test("answer actions and completion time react only to their own hover areas", () => {
+test("each answer action and the completion time react only to their own hover or focus", () => {
   assert.match(stylesheet, /\.final-answer-meta \{[^}]*--answer-meta-idle-color: color-mix\(in srgb, var\(--faint\) 55%, transparent\);/s);
   assert.match(stylesheet, /\.answer-actions button \{[^}]*color: var\(--answer-meta-idle-color\);[^}]*transition: color 160ms/s);
   assert.match(stylesheet, /\.answer-completed-time \{[^}]*color: var\(--answer-meta-idle-color\);[^}]*transition: color 160ms/s);
-  assert.match(stylesheet, /\.answer-actions:where\(:hover, :focus-within\) button \{ color: var\(--muted\); \}/);
+  assert.doesNotMatch(stylesheet, /\.answer-actions:where\(:hover, :focus-within\) button/);
   assert.match(stylesheet, /\.answer-completed-time:hover \{ color: var\(--muted\); \}/);
   assert.doesNotMatch(stylesheet, /\.final-answer-meta:where\(:hover, :focus-within\) \.answer-(?:actions|completed-time)/);
-  assert.match(stylesheet, /\.answer-actions button:hover \{[^}]*color: var\(--ink\);/s);
+  assert.match(stylesheet, /\.answer-actions button:hover,\s*\.answer-actions button:focus-visible \{[^}]*color: var\(--ink\);/s);
 });
 
 test("branch icon uses the attached split-arrow shape and every share action uses the rotated shared icon", () => {

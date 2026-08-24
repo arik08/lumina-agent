@@ -2675,8 +2675,8 @@ button.schedule-run-row:disabled { cursor: wait; opacity: 1; }
 .research-verification-warning { margin-top: 10px; padding: 9px 11px; border: 1px solid var(--danger-border); border-radius: var(--radius-control); background: var(--danger-surface); color: var(--danger); font-size: 12.5px; line-height: 1.5; }
 .answer-actions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 1px; }
 .answer-actions button { display: inline-flex; width: 30px; height: 30px; align-items: center; justify-content: center; border: 0; border-radius: 5px; background: transparent; color: var(--answer-meta-idle-color); cursor: pointer; transition: color 160ms cubic-bezier(.22, 1, .36, 1); }
-.answer-actions:where(:hover, :focus-within) button { color: var(--muted); }
-.answer-actions button:hover { background: #eff0f2; color: var(--ink); }
+.answer-actions button:hover,
+.answer-actions button:focus-visible { background: #eff0f2; color: var(--ink); }
 .answer-actions button.is-active { background: var(--surface-soft); color: var(--cobalt); }
 .answer-actions .knowledge-save-control.is-saving,
 .answer-actions .knowledge-save-control.is-saving:hover { background: transparent; color: var(--success); opacity: 1; }
@@ -3478,6 +3478,7 @@ button.schedule-run-row:disabled { cursor: wait; opacity: 1; }
 .theme-dark .tool-message pre { color: #cbd1d9; }
 .theme-dark .tool-message-actions button:hover,
 .theme-dark .answer-actions button:hover,
+.theme-dark .answer-actions button:focus-visible,
 .theme-dark .composer-footer button:hover,
 .theme-dark .progress-trigger:hover { background: #292d34; color: var(--ink); }
 .theme-dark .answer-actions .answer-rating-control.is-like,
