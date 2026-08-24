@@ -119,6 +119,19 @@ def resolve_inline_citations(
                     int(provider_source["citationOrdinal"]),
                 )
             )
+    for position, end, source_id in _text_source_occurrences(
+        text, normalized_sources
+    ):
+        source = source_by_id[source_id]
+        occurrences.append(
+            (
+                position,
+                end,
+                text[position:end],
+                source_id,
+                int(source["citationOrdinal"]),
+            )
+        )
 
     citations: list[dict[str, Any]] = []
     seen_spans: set[tuple[int, int, str]] = set()
@@ -173,9 +186,44 @@ def resolve_inline_citations(
     return {"citations": citations, "sources": normalized_sources}
 
 
+def _text_source_occurrences(
+    text: str, sources: Sequence[Mapping[str, Any]]
+) -> list[tuple[int, int, str]]:
+    source_by_url = _source_ids_by_url(sources)
+    occurrences: list[tuple[int, int, str]] = []
+    for match in _ARTIFACT_URL_RE.finditer(text):
+        candidate = _matched_url(match.group(0))
+        try:
+            matched_source_id = source_by_url.get(_url_match_key(candidate))
+        except WebToolError:
+            continue
+        if matched_source_id:
+            occurrences.append((match.start(), match.start() + len(candidate), matched_source_id))
+    return occurrences
+
+
 def _artifact_source_occurrences(
     reference_texts: Sequence[str], sources: Sequence[Mapping[str, Any]]
 ) -> list[tuple[int, int, str]]:
+    source_by_url = _source_ids_by_url(sources)
+
+    occurrences: list[tuple[int, int, str]] = []
+    for document_index, document in enumerate(reference_texts):
+        for match in _ARTIFACT_URL_RE.finditer(document):
+            candidate = _matched_url(match.group(0))
+            try:
+                normalized_url = _url_match_key(candidate)
+            except WebToolError:
+                continue
+            matched_source_id = source_by_url.get(normalized_url)
+            if matched_source_id:
+                occurrences.append((document_index, match.start(), matched_source_id))
+    return occurrences
+
+
+def _source_ids_by_url(
+    sources: Sequence[Mapping[str, Any]],
+) -> dict[str, str]:
     source_by_url: dict[str, str] = {}
     for source in sources:
         source_id = str(source.get("sourceId") or "")
@@ -187,23 +235,11 @@ def _artifact_source_occurrences(
                 source_by_url.setdefault(_url_match_key(candidate), source_id)
             except WebToolError:
                 continue
+    return source_by_url
 
-    occurrences: list[tuple[int, int, str]] = []
-    for document_index, document in enumerate(reference_texts):
-        for match in _ARTIFACT_URL_RE.finditer(document):
-            candidate = (
-                unescape(match.group(0))
-                .split("<", 1)[0]
-                .rstrip(".,;:!?，。；：！？")
-            )
-            try:
-                normalized_url = _url_match_key(candidate)
-            except WebToolError:
-                continue
-            matched_source_id = source_by_url.get(normalized_url)
-            if matched_source_id:
-                occurrences.append((document_index, match.start(), matched_source_id))
-    return occurrences
+
+def _matched_url(value: str) -> str:
+    return unescape(value).split("<", 1)[0].rstrip(".,;:!?，。；：！？")
 
 
 def _url_match_key(url: str) -> str:

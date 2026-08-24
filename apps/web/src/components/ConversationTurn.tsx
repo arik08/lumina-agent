@@ -1352,6 +1352,17 @@ function citationLinkUrl(sourceId: string) {
   return `#lumina-source=${encodeURIComponent(sourceId)}`;
 }
 
+function citationUrlKey(value: string) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    url.hash = "";
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
 function splitCitationText(value: string, targets: CitationTarget[]): PhrasingContent[] | null {
   const citedTargets = targets.filter((target) => target.cited);
   if (citedTargets.length === 0) return null;
@@ -1405,8 +1416,8 @@ function CitationMarker({ target }: { target: CitationTarget }) {
   const safeUrl = defaultUrlTransform(rawUrl);
   const tooltip = (
     <GlobalTooltipLayer anchor={markerRef.current} className="citation-tooltip" id={tooltipId} open={tooltipOpen}>
-      <strong>{target.source.title || target.source.domain || `출처 ${target.markerNumber}`}</strong>
-      <span>{rawUrl || "URL 없음"}</span>
+      <strong>{target.source.domain || target.source.title || `출처 ${target.markerNumber}`}</strong>
+      <span>{target.source.title || rawUrl || "출처 정보 없음"}</span>
       <q>{target.source.verbatimExcerpt || "근거 문장 없음"}</q>
     </GlobalTooltipLayer>
   );
@@ -1629,6 +1640,16 @@ const MemoizedMarkdownChunk = memo(function MarkdownChunk({
 }) {
   const targets = useMemo(() => citationTargets(text, sources, citations), [citations, sources, text]);
   const targetById = useMemo(() => new Map(targets.map((target) => [target.source.sourceId, target])), [targets]);
+  const targetByUrl = useMemo(() => {
+    const entries: Array<[string, CitationTarget]> = [];
+    targets.forEach((target) => {
+      [target.source.normalizedUrl, target.source.originalUrl].forEach((value) => {
+        const key = citationUrlKey(value);
+        if (key) entries.push([key, target]);
+      });
+    });
+    return new Map(entries);
+  }, [targets]);
   const remarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
     () => leadingEdge
       ? [remarkGfm, [remarkCitationLinks, { targets }], remarkStreamingLeadingEdge]
@@ -1646,6 +1667,8 @@ const MemoizedMarkdownChunk = memo(function MarkdownChunk({
           return <span>{children}</span>;
         }
       }
+      const citationTarget = href ? targetByUrl.get(citationUrlKey(href) ?? "") : undefined;
+      if (citationTarget) return <CitationMarker target={citationTarget} />;
       const safeHref = href ? defaultUrlTransform(href) : "";
       if (!safeHref) return <span>{children}</span>;
       if (safeHref.startsWith("#")) return <a href={safeHref}>{children}</a>;
@@ -1660,7 +1683,7 @@ const MemoizedMarkdownChunk = memo(function MarkdownChunk({
     table: ({ children }) => <div className="markdown-table-scroll"><table>{children}</table></div>,
     code: markdownCodeComponent,
     pre: markdownPreComponent,
-  }), [targetById]);
+  }), [targetById, targetByUrl]);
 
   return (
     <ReactMarkdown skipHtml remarkPlugins={remarkPlugins} components={components} urlTransform={defaultUrlTransform}>

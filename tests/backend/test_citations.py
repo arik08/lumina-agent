@@ -39,6 +39,19 @@ def test_resolves_source_id_marker_without_fabricating_unknown_source() -> None:
     assert payload["sources"][2]["citationStatus"] == "cited"
 
 
+def test_resolves_markdown_source_links_as_inline_citations() -> None:
+    payload = resolve_inline_citations(
+        "철강 전망입니다.[.worldsteel](https://a.test) 일반 링크는 "
+        "[그대로](https://unrelated.test) 둡니다.",
+        _sources(),
+    )
+
+    assert [item["sourceId"] for item in payload["citations"]] == ["source-a"]
+    assert payload["citations"][0]["markerNumber"] == 1
+    assert payload["sources"][0]["citationStatus"] == "cited"
+    assert payload["sources"][1]["citationStatus"] == "reference_only"
+
+
 def test_normalizes_provider_native_citation_tokens_before_resolution() -> None:
     text = (
         "첫 주장. \ue200cite\ue202source-c\ue202missing\ue201 "
