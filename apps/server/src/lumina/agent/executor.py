@@ -5568,7 +5568,7 @@ class LocalRunExecutor:
             stable_system_parts.append(
                 "Skill editing contract: A Skill is not a generic file Artifact. When the user "
                 "asks to modify an existing Skill, inspect its current package under "
-                "extensions/skills/<slug>/, then call `create_skill` with the existing slug and "
+                "extensions/skills/POSCO_Skill/<slug>/, then call `create_skill` with the existing slug and "
                 "the complete updated package. This updates the owner's active Working Draft "
                 "immediately for subsequent Runs. Do not create a new slug, `write_file` "
                 "Artifact, or report unless the user explicitly asks for a separate Skill."

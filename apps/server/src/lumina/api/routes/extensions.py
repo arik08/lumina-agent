@@ -19,6 +19,7 @@ from ...extensions.schemas import (
     DraftSaveVersion,
     DraftUpdate,
     ExtensionCreate,
+    ExtensionBusinessAreaPatch,
     ExtensionPatch,
     FolderCreate,
     FolderMove,
@@ -65,6 +66,7 @@ from ...extensions.service import (
     uninstall,
     update_draft,
     update_extension_metadata,
+    update_skill_business_area,
     update_folder,
     version_payload,
 )
@@ -327,6 +329,45 @@ def post_extension_restore(
         metadata={"kind": extension.kind},
     )
     db.commit()
+    return extension_payload(db, extension, user=context.user)
+
+
+@router.patch("/extensions/{extension_id}/business-area")
+def patch_extension_business_area(
+    extension_id: str,
+    payload: ExtensionBusinessAreaPatch,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    moved_paths = None
+    try:
+        extension, moved_paths = update_skill_business_area(
+            db,
+            user=context.user,
+            extension_id=extension_id,
+            business_area=payload.business_area,
+        )
+        if moved_paths is not None:
+            sync_repository_catalog(db, admin=context.user)
+        record_audit(
+            db,
+            action="extension_business_area_updated",
+            target_type="extension",
+            target_id=extension.id,
+            result="success",
+            actor=context.user,
+            request_id=_request_id(request),
+            metadata={"businessArea": payload.business_area},
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        if moved_paths is not None:
+            source, target = moved_paths
+            if target.exists() and not source.exists():
+                target.rename(source)
+        raise
     return extension_payload(db, extension, user=context.user)
 
 

@@ -361,7 +361,9 @@ apps/web/                         Frontend
 apps/server/                      Backend and worker code
 apps/server/src/lumina/providers/ Provider implementations
 extensions/plugins/               Plugin packages
-extensions/skills/                Skill packages
+extensions/skills/                Skill packages by business area
+  General/                        developer-managed shared Skills
+  POSCO_Skill/                    conversation-created POSCO Skills
 extensions/mcp/<slug>/            Self-contained MCP packages
 data/                             Local development runtime data
 infra/                            Container and Kubernetes assets
@@ -1328,7 +1330,7 @@ Catalog ExtensionVersion
 - Draft resolver는 `draft_id`, current `draft_revision`과 package digest를 고정합니다. Draft 변경은 이미 실행 중인 Run에 영향을 주지 않고 다음 Run부터 응답에 반영합니다.
 - Marketplace의 설치 상태는 단순 badge가 아니라 scope installation의 실제 상태입니다. `미사용`으로 전환하면 해당 사용자 또는 Project installation을 해제하고, 다시 설치할 수 있는 catalog action으로 돌아갑니다.
 - 설치 Skill 상세는 `SKILL.md` frontmatter를 metadata로 분리하고 Markdown 본문을 기본 읽기 화면으로 렌더링합니다. raw source는 보조 view이며, catalog→detail→이전 detail 이동은 browser history와 동기화합니다.
-- repository builtin Skill의 한국어 설명과 검색 tag 원본은 `extensions/skills/catalog.json` 한 파일의 slug별 `{description, tags}` entry로 관리합니다. 설명·tag를 별도 sidecar로 나누지 않고 repository sync와 Frontend test가 같은 catalog를 읽으며, 모든 builtin entry는 비어 있지 않은 설명과 tag를 가져야 합니다.
+- repository builtin Skill은 `extensions/skills/General/<slug>/`에 두고, 한국어 설명과 검색 tag 원본은 `extensions/skills/catalog.json` 한 파일의 slug별 `{description, tags}` entry로 관리합니다. 설명·tag를 별도 sidecar로 나누지 않고 repository sync와 Frontend test가 같은 catalog를 읽으며, 모든 builtin entry는 비어 있지 않은 설명과 tag를 가져야 합니다.
 
 ### 14.3 불변 version
 
@@ -2240,9 +2242,9 @@ POST   /api/skills/{id}/ownerships
 DELETE /api/skills/{id}/ownerships/{ownership_id}
 ```
 
-대화 중 `create_skill` Workspace Tool은 package를 Project workspace의 canonical 경로인 `extensions/skills/<slug>/`에 영속 저장하고 같은 transaction에서 Draft service와 연결하여 다음 Run에 활성 revision을 적용합니다. `.skills/`와 `skills/`는 Lumina Skill 생성 경로로 사용하지 않으며 `run_python`의 임시 실행 디렉터리도 영속 저장소로 간주하지 않습니다. 별도 `/skill-drafts/from-conversation` HTTP route를 현재 구현으로 가정하지 않습니다.
+대화 중 `create_skill` Workspace Tool은 package를 Project workspace의 canonical 경로인 `extensions/skills/POSCO_Skill/<slug>/`에 영속 저장하고 같은 transaction에서 Draft service와 연결하여 다음 Run에 활성 revision을 적용합니다. `General`은 개발자가 직접 배치하는 공통 Skill 전용이며 대화에서 새 Skill을 만들 때 사용하지 않습니다. 기존 구형 `extensions/skills/<slug>/` Skill을 수정할 때는 현재 위치를 유지합니다. `.skills/`와 `skills/`는 Lumina Skill 생성 경로로 사용하지 않으며 `run_python`의 임시 실행 디렉터리도 영속 저장소로 간주하지 않습니다. 별도 `/skill-drafts/from-conversation` HTTP route를 현재 구현으로 가정하지 않습니다.
 
-관리자가 repository의 실제 `extensions/skills/<slug>/`에 표준 Skill package를 복사하는 운영 경로는 Project workspace 경로와 구분합니다. Repository watcher는 임의의 유효한 package를 Published Skill로 동기화하고 조직 범위에 자동 활성화하며, package 변경 시 활성 설치를 새 immutable version으로 이동시켜 다음 Run snapshot부터 적용합니다.
+관리자가 repository의 실제 `extensions/skills/General/<slug>/` 또는 별도 업무영역 폴더에 표준 Skill package를 복사하는 운영 경로는 Project workspace 경로와 구분합니다. Repository watcher는 최상위 업무영역 폴더명을 카탈로그 분류로 보존하고(`General → 공통`, `POSCO_Skill → 포스코`) 유효한 package를 Published Skill로 동기화하여 조직 범위에 자동 활성화합니다. package 변경 시 활성 설치를 새 immutable version으로 이동시켜 다음 Run snapshot부터 적용합니다.
 
 다음 endpoint는 Skill Evolution 단계의 Target입니다.
 

@@ -4,7 +4,11 @@ import sys
 
 
 SKILL_CREATOR = (
-    Path(__file__).resolve().parents[2] / "extensions" / "skills" / "skill-creator"
+    Path(__file__).resolve().parents[2]
+    / "extensions"
+    / "skills"
+    / "General"
+    / "skill-creator"
 )
 QUICK_VALIDATE = SKILL_CREATOR / "scripts" / "quick_validate.py"
 INIT_SKILL = SKILL_CREATOR / "scripts" / "init_skill.py"
@@ -23,7 +27,8 @@ def test_lumina_skill_creation_uses_persistent_extensions_workspace() -> None:
     instructions = (SKILL_CREATOR / "SKILL.md").read_text(encoding="utf-8")
 
     assert "with the `create_skill` tool" in instructions
-    assert "`extensions/skills/<skill-name>/`" in instructions
+    assert "`extensions/skills/POSCO_Skill/<skill-name>/`" in instructions
+    assert "`extensions/skills/General/` is developer-managed" in instructions
     assert "Never choose `.skills/` or `skills/`" in instructions
     assert "temporary directory" in instructions
 

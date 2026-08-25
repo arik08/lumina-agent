@@ -9,7 +9,7 @@ from lumina.tools.web import WebToolError
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-SKILL_ROOT = REPOSITORY_ROOT / "extensions" / "skills"
+SKILL_ROOT = REPOSITORY_ROOT / "extensions" / "skills" / "General"
 
 
 def _fallback_skill_run(*, allow_implicit_invocation: bool = True) -> Run:

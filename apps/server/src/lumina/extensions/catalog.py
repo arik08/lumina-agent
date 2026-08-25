@@ -42,11 +42,11 @@ def _manifest_tags(manifest: dict[str, Any]) -> list[str]:
     return tags
 
 
-def _manifest_category(manifest: dict[str, Any]) -> str:
+def _manifest_category(manifest: dict[str, Any], *, fallback: str = "미분류") -> str:
     value = manifest.get("category")
     if isinstance(value, str) and value.strip():
         return value.strip().removeprefix("#")[:80]
-    return "미분류"
+    return fallback
 
 
 def _applied_skill_ids(snapshot: dict[str, Any]) -> set[str]:
@@ -196,7 +196,10 @@ def list_skill_catalog(
             if extension.tags_json is not None
             else _manifest_tags(manifest)
         )
-        category_value = _manifest_category(manifest)
+        category_value = extension.business_area or _manifest_category(
+            manifest,
+            fallback="포스코" if extension.project_id is not None else "미분류",
+        )
         installation = user_installations.get(extension.id)
         records.append(
             {

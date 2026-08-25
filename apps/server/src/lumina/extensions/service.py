@@ -5,7 +5,7 @@ import json
 import re
 from difflib import SequenceMatcher
 from datetime import datetime, timedelta
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from sqlalchemy import delete, func, or_, select, update
@@ -23,6 +23,8 @@ from ..models import (
     ExtensionInstallation,
     ExtensionVersion,
     Organization,
+    ProjectFile,
+    ProjectFolder,
     ProjectMembership,
     SkillFolder,
     SkillFolderPlacement,
@@ -31,6 +33,8 @@ from ..models import (
     new_uuid,
     utc_now,
 )
+from ..config import REPOSITORY_ROOT
+from ..project_files.service import logical_path_key
 from ..secret_policy import reject_secret_key_names
 from .agent_skill_spec import (
     AgentSkillDocument,
@@ -53,6 +57,7 @@ _FORBIDDEN_PACKAGE_NAMES = {".env", "credentials", "secrets"}
 _FORBIDDEN_PACKAGE_SUFFIXES = {".key", ".p12", ".pfx", ".pem"}
 SKILL_TRASH_RETENTION_DAYS = 30
 _SKILL_TRASH_RETENTION = timedelta(days=SKILL_TRASH_RETENTION_DAYS)
+_SKILL_BUSINESS_AREA_DIRS = {"공통": "General", "포스코": "POSCO_Skill"}
 
 
 def normalize_package(files: dict[str, str]) -> dict[str, str]:
@@ -307,6 +312,197 @@ def update_extension_metadata(
     return extension
 
 
+def update_skill_business_area(
+    db: Session,
+    *,
+    user: User,
+    extension_id: str,
+    business_area: str,
+    repository_root: Path | None = None,
+) -> tuple[Extension, tuple[Path, Path] | None]:
+    """Move a Skill workspace and persist its business-area classification.
+
+    Repository Skills move on disk. Project Skills move their active ProjectFile
+    and ProjectFolder logical paths; their content-addressed blobs stay unchanged.
+    The returned path pair lets the API undo a repository rename if commit fails.
+    """
+    target_dir_name = _SKILL_BUSINESS_AREA_DIRS.get(business_area)
+    if target_dir_name is None:
+        raise ApiProblem(422, "invalid_skill_business_area", "지원하지 않는 업무 영역입니다.")
+    extension = require_extension(db, user, extension_id)
+    if not can_manage_skill(db, user, extension):
+        raise ApiProblem(403, "extension_write_forbidden", "Skill을 수정할 권한이 없습니다.")
+    if extension.business_area == business_area:
+        return extension, None
+
+    if extension.project_id is None:
+        if user.role != "admin":
+            raise ApiProblem(
+                403,
+                "repository_skill_move_forbidden",
+                "저장소 Skill의 업무 영역은 관리자만 변경할 수 있습니다.",
+            )
+        latest = db.scalar(
+            select(ExtensionVersion)
+            .where(ExtensionVersion.extension_id == extension.id)
+            .order_by(ExtensionVersion.version_number.desc())
+        )
+        manifest = latest.manifest_json if latest is not None else {}
+        source_path = str(manifest.get("sourcePath", "")).replace("\\", "/")
+        if manifest.get("source") != "repository" or not source_path.startswith(
+            "extensions/skills/"
+        ):
+            raise ApiProblem(
+                409,
+                "skill_workspace_not_found",
+                "이 Skill의 저장소 폴더를 확인할 수 없습니다.",
+            )
+        root = (repository_root or REPOSITORY_ROOT).resolve()
+        skills_root = (root / "extensions" / "skills").resolve()
+        source = (root / source_path).resolve()
+        try:
+            source.relative_to(skills_root)
+        except ValueError as exc:
+            raise ApiProblem(
+                409, "unsafe_skill_workspace", "Skill 저장소 경로가 안전하지 않습니다."
+            ) from exc
+        if not source.is_dir() or not (source / "SKILL.md").is_file():
+            raise ApiProblem(
+                409, "skill_workspace_not_found", "이 Skill의 저장소 폴더를 찾을 수 없습니다."
+            )
+        target = (skills_root / target_dir_name / extension.slug).resolve()
+        if target == source:
+            extension.business_area = business_area
+            extension.updated_at = utc_now()
+            db.flush()
+            return extension, None
+        if target.exists():
+            raise ApiProblem(
+                409,
+                "skill_workspace_path_exists",
+                "대상 업무 영역에 같은 이름의 Skill 폴더가 이미 있습니다.",
+            )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source.rename(target)
+        extension.business_area = business_area
+        extension.updated_at = utc_now()
+        try:
+            db.flush()
+        except Exception:
+            target.rename(source)
+            raise
+        return extension, (source, target)
+
+    require_project(db, user, extension.project_id, write=True)
+    candidate_roots = (
+        f"extensions/skills/General/{extension.slug}",
+        f"extensions/skills/POSCO_Skill/{extension.slug}",
+        f"extensions/skills/{extension.slug}",
+    )
+    files = list(
+        db.scalars(
+            select(ProjectFile).where(
+                ProjectFile.project_id == extension.project_id,
+                ProjectFile.deleted_at.is_(None),
+                or_(*[ProjectFile.logical_path.like(f"{root}/%") for root in candidate_roots]),
+            )
+        )
+    )
+    folders = list(
+        db.scalars(
+            select(ProjectFolder).where(
+                ProjectFolder.project_id == extension.project_id,
+                ProjectFolder.deleted_at.is_(None),
+                or_(
+                    *[
+                        or_(
+                            ProjectFolder.logical_path == root,
+                            ProjectFolder.logical_path.like(f"{root}/%"),
+                        )
+                        for root in candidate_roots
+                    ]
+                ),
+            )
+        )
+    )
+    matched_roots = {
+        root
+        for root in candidate_roots
+        if any(
+            item.logical_path == root or item.logical_path.startswith(f"{root}/")
+            for item in files
+        )
+        or any(
+            item.logical_path == root or item.logical_path.startswith(f"{root}/")
+            for item in folders
+        )
+    }
+    if not matched_roots:
+        raise ApiProblem(
+            409, "skill_workspace_not_found", "이 Skill의 Project 파일 폴더를 찾을 수 없습니다."
+        )
+    if len(matched_roots) != 1:
+        raise ApiProblem(
+            409,
+            "skill_workspace_ambiguous",
+            "Skill 파일이 여러 업무 영역 폴더에 나뉘어 있습니다.",
+        )
+    source_root = matched_roots.pop()
+    target_root = f"extensions/skills/{target_dir_name}/{extension.slug}"
+    moving_file_ids = {item.id for item in files}
+    moving_folder_ids = {item.id for item in folders}
+    destination_keys = {
+        logical_path_key(f"{target_root}{item.logical_path[len(source_root):]}")
+        for item in files
+    } | {
+        logical_path_key(f"{target_root}{item.logical_path[len(source_root):]}")
+        for item in folders
+    }
+    occupied_file_keys = set(
+        db.scalars(
+            select(ProjectFile.active_path_key).where(
+                ProjectFile.project_id == extension.project_id,
+                ProjectFile.deleted_at.is_(None),
+                ProjectFile.id.not_in(moving_file_ids),
+            )
+        )
+    )
+    occupied_folder_keys = set(
+        db.scalars(
+            select(ProjectFolder.active_path_key).where(
+                ProjectFolder.project_id == extension.project_id,
+                ProjectFolder.deleted_at.is_(None),
+                ProjectFolder.id.not_in(moving_folder_ids),
+            )
+        )
+    )
+    if destination_keys & (occupied_file_keys | occupied_folder_keys):
+        raise ApiProblem(
+            409,
+            "skill_workspace_path_exists",
+            "대상 업무 영역에 같은 경로의 파일 또는 폴더가 이미 있습니다.",
+        )
+    now = utc_now()
+    for project_file in files:
+        project_file.logical_path = (
+            f"{target_root}{project_file.logical_path[len(source_root):]}"
+        )
+        project_file.active_path_key = logical_path_key(project_file.logical_path)
+        project_file.revision += 1
+        project_file.updated_at = now
+    for project_folder in folders:
+        project_folder.logical_path = (
+            f"{target_root}{project_folder.logical_path[len(source_root):]}"
+        )
+        project_folder.active_path_key = logical_path_key(project_folder.logical_path)
+        project_folder.revision += 1
+        project_folder.updated_at = now
+    extension.business_area = business_area
+    extension.updated_at = now
+    db.flush()
+    return extension, None
+
+
 def delete_skill(db: Session, *, user: User, extension_id: str) -> Extension:
     extension = require_extension(db, user, extension_id)
     if skill_role(db, user, extension) != "owner":
@@ -529,6 +725,11 @@ def create_skill(
         creator_user_id=user.id,
         organization_id=user.organization_id,
         project_id=project_id,
+        business_area=(
+            "포스코"
+            if project_id is not None or source_conversation_id is not None
+            else None
+        ),
         visibility="private",
     )
     db.add(extension)
@@ -802,6 +1003,14 @@ def save_draft_version(
             "base_version_conflict",
             "Skill Draft의 base version이 변경되었습니다.",
         )
+    extension = db.get(Extension, draft.extension_id)
+    if extension is None:
+        raise ApiProblem(404, "extension_not_found", "Skill을 찾을 수 없습니다.")
+    manifest = dict(manifest)
+    if extension.business_area is not None:
+        manifest.setdefault("category", extension.business_area)
+    elif extension.project_id is not None:
+        manifest.setdefault("category", "포스코")
     _ensure_no_secrets(manifest, path="manifest")
     revision = db.scalar(
         select(ExtensionDraftRevision).where(
@@ -2051,6 +2260,8 @@ def extension_payloads(
             "slug": extension.slug,
             "name": extension.name,
             "description": extension.description,
+            "businessArea": extension.business_area
+            or ("포스코" if extension.project_id is not None else "공통"),
             "tags": extension.tags_json
             if extension.tags_json is not None
             else latest_manifest_tags,

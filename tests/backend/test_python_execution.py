@@ -572,7 +572,7 @@ def test_python_timeout_and_output_limit() -> None:
 
 def test_insane_search_module_runs_from_materialized_skill_package() -> None:
     package = _skill_package(
-        REPOSITORY_ROOT / "extensions" / "skills" / "insane-search"
+        REPOSITORY_ROOT / "extensions" / "skills" / "General" / "insane-search"
     )
     prepared = PreparedPythonExecution(
         source_type="skill",

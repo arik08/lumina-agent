@@ -6,7 +6,9 @@ from pathlib import Path
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-SKILL_ROOT = REPOSITORY_ROOT / "extensions" / "skills" / "idea-orchestrator"
+SKILL_ROOT = (
+    REPOSITORY_ROOT / "extensions" / "skills" / "General" / "idea-orchestrator"
+)
 
 
 def test_idea_orchestrator_routes_and_synthesizes_methods() -> None:

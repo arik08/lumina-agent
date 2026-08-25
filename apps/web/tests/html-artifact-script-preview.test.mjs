@@ -8,7 +8,7 @@ const previewSource = read("../src/components/ArtifactHtmlPreview.tsx");
 const previewStyles = read("../src/components/ArtifactHtmlPreview.css");
 const previewBridge = read("../public/artifact-preview-bridge.js");
 const interactiveResponseSource = read("../src/components/InteractiveResponse.tsx");
-const visualArtifactSkillSource = read("../../../extensions/skills/visual-artifact/SKILL.md");
+const visualArtifactSkillSource = read("../../../extensions/skills/General/visual-artifact/SKILL.md");
 
 test("HTML Artifact preview paints loading feedback before mounting its streamed iframe", () => {
   assert.match(appSource, /const ArtifactHtmlPreview = lazy\(\(\) => import\("\.\/components\/ArtifactHtmlPreview"\)/);

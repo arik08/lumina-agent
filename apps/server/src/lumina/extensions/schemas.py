@@ -27,6 +27,10 @@ class ExtensionPatch(ApiModel):
     tags: list[str] | None = Field(default=None, max_length=8)
 
 
+class ExtensionBusinessAreaPatch(ApiModel):
+    business_area: Literal["공통", "포스코"]
+
+
 class DraftUpdate(ApiModel):
     expected_revision: int = Field(ge=1)
     expected_digest: str = Field(min_length=64, max_length=64)

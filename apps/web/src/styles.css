@@ -1335,6 +1335,8 @@ button.schedule-run-row:disabled { cursor: wait; opacity: 1; }
 .marketplace-package-summary > .marketplace-package-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
 .marketplace-package-summary strong { font-size: 13px; }
 .marketplace-package-summary span { color: var(--muted); font-size: 11px; }
+.marketplace-business-area-field { display: flex; align-items: center; gap: 8px; width: fit-content; }
+.marketplace-business-area-field > span { min-width: 46px; color: var(--muted); font-size: 12px; }
 .marketplace-change-summary { width: min(360px, 44vw); height: 30px; box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0 8px; background: var(--surface); color: var(--ink); font-size: 13px; }
 .marketplace-change-summary:focus { border-color: var(--cobalt); outline: 0; }
 .feature-view.feature-view .marketplace-package-summary button { display: inline-flex; min-height: 30px; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 5px; padding: 0 10px; background: var(--surface); color: var(--ink); font-size: 14px; white-space: nowrap; cursor: pointer; }

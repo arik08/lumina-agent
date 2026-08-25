@@ -1947,6 +1947,18 @@ export async function restoreExtension(extensionId: string, signal?: AbortSignal
   });
 }
 
+export async function updateExtensionBusinessArea(
+  extensionId: string,
+  businessArea: "공통" | "포스코",
+  signal?: AbortSignal,
+) {
+  return request<SkillExtension>(`/extensions/${encodeURIComponent(extensionId)}/business-area`, {
+    method: "PATCH",
+    body: { businessArea },
+    signal,
+  });
+}
+
 export async function createSkill(
   payload: { name: string; description: string; projectId?: string; files: Record<string, string> },
   signal?: AbortSignal,

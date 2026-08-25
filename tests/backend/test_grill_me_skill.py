@@ -11,10 +11,11 @@ from lumina.agent.executor import (
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SKILL_ROOT = REPOSITORY_ROOT / "extensions" / "skills"
+GENERAL_SKILL_ROOT = SKILL_ROOT / "General"
 
 
 def test_grill_me_uses_the_existing_question_ui_with_a_per_round_cap() -> None:
-    skill = (SKILL_ROOT / "grill-me" / "SKILL.md").read_text(encoding="utf-8")
+    skill = (GENERAL_SKILL_ROOT / "grill-me" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "name: grill-me" in skill
     assert "design tree" in skill
@@ -31,7 +32,7 @@ def test_grill_me_uses_the_existing_question_ui_with_a_per_round_cap() -> None:
 
 def test_grill_me_has_repository_catalog_metadata_and_attribution() -> None:
     catalog = json.loads((SKILL_ROOT / "catalog.json").read_text(encoding="utf-8"))
-    license_text = (SKILL_ROOT / "grill-me" / "LICENSE").read_text(
+    license_text = (GENERAL_SKILL_ROOT / "grill-me" / "LICENSE").read_text(
         encoding="utf-8"
     )
 
@@ -43,7 +44,7 @@ def test_grill_me_has_repository_catalog_metadata_and_attribution() -> None:
 
 
 def test_grill_me_is_explicitly_invoked() -> None:
-    interface = (SKILL_ROOT / "grill-me" / "agents" / "openai.yaml").read_text(
+    interface = (GENERAL_SKILL_ROOT / "grill-me" / "agents" / "openai.yaml").read_text(
         encoding="utf-8"
     )
 

@@ -5,7 +5,7 @@ import test from "node:test";
 const rendererSource = readFileSync(new URL("../src/components/InteractiveResponse.tsx", import.meta.url), "utf8");
 const rendererStyles = readFileSync(new URL("../src/components/InteractiveResponse.css", import.meta.url), "utf8");
 const instructionSource = readFileSync(new URL("../../server/src/lumina/instructions/service.py", import.meta.url), "utf8");
-const visualArtifactSkillSource = readFileSync(new URL("../../../extensions/skills/visual-artifact/SKILL.md", import.meta.url), "utf8");
+const visualArtifactSkillSource = readFileSync(new URL("../../../extensions/skills/General/visual-artifact/SKILL.md", import.meta.url), "utf8");
 
 test("LLM instructions require context-specific Mermaid classes in saved source", () => {
   assert.match(instructionSource, /infer a coherent grouping from the/);

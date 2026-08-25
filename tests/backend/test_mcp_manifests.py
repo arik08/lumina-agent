@@ -61,7 +61,7 @@ def test_mcp_root_contains_only_self_contained_packages() -> None:
     assert not packaged_skill_names.intersection(catalog)
 
     standalone_wrappers = []
-    for skill_path in SKILL_ROOT.glob("*/SKILL.md"):
+    for skill_path in (SKILL_ROOT / "General").glob("*/SKILL.md"):
         document = parse_agent_skill(
             skill_path.read_text(encoding="utf-8"),
             expected_name=skill_path.parent.name,

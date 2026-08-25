@@ -52,7 +52,7 @@ def test_workspace_tool_schemas_and_risk_contract() -> None:
     names = [schema["function"]["name"] for schema in WORKSPACE_TOOL_SCHEMAS]
     assert names == ["glob", "grep", "read_file", "list_dir", "create_skill"]
     create_skill_schema = WORKSPACE_TOOL_SCHEMAS[-1]["function"]
-    assert "extensions/skills/<slug>/" in create_skill_schema["description"]
+    assert "extensions/skills/POSCO_Skill/<slug>/" in create_skill_schema["description"]
     assert ".skills/" in create_skill_schema["description"]
     assert ARTIFACT_WRITE_TOOL_SCHEMA["function"]["name"] == "write_file"
     assert "without writing to the user-managed Project file repository" in (
@@ -248,11 +248,11 @@ def test_skill_workspace_writes_register_and_update_active_draft(
             assert written["slug"] == "daily-standup-helper"
             assert written["revision"] == 1
             assert written["packageRoot"] == (
-                "extensions/skills/daily-standup-helper"
+                "extensions/skills/POSCO_Skill/daily-standup-helper"
             )
             assert {item["path"] for item in written["files"]} == {
-                "extensions/skills/daily-standup-helper/SKILL.md",
-                "extensions/skills/daily-standup-helper/references/templates.md",
+                "extensions/skills/POSCO_Skill/daily-standup-helper/SKILL.md",
+                "extensions/skills/POSCO_Skill/daily-standup-helper/references/templates.md",
             }
         with SessionLocal() as db:
             extension = db.scalar(
@@ -288,8 +288,8 @@ def test_skill_workspace_writes_register_and_update_active_draft(
                 )
             )
             assert project_paths == {
-                "extensions/skills/daily-standup-helper/SKILL.md",
-                "extensions/skills/daily-standup-helper/references/templates.md",
+                "extensions/skills/POSCO_Skill/daily-standup-helper/SKILL.md",
+                "extensions/skills/POSCO_Skill/daily-standup-helper/references/templates.md",
             }
             assert not any(path.startswith(".skills/") for path in project_paths)
 
@@ -478,7 +478,9 @@ def test_create_skill_tool_persists_package_in_extensions_workspace(
         assert snapshot["status"] == "completed"
         execution = snapshot["toolExecutions"][0]
         assert execution["toolName"] == "create_skill"
-        assert execution["result"]["packageRoot"] == "extensions/skills/say-hello"
+        assert execution["result"]["packageRoot"] == (
+            "extensions/skills/POSCO_Skill/say-hello"
+        )
 
         with SessionLocal() as db:
             assert set(
@@ -488,8 +490,8 @@ def test_create_skill_tool_persists_package_in_extensions_workspace(
                     )
                 )
             ) == {
-                "extensions/skills/say-hello/SKILL.md",
-                "extensions/skills/say-hello/agents/openai.yaml",
+                "extensions/skills/POSCO_Skill/say-hello/SKILL.md",
+                "extensions/skills/POSCO_Skill/say-hello/agents/openai.yaml",
             }
             extension = db.scalar(select(Extension).where(Extension.slug == "say-hello"))
             assert extension is not None
@@ -499,6 +501,29 @@ def test_create_skill_tool_persists_package_in_extensions_workspace(
             )
             assert draft is not None
             assert draft.package_json["agents/openai.yaml"].startswith("interface:\n")
+            draft_id = draft.id
+            draft_revision = draft.current_revision
+            draft_digest = draft.current_digest
+
+        catalog = client.get("/api/extensions/catalog").json()
+        catalog_item = next(item for item in catalog["items"] if item["name"] == "say-hello")
+        assert catalog_item["category"] == "포스코"
+        assert {item["value"]: item["count"] for item in catalog["facets"]["categories"]}[
+            "포스코"
+        ] == 1
+
+        saved = client.post(
+            f"/api/skill-drafts/{draft_id}/save-version",
+            headers=headers,
+            json={
+                "expectedRevision": draft_revision,
+                "expectedDigest": draft_digest,
+                "baseVersionId": None,
+                "manifest": {},
+            },
+        )
+        assert saved.status_code == 201, saved.text
+        assert saved.json()["manifest"]["category"] == "포스코"
 
 
 def test_create_skill_revision_removes_omitted_workspace_files(
@@ -551,7 +576,7 @@ def test_create_skill_revision_removes_omitted_workspace_files(
             assert snapshot["status"] == "completed"
 
         assert snapshot["toolExecutions"][0]["result"]["removedFiles"] == [
-            "extensions/skills/cleanup-skill/references/old.md"
+            "extensions/skills/POSCO_Skill/cleanup-skill/references/old.md"
         ]
         with SessionLocal() as db:
             active_paths = set(
@@ -562,7 +587,9 @@ def test_create_skill_revision_removes_omitted_workspace_files(
                     )
                 )
             )
-            assert active_paths == {"extensions/skills/cleanup-skill/SKILL.md"}
+            assert active_paths == {
+                "extensions/skills/POSCO_Skill/cleanup-skill/SKILL.md"
+            }
             extension = db.scalar(
                 select(Extension).where(Extension.slug == "cleanup-skill")
             )

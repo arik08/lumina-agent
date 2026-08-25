@@ -1896,6 +1896,7 @@ export interface SkillExtension {
   slug: string;
   name: string;
   description: string;
+  businessArea: "공통" | "포스코";
   tags: string[];
   visibility: "private" | "project" | "organization";
   ownerUserId: UUID;

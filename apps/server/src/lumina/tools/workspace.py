@@ -27,6 +27,11 @@ MAX_READ_LINES = 2_000
 MAX_READ_CHARS = 100_000
 MAX_GREP_FILE_CHARS = 1_000_000
 SKILL_WORKSPACE_ROOT = ("extensions", "skills")
+DEFAULT_SKILL_WORKSPACE_CATEGORY = "POSCO_Skill"
+DEFAULT_SKILL_WORKSPACE_ROOT = (
+    *SKILL_WORKSPACE_ROOT,
+    DEFAULT_SKILL_WORKSPACE_CATEGORY,
+)
 _SKILL_FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL)
 ARTIFACT_WRITE_TOOL_SCHEMA: dict[str, Any] = {
     "type": "function",
@@ -168,7 +173,8 @@ WORKSPACE_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
             "description": (
                 "Create or immediately revise a Lumina Skill Working Draft and persist its "
                 "complete package in the "
-                "current Project workspace under extensions/skills/<slug>/. Use this "
+                "current Project workspace under "
+                "extensions/skills/POSCO_Skill/<slug>/. Use this "
                 "instead of .skills/, a generic file Artifact, or run_python when the user "
                 "asks to create or modify a Skill. For a revision, read the current package "
                 "first and submit the complete updated package with the existing slug. The "
@@ -381,23 +387,14 @@ def _sync_workspace_skill_draft(
     user: User,
     written_path: str,
 ) -> dict[str, Any] | None:
-    parts = PurePosixPath(written_path).parts
-    if (
-        len(parts) < 4
-        or tuple(part.casefold() for part in parts[:2]) != SKILL_WORKSPACE_ROOT
-    ):
+    location = _skill_workspace_location(written_path)
+    if location is None:
         return None
-    slug = parts[2]
-    root = f"extensions/skills/{slug}"
+    slug, root = location
     package: dict[str, str] = {}
     for item in _active_files(db, run):
-        item_parts = PurePosixPath(item.logical_path).parts
-        if (
-            len(item_parts) < 4
-            or tuple(part.casefold() for part in item_parts[:2])
-            != SKILL_WORKSPACE_ROOT
-            or item_parts[2].casefold() != slug.casefold()
-        ):
+        item_location = _skill_workspace_location(item.logical_path)
+        if item_location is None or item_location[1].casefold() != root.casefold():
             continue
         version = get_project_file_version(db, item)
         try:
@@ -479,6 +476,18 @@ def _create_workspace_skill(
     if len(package_files) != len(raw_files):
         raise ValueError("Skill package 경로와 내용은 문자열이어야 합니다.")
 
+    current_files = _current_files(db, run.project_id)
+    existing_root = next(
+        (
+            root
+            for item in current_files
+            if (location := _skill_workspace_location(item.logical_path)) is not None
+            for existing_slug, root in (location,)
+            if existing_slug.casefold() == slug.casefold()
+        ),
+        None,
+    )
+
     extension, draft, changed = sync_workspace_skill(
         db,
         user=user,
@@ -489,9 +498,10 @@ def _create_workspace_skill(
         description=description,
         package_files=package_files,
     )
-    package_root = f"extensions/skills/{extension.slug}"
+    package_root = existing_root or (
+        f"extensions/skills/{DEFAULT_SKILL_WORKSPACE_CATEGORY}/{extension.slug}"
+    )
     written_files: list[dict[str, Any]] = []
-    current_files = _current_files(db, run.project_id)
     expected_paths: set[str] = set()
     for relative_path, content in sorted(draft.package_json.items()):
         logical_path = normalize_logical_path(f"{package_root}/{relative_path}")
@@ -592,6 +602,22 @@ def _create_workspace_skill(
         "files": written_files,
         "removedFiles": removed_files,
     }
+
+
+def _skill_workspace_location(path: str) -> tuple[str, str] | None:
+    parts = PurePosixPath(path).parts
+    if (
+        len(parts) < 4
+        or tuple(part.casefold() for part in parts[:2]) != SKILL_WORKSPACE_ROOT
+    ):
+        return None
+    if (
+        len(parts) >= 5
+        and parts[2].casefold()
+        in {"general", DEFAULT_SKILL_WORKSPACE_CATEGORY.casefold()}
+    ):
+        return parts[3], "/".join(parts[:4])
+    return parts[2], "/".join(parts[:3])
 
 
 def _current_files(db: Session, project_id: str) -> list[ProjectFile]:

@@ -62,8 +62,9 @@ Skill
 ```
 
 - Harness 대화에서 “이 작업을 Skill로 만들어”라고 하면 본인 전용 WorkingDraft를 만들고 현재 사용자에게 활성화합니다. 이 시점에는 `v1`이 없습니다.
-- 대화의 `create_skill` Tool은 package 파일을 Project workspace의 `extensions/skills/<slug>/`에 영속 저장하고 같은 내용으로 WorkingDraft를 생성·갱신합니다. `.skills/`·`skills/` 또는 `run_python` 임시 디렉터리는 Skill 생성 위치로 사용하지 않습니다.
-- 관리자가 repository의 실제 `extensions/skills/<slug>/`에 표준 Skill package를 복사하면 watcher가 이를 Published Skill로 동기화하고 조직 범위에 즉시 활성화합니다. 이후 파일 변경은 새 immutable version을 만들고 기존 조직 설치가 새 version을 자동 추종하며, 별도 Marketplace 설치 단계는 요구하지 않습니다.
+- 대화의 `create_skill` Tool은 새 package 파일을 Project workspace의 `extensions/skills/POSCO_Skill/<slug>/`에 영속 저장하고 같은 내용으로 WorkingDraft를 생성·갱신합니다. 기존 구형 `extensions/skills/<slug>/` package를 수정할 때는 현재 위치를 유지합니다. `.skills/`·`skills/` 또는 `run_python` 임시 디렉터리는 Skill 생성 위치로 사용하지 않습니다.
+- 관리자가 repository의 실제 `extensions/skills/General/<slug>/` 또는 다른 업무영역 폴더에 표준 Skill package를 복사하면 watcher가 최상위 폴더명을 업무영역으로 보존해 Published Skill로 동기화하고 조직 범위에 즉시 활성화합니다. UI에서는 `General`을 `공통`, `POSCO_Skill`을 `포스코`로 표시합니다. 이후 파일 변경은 새 immutable version을 만들고 기존 조직 설치가 새 version을 자동 추종하며, 별도 Marketplace 설치 단계는 요구하지 않습니다.
+- Marketplace 상세의 `편집`에서는 업무 영역을 `공통` 또는 `포스코`로 변경할 수 있습니다. 저장 시 표시값만 바꾸지 않고 repository Skill은 `General/<slug>`와 `POSCO_Skill/<slug>` 사이의 실제 디렉터리를, Project Skill은 같은 두 경로 사이의 ProjectFile·ProjectFolder 경로를 함께 이동합니다. 권한이 없거나 대상 경로가 충돌하면 전체 변경을 거부합니다.
 - 다른 사용자의 Published Skill에서 `내 버전으로 수정`을 시작하면 최신 설치·공식 version을 기준으로 해당 사용자만의 WorkingDraft를 만듭니다. 원본 Owner의 Draft와 다른 사용자의 Draft는 바뀌지 않습니다.
 - Draft는 autosave하며 각 변경에 내부 revision과 package digest를 부여합니다. 다음 Agent Run부터 최신 Draft revision을 실제 Skill로 사용하여 응답 변화가 나타나야 합니다.
 - 첫 명시적 `저장`은 현재 Draft snapshot으로 immutable `v1`을 만들고, 이후 다시 수정한 Draft를 저장하면 `v2`를 만듭니다.

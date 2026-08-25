@@ -69,6 +69,10 @@ test("catalog uses a searchable card grid with installed-only package viewing", 
   assert.doesNotMatch(panel, /onScroll=/);
   assert.match(api, /request<SkillCatalogResponse>\("\/extensions\/catalog"/);
   assert.match(api, /method: liked \? "PUT" : "DELETE"/);
+  assert.match(view, /const \[editableBusinessArea, setEditableBusinessArea\]/);
+  assert.match(view, /ariaLabel="Skill 업무 영역"/);
+  assert.match(view, /updateBusinessArea\(selected\.id, editableBusinessArea\)/);
+  assert.match(api, /\/extensions\/\$\{encodeURIComponent\(extensionId\)\}\/business-area/);
   assert.match(styles, /\.skill-catalog-layout \{[^}]*grid-template-columns: 248px minmax\(0, 1fr\)/);
   assert.match(styles, /\.skill-catalog-search > span \{[^}]*min-width: 0;[^}]*margin-inline-end: var\(--space-2\)/);
   assert.match(styles, /\.skill-catalog-grid \{[^}]*repeat\(auto-fill, minmax\(300px, 1fr\)\)/);

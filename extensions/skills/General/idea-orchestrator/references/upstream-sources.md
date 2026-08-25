@@ -9,7 +9,7 @@ The upstream cards are reference material. Their `user-invocable` metadata and `
 From the repository root, run:
 
 ```powershell
-python extensions/skills/idea-orchestrator/scripts/sync_upstream.py --check
+python extensions/skills/General/idea-orchestrator/scripts/sync_upstream.py --check
 ```
 
 This performs no network access and fails if a vendored file differs from its pinned digest.
@@ -21,8 +21,8 @@ This performs no network access and fails if a vendored file differs from its pi
 3. Run:
 
    ```powershell
-   python extensions/skills/idea-orchestrator/scripts/sync_upstream.py --sync
-   python extensions/skills/idea-orchestrator/scripts/sync_upstream.py --check
+   python extensions/skills/General/idea-orchestrator/scripts/sync_upstream.py --sync
+   python extensions/skills/General/idea-orchestrator/scripts/sync_upstream.py --check
    ```
 
 4. Review `git diff`, run the Skill validators, and commit the source manifest, license, and refreshed files together.

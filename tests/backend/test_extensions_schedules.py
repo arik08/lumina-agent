@@ -22,6 +22,7 @@ from lumina.auth import bootstrap_database, create_user
 from lumina.config import Settings, get_settings
 from lumina.db import SessionLocal, configure_database, create_schema
 from lumina.extensions import repository_catalog
+from lumina.extensions import service as extension_service
 from lumina.extensions.service import (
     resolve_skill_snapshot,
     save_draft_version,
@@ -43,6 +44,8 @@ from lumina.models import (
     McpInstallation,
     Organization,
     Project,
+    ProjectFile,
+    ProjectFolder,
     Run,
     RunCommand,
     ScheduledRun,
@@ -60,6 +63,7 @@ from lumina.schedules.service import (
     start_scheduled_run,
 )
 from lumina.schedules import service as schedules_service
+from lumina.project_files.service import logical_path_key
 
 
 @pytest.mark.asyncio
@@ -215,6 +219,7 @@ def test_marketplace_refresh_syncs_new_repository_skill(
         encoding="utf-8",
     )
     monkeypatch.setattr(repository_catalog, "REPOSITORY_ROOT", repository_root)
+    monkeypatch.setattr(extension_service, "REPOSITORY_ROOT", repository_root)
 
     app, _settings = _test_app(tmp_path)
     with TestClient(app) as client:
@@ -222,8 +227,8 @@ def test_marketplace_refresh_syncs_new_repository_skill(
         project_id = client.get("/api/projects").json()[0]["id"]
         assert client.get("/api/extensions").json() == []
 
-        skill_root = skills_root / "explorer-added"
-        skill_root.mkdir()
+        skill_root = skills_root / "General" / "explorer-added"
+        skill_root.mkdir(parents=True)
         (skill_root / "SKILL.md").write_text(
             "---\nname: explorer-added\ndescription: English runtime trigger description.\n---\n\n# Explorer Added\n",
             encoding="utf-8",
@@ -242,6 +247,11 @@ def test_marketplace_refresh_syncs_new_repository_skill(
         assert [(item["slug"], item["description"]) for item in catalog] == [
             ("explorer-added", "카탈로그에 표시할 한국어 설명")
         ]
+        marketplace_catalog = client.get("/api/extensions/catalog").json()
+        assert marketplace_catalog["items"][0]["category"] == "공통"
+        assert marketplace_catalog["facets"]["categories"] == [
+            {"value": "공통", "count": 1}
+        ]
 
         with SessionLocal() as db:
             admin = db.scalar(select(User).where(User.role == "admin"))
@@ -250,6 +260,12 @@ def test_marketplace_refresh_syncs_new_repository_skill(
                 select(Extension).where(Extension.slug == "explorer-added")
             )
             assert extension is not None
+            latest = db.get(ExtensionVersion, extension.latest_published_version_id)
+            assert latest is not None
+            assert latest.manifest_json["sourcePath"] == (
+                "extensions/skills/General/explorer-added"
+            )
+            assert latest.manifest_json["category"] == "공통"
             installations = list(
                 db.scalars(
                     select(ExtensionInstallation).where(
@@ -269,7 +285,6 @@ def test_marketplace_refresh_syncs_new_repository_skill(
                     db, user=admin, project_id=project_id
                 )
             ] == ["explorer-added"]
-
         repeated = client.post(
             "/api/extensions/repository-sync",
             headers={"X-CSRF-Token": csrf},
@@ -278,6 +293,41 @@ def test_marketplace_refresh_syncs_new_repository_skill(
         assert repeated.json()["skillsChanged"] == 0
         assert repeated.json()["mcpChanged"] == 0
         assert repeated.json()["revision"] == synced.json()["revision"]
+
+        extension_id = catalog[0]["id"]
+        moved = client.patch(
+            f"/api/extensions/{extension_id}/business-area",
+            headers={"X-CSRF-Token": csrf},
+            json={"businessArea": "포스코"},
+        )
+        assert moved.status_code == 200, moved.text
+        assert moved.json()["businessArea"] == "포스코"
+        posco_root = skills_root / "POSCO_Skill" / "explorer-added"
+        assert posco_root.is_dir()
+        assert not skill_root.exists()
+        assert client.get("/api/extensions/catalog").json()["items"][0][
+            "category"
+        ] == "포스코"
+        with SessionLocal() as db:
+            moved_extension = db.get(Extension, extension_id)
+            assert moved_extension is not None
+            moved_version = db.get(
+                ExtensionVersion, moved_extension.latest_published_version_id
+            )
+            assert moved_version is not None
+            assert moved_version.manifest_json["sourcePath"] == (
+                "extensions/skills/POSCO_Skill/explorer-added"
+            )
+
+        moved_back = client.patch(
+            f"/api/extensions/{extension_id}/business-area",
+            headers={"X-CSRF-Token": csrf},
+            json={"businessArea": "공통"},
+        )
+        assert moved_back.status_code == 200, moved_back.text
+        assert moved_back.json()["businessArea"] == "공통"
+        assert skill_root.is_dir()
+        assert not posco_root.exists()
 
         with SessionLocal() as db:
             extension = db.scalar(
@@ -310,7 +360,7 @@ def test_marketplace_refresh_syncs_new_repository_skill(
             assert extension is not None
             latest = db.get(ExtensionVersion, extension.latest_published_version_id)
             assert latest is not None
-            assert latest.version_number == 2
+            assert latest.version_number == 4
             installation = db.scalar(
                 select(ExtensionInstallation).where(
                     ExtensionInstallation.extension_id == extension.id,
@@ -319,6 +369,73 @@ def test_marketplace_refresh_syncs_new_repository_skill(
             )
             assert installation is not None
             assert installation.version_id == latest.id
+
+
+def test_project_skill_business_area_moves_project_workspace_paths(
+    tmp_path: Path,
+) -> None:
+    app, _settings = _test_app(tmp_path)
+    with TestClient(app) as client:
+        _login(client)
+        project_id = client.get("/api/projects").json()[0]["id"]
+
+        with SessionLocal() as db:
+            admin = db.scalar(select(User).where(User.role == "admin"))
+            project = db.get(Project, project_id)
+            assert admin is not None and project is not None
+            extension, _draft = extension_service.create_skill(
+                db,
+                user=admin,
+                name="Conversation Skill",
+                slug="conversation-skill",
+                description="Conversation-created Skill",
+                package_files={
+                    "SKILL.md": (
+                        "---\nname: conversation-skill\n"
+                        "description: Use for conversation workspace move tests.\n"
+                        "---\n\n# Conversation Skill\n"
+                    )
+                },
+                project_id=project.id,
+                source_conversation_id=None,
+            )
+            source_root = "extensions/skills/POSCO_Skill/conversation-skill"
+            folder = ProjectFolder(
+                organization_id=admin.organization_id,
+                project_id=project.id,
+                created_by_user_id=admin.id,
+                logical_path=source_root,
+                active_path_key=logical_path_key(source_root),
+            )
+            skill_file_path = f"{source_root}/SKILL.md"
+            skill_file = ProjectFile(
+                organization_id=admin.organization_id,
+                project_id=project.id,
+                created_by_user_id=admin.id,
+                logical_path=skill_file_path,
+                active_path_key=logical_path_key(skill_file_path),
+            )
+            db.add_all([folder, skill_file])
+            db.flush()
+
+            moved_extension, repository_move = (
+                extension_service.update_skill_business_area(
+                    db,
+                    user=admin,
+                    extension_id=extension.id,
+                    business_area="공통",
+                )
+            )
+            assert repository_move is None
+            assert moved_extension.business_area == "공통"
+            assert folder.logical_path == (
+                "extensions/skills/General/conversation-skill"
+            )
+            assert skill_file.logical_path == (
+                "extensions/skills/General/conversation-skill/SKILL.md"
+            )
+            assert folder.revision == 2
+            assert skill_file.revision == 2
 
 
 def test_repository_mcp_wrapper_is_classified_and_attached_to_mcp_snapshot(

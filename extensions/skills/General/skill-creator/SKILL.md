@@ -156,7 +156,7 @@ requirements in `SKILL.md`; keep product-only fields in `agents/openai.yaml`.
 
 In Lumina, create or revise the package with the `create_skill` tool. Unless the user explicitly
 requests another supported destination, persist repository-style Skill files under
-`extensions/skills/<skill-name>/`. Never choose `.skills/` or `skills/` for a Lumina Skill.
+`extensions/skills/POSCO_Skill/<skill-name>/`. Never choose `.skills/` or `skills/` for a Lumina Skill. `extensions/skills/General/` is developer-managed and must not be used for a conversation-created Skill.
 Do not run `scripts/init_skill.py` with `run_python` to create a persistent Skill: Skill Python
 execution uses a temporary directory that is removed after the Tool call. Pass `SKILL.md` and
 the required relative resource files through `create_skill`; verify its returned `packageRoot`,

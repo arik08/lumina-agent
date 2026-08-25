@@ -1419,6 +1419,7 @@ class Extension(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     project_id: Mapped[str | None] = mapped_column(
         ForeignKey("projects.id", ondelete="SET NULL"), index=True
     )
+    business_area: Mapped[str | None] = mapped_column(String(24), index=True)
     visibility: Mapped[str] = mapped_column(
         String(24), default="private", index=True, nullable=False
     )

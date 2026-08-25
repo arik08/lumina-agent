@@ -12,6 +12,7 @@ import { AdminMcpPanel } from "./AdminMcpPanel";
 import { McpMarketplacePanel } from "./McpMarketplacePanel";
 import { MarketplaceInstallButton } from "./MarketplaceInstallButton";
 import { ResizableSplitPane } from "./ResizableSplitPane";
+import { SelectMenu } from "./SelectMenu";
 import { SkillCatalogPanel, type SkillCatalogSort } from "./SkillCatalogPanel";
 import { SkillVersionHistory } from "./SkillVersionHistory";
 import { SyntaxCode, SyntaxTextarea } from "./SyntaxCode";
@@ -20,6 +21,10 @@ import "./MarketplaceTagEditor.css";
 import { markdownBodyAfterFrontmatter, splitMarkdownFrontmatter } from "./markdownFrontmatter";
 
 const api = { ...coreApi, extensions: extensionsApi };
+const skillBusinessAreaOptions = [
+  { value: "공통", label: "공통" },
+  { value: "포스코", label: "포스코" },
+] as const;
 
 interface MarketplaceViewProps {
   projectId: string | null;
@@ -198,6 +203,7 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
   const [editableFiles, setEditableFiles] = useState<Record<string, string>>({});
   const [editableName, setEditableName] = useState("");
   const [editableDescription, setEditableDescription] = useState("");
+  const [editableBusinessArea, setEditableBusinessArea] = useState<"공통" | "포스코">("포스코");
   const [editableChangeSummary, setEditableChangeSummary] = useState("");
   const [editableTags, setEditableTags] = useState<string[]>([]);
   const [editableTagInput, setEditableTagInput] = useState("");
@@ -693,6 +699,7 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
       setEditableFiles({ ...draft.package.files });
       setEditableName(selected.name);
       setEditableDescription(selected.description);
+      setEditableBusinessArea(selected.businessArea);
       setEditableChangeSummary("");
       setEditableTags(selected.tags);
       setEditableTagInput("");
@@ -726,6 +733,9 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
           description: editableDescription.trim(),
           ...(selected.canEditTags ? { tags: tagsToSave } : {}),
         });
+        if (editableBusinessArea !== selected.businessArea) {
+          await api.extensions.updateBusinessArea(selected.id, editableBusinessArea);
+        }
       }
       await refresh(selected.id);
       setEditMode(false);
@@ -943,7 +953,7 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
           </header>
           <div className={`marketplace-package-detail ${editMode ? "is-editing" : ""}`}>
             <div className="marketplace-package-summary">
-              <div>{skillView === "trash" && <strong>{trashRetentionLabel(selected.purgesAt)}</strong>}<span>Owner {selected.ownerships.filter((item) => item.role === "owner").map((item) => item.displayName).join(", ") || "미지정"}</span>{editMode && <input className="marketplace-change-summary" aria-label="Skill 변경 요약" placeholder="이번 변경 요약" value={editableChangeSummary} maxLength={500} onChange={(event) => setEditableChangeSummary(event.currentTarget.value)} />}</div>
+              <div>{skillView === "trash" && <strong>{trashRetentionLabel(selected.purgesAt)}</strong>}<span>Owner {selected.ownerships.filter((item) => item.role === "owner").map((item) => item.displayName).join(", ") || "미지정"}</span>{editMode && selected.canEdit && <label className="marketplace-business-area-field"><span>업무 영역</span><SelectMenu size="small" width="auto" value={editableBusinessArea} options={skillBusinessAreaOptions} ariaLabel="Skill 업무 영역" onChange={(value) => setEditableBusinessArea(value as "공통" | "포스코")} /></label>}{editMode && <input className="marketplace-change-summary" aria-label="Skill 변경 요약" placeholder="이번 변경 요약" value={editableChangeSummary} maxLength={500} onChange={(event) => setEditableChangeSummary(event.currentTarget.value)} />}</div>
               <div className="marketplace-package-actions">
                 {skillView === "trash" ? <button className="lumina-primary-action" type="button" disabled={busy} onClick={() => void restoreSelectedSkill()}>{busy ? <LoaderCircle className="is-running" size={14} /> : <Undo2 size={14} />} 복원</button> : <>
                   {editMode ? <><button type="button" disabled={busy} onClick={() => { setEditMode(false); setRenamingPath(null); setCreatingFolder(null); setSkillTreeContextMenu(null); }}><X size={14} /> 취소</button><button className="lumina-primary-action" type="button" disabled={busy || (selected.canEdit && !editableName.trim())} onClick={() => void savePackageEdit()}><Save size={14} /> 초안 저장</button></> : selected.canCreateDraft && <button type="button" disabled={busy} onClick={() => void beginPackageEdit()}><Pencil size={14} /> {selected.canEdit ? "편집" : "내 버전으로 수정"}</button>}

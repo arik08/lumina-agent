@@ -50,6 +50,11 @@ _IGNORED_PARTS = {
 _REPOSITORY_SYNC_LOCK = Lock()
 logger = logging.getLogger(__name__)
 
+_REPOSITORY_SKILL_CATEGORY_LABELS = {
+    "General": "공통",
+    "POSCO_Skill": "포스코",
+}
+
 
 def _catalog_tags(value: Any) -> list[str]:
     if not isinstance(value, list):
@@ -86,7 +91,15 @@ def _repository_skill_folders(repository_root: Path) -> list[Path]:
     folders: list[Path] = []
     skills_root = repository_root / "extensions" / "skills"
     if skills_root.is_dir():
-        folders.extend(path for path in skills_root.iterdir() if path.is_dir())
+        for path in sorted(item for item in skills_root.iterdir() if item.is_dir()):
+            if (path / "SKILL.md").is_file():
+                folders.append(path)
+                continue
+            folders.extend(
+                child
+                for child in sorted(item for item in path.iterdir() if item.is_dir())
+                if (child / "SKILL.md").is_file()
+            )
 
     mcp_root = repository_root / "extensions" / "mcp"
     if mcp_root.is_dir():
@@ -99,6 +112,17 @@ def _repository_skill_folders(repository_root: Path) -> list[Path]:
                     path for path in package_skills_root.iterdir() if path.is_dir()
                 )
     return sorted(folders)
+
+
+def _repository_skill_category(folder: Path, *, skills_root: Path) -> str:
+    try:
+        relative = folder.relative_to(skills_root)
+    except ValueError:
+        return "공통"
+    if len(relative.parts) < 2:
+        return "공통"
+    category = relative.parts[0]
+    return _REPOSITORY_SKILL_CATEGORY_LABELS.get(category, category)
 
 
 def sync_repository_skills(
@@ -148,7 +172,7 @@ def sync_repository_skills(
         manifest = {
             "source": "repository",
             "sourcePath": source_path,
-            "category": "기본 제공",
+            "category": _repository_skill_category(folder, skills_root=skills_root),
             "tags": tags,
             "publisher": "Lumina",
             "fileCount": len(package),
@@ -195,6 +219,8 @@ def sync_repository_skills(
         extension.description = description
         extension.tags_json = tags
         extension.kind = "mcp" if mcp_slug is not None else "skill"
+        if mcp_slug is None:
+            extension.business_area = str(manifest.get("category") or "공통")
         restored = extension.archived_at is not None
         extension.archived_at = None
         extension.visibility = "organization"
