@@ -1084,6 +1084,7 @@ async def test_pgpt_gpt_5_6_prefers_responses_with_server_compaction() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         paths.append(request.url.path)
         payload = json.loads(request.content)
+        assert "temperature" not in payload
         assert payload["reasoning"]["context"] == "all_turns"
         assert payload["context_management"] == [
             {"type": "compaction", "compact_threshold": 1_000}

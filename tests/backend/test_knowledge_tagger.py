@@ -114,6 +114,7 @@ async def test_multiple_documents_are_tagged_in_one_provider_request() -> None:
 
     assert len(provider.requests) == 1
     request = provider.requests[0]
+    assert request.temperature is None
     assert request.max_output_tokens == 1_400
     assert request.metadata["purpose"] == "knowledge_document_batch_tagging"
     assert request.messages[1].content is not None

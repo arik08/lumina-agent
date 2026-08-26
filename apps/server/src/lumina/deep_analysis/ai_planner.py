@@ -265,7 +265,6 @@ async def design_initial_workflow(
             effort=None if effort == "auto" else effort,
             response_format=_response_format(),
             max_output_tokens=2_400,
-            temperature=0,
             metadata={"purpose": "deep_analysis_initial_workflow"},
         )
     ):

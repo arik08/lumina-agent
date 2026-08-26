@@ -114,7 +114,6 @@ async def enhance_prompt(
             ),
             effort="low" if provider.capabilities.reasoning_effort else None,
             max_output_tokens=MAX_PROMPT_ENHANCEMENT_OUTPUT_TOKENS,
-            temperature=0,
             metadata={"purpose": "prompt_enhancement"},
         )
     ):

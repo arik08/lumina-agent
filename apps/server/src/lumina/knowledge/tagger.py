@@ -217,7 +217,6 @@ async def suggest_document_tag_batch(
                 candidate_count=len(selected_candidates),
             ),
             max_output_tokens=700 * len(documents),
-            temperature=0,
             metadata={"purpose": "knowledge_document_batch_tagging"},
         )
     ):

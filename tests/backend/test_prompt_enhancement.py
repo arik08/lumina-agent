@@ -58,6 +58,7 @@ async def test_prompt_enhancement_is_one_low_effort_tool_free_call() -> None:
     assert provider.request is not None
     assert provider.request.tools == ()
     assert provider.request.effort == "low"
+    assert provider.request.temperature is None
     assert (
         provider.request.max_output_tokens
         == MAX_PROMPT_ENHANCEMENT_OUTPUT_TOKENS
