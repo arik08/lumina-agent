@@ -15,15 +15,16 @@ optional client extensions, not as part of the portable standard.
 ## Workflow
 
 1. Capture intent from the conversation and existing artifacts before asking questions.
-2. Confirm the capability, trigger situations, expected inputs and outputs, dependencies,
-   failure behavior, and success criteria. Ask only for information that materially changes
-   the design.
+2. Establish the capability, triggers, inputs and outputs, dependencies, failure behavior,
+   and success criteria from available context. Ask only for missing information that
+   materially changes the design and cannot be reasonably inferred.
 3. Decide whether the capability belongs in instructions, bundled resources, or an external
    tool/runtime.
 4. Create or revise the Skill.
-5. Validate structure with the official reference validator and run every changed script.
-6. Exercise the Skill on realistic tasks, inspect the execution trace and output, revise, and
-   rerun.
+5. Validate structure and changed scripts proportionally to the change, using the validation
+   levels below.
+6. For behavior changes, exercise representative scenarios, inspect available evidence,
+   revise, and rerun affected checks.
 7. Report the validated files, behavioral evidence, remaining environment requirements, and
    any client-specific extensions.
 
@@ -162,8 +163,9 @@ execution uses a temporary directory that is removed after the Tool call. Pass `
 the required relative resource files through `create_skill`; verify its returned `packageRoot`,
 Draft revision, and file list.
 
-Outside Lumina, choose the target directory with the user when placement is not already
-implied. For a personal Codex Skill, use the configured Codex Skills directory.
+Outside Lumina, preserve an explicit or implied target directory. For a personal Codex
+Skill, default to the configured Codex Skills directory. Ask only when the destination
+changes ownership or scope and cannot be inferred.
 
 When a client exposes a persistent filesystem instead of Lumina's `create_skill` tool, run:
 
@@ -200,8 +202,10 @@ If `skills-ref` is not installed, use its official repository as documented at
 python scripts/quick_validate.py <path-to-skill>
 ```
 
-The fallback is not a substitute for official validation. Fix every validation error, then
-rerun the command.
+Report fallback structural validation separately from official validation. Fix errors in
+the changed scope and rerun affected checks. If official validation is required for the
+requested publication but unavailable, mark that gate pending and continue independent
+work; do not claim official conformance from the fallback.
 
 Also verify:
 
@@ -214,17 +218,23 @@ Also verify:
 
 ## Evaluate and Iterate
 
-Create 2-3 realistic task prompts for a basic revision and broader positive and near-miss
-negative cases for a published or high-impact Skill. For each task:
+Choose verification proportional to the change. Wording or link edits need structure and
+reference checks; trigger, approval, or completion changes need representative behavioral
+scenarios; script changes need actual entry-point tests. Use broader positive and near-miss
+cases for published or high-impact Skills. Real client execution is preferred when available
+and authorized. Obtain approval before evaluation that needs additional permissions or cost;
+otherwise use isolated deterministic checks and disclose the missing live evidence. For each
+selected behavioral task:
 
-1. Run the Skill through the real activation and tool path.
+1. Use the real activation and tool path when available and authorized; otherwise record the
+   scenario review or isolated test as such, without claiming live validation.
 2. Inspect the full trace, not only the final response.
 3. Check trigger accuracy, workflow compliance, output correctness, retries, latency, and
    unnecessary context or tool use.
 4. For objective or high-impact work, compare against a no-Skill or previous-version baseline
    and retain assertions and artifacts by Skill digest.
 5. Revise reusable instructions or scripts rather than overfitting to one prompt.
-6. Rerun the full set after each material change.
+6. Rerun affected checks after material changes; broaden only for unresolved risks.
 
 Use the dedicated Skill evaluator when available for systematic benchmarking. Static lint and
 frontmatter validation prove structure, not behavioral quality.

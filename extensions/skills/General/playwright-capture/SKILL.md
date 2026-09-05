@@ -30,7 +30,7 @@ python <skill>/scripts/capture_html.py path/to/slides.html --png slide.png --wid
 python <skill>/scripts/capture_html.py https://example.com --png page.png
 ```
 
-The script installs nothing. If Playwright is missing, report the missing dependency and ask before installing packages.
+The script installs nothing. If Playwright is missing, first check for an already available compatible runtime. If installation remains necessary, report the missing dependency and ask before installing packages unless that exact installation is already explicitly authorized.
 
 ## Workflow
 
@@ -41,6 +41,9 @@ The script installs nothing. If Playwright is missing, report the missing depend
 5. For high-stakes visuals, use `visual-review` after capture.
 
 ## Safety
+
+Approval is tied to the target, scope, and version. Reuse explicit approval already given for the same conditions; request approval again if its target changes. Silence or elapsed time is not approval. Preserve every explicit approval gate below.
+
 
 - Do not capture private/authenticated pages unless the user explicitly provided access and confirmed intent.
 - Do not invent URLs.

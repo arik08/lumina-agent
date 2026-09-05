@@ -15,6 +15,7 @@ except ImportError:  # pragma: no cover - MyHarness depends on PyYAML, but keep 
     yaml = None
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+FRONTMATTER_FIELDS = {"name", "description", "license", "compatibility", "metadata", "allowed-tools"}
 SUSPICIOUS_PATTERNS = [
     (re.compile(r"\brm\s+-rf\b", re.I), "destructive rm -rf command"),
     (re.compile(r"\bgit\s+reset\s+--hard\b", re.I), "destructive git reset"),
@@ -97,9 +98,23 @@ def lint_skill(path: Path) -> dict[str, Any]:
     if error:
         add(findings, "P0", error, skill_md.relative_to(skill_dir))
     else:
-        extra_keys = sorted(set(frontmatter or {}) - {"name", "description"})
+        extra_keys = sorted(str(key) for key in (frontmatter or {}) if key not in FRONTMATTER_FIELDS)
         if extra_keys:
             add(findings, "P2", f"frontmatter has nonstandard keys: {', '.join(extra_keys)}", skill_md.relative_to(skill_dir))
+
+        metadata = (frontmatter or {}).get("metadata")
+        if "metadata" in (frontmatter or {}) and (
+            not isinstance(metadata, dict)
+            or any(not isinstance(key, str) or not isinstance(value, str) for key, value in metadata.items())
+        ):
+            add(findings, "P2", "metadata must map string keys to string values", skill_md.relative_to(skill_dir))
+        for field in ("license", "compatibility", "allowed-tools"):
+            if field in (frontmatter or {}):
+                value = frontmatter[field]
+                if not isinstance(value, str) or not value.strip():
+                    add(findings, "P2", f"{field} must be a non-empty string", skill_md.relative_to(skill_dir))
+                elif field == "compatibility" and len(value) > 500:
+                    add(findings, "P2", "compatibility must be <=500 characters", skill_md.relative_to(skill_dir))
 
         name = str((frontmatter or {}).get("name") or "")
         description = str((frontmatter or {}).get("description") or "")

@@ -15,14 +15,14 @@ Review skills like code: lead with concrete risks, line references, and practica
 2. Run the bundled linter when possible:
 
    ```bash
-   python .skills/skill-evaluator/scripts/skill_lint.py .skills/example-skill
+   python <skill-root>/scripts/skill_lint.py <target-skill-directory>
    ```
 
-3. Read `SKILL.md` and check that frontmatter has only `name` and `description`, with a precise trigger description that says when to use and when not to use the skill.
+3. Require `name` and `description`; allow `license`, `compatibility`, string-to-string `metadata`, and experimental `allowed-tools` under the project-adopted specification. Review other client extensions separately instead of removing required metadata. Check that the trigger describes the intended task precisely.
 4. Compare the skill name and description against existing skills to find overlap, shadowing, or trigger ambiguity.
 5. Inspect referenced scripts before recommending execution. Look for shell injection, destructive commands, network downloads, credential access, hidden payloads, prompt-injection text, and broad filesystem operations.
 6. Check progressive disclosure: keep core workflow in `SKILL.md`; move long optional details to one-level `references/` files; avoid README-style clutter.
-7. Check MyHarness compatibility: lowercase hyphenated name, UTF-8 text, no source-translation edits for UI labels, and concise `agents/openai.yaml` metadata when present.
+7. Check target-client compatibility (Lumina, Codex, or MyHarness as applicable): lowercase hyphenated name, UTF-8 text, no source-translation edits for UI labels, and concise `agents/openai.yaml` metadata when present.
 8. If the skill is complex or high-risk, forward-test it with a realistic user task before calling it ready.
 
 ## Finding Severity
