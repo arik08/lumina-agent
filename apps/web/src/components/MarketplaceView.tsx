@@ -215,6 +215,9 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
   const [draggedPath, setDraggedPath] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [permanentDeleteConfirmId, setPermanentDeleteConfirmId] = useState<string | null>(null);
+  const [adminPassword, setAdminPassword] = useState("");
+  const [permanentDeleteError, setPermanentDeleteError] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [projectScopeOpen, setProjectScopeOpen] = useState(false);
   const [projectScopeDraft, setProjectScopeDraft] = useState<Set<string> | null>(null);
@@ -416,6 +419,9 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
     setDraggedPath(null);
     setDropTarget(null);
     setDeleteConfirmId(null);
+    setPermanentDeleteConfirmId(null);
+    setAdminPassword("");
+    setPermanentDeleteError(null);
   }, [selected?.id, skillView]);
 
   useEffect(() => {
@@ -503,6 +509,32 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
       await Promise.all([refresh(restored.id), refreshCatalog()]);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Skill을 복원하지 못했습니다.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const permanentlyDeleteSelectedSkill = async () => {
+    if (!selected || skillView !== "trash" || !canManage || busy) return;
+    if (permanentDeleteConfirmId !== selected.id) {
+      setPermanentDeleteConfirmId(selected.id);
+      setAdminPassword("");
+      setPermanentDeleteError(null);
+      return;
+    }
+    if (!adminPassword) {
+      setPermanentDeleteError("관리자 비밀번호를 입력해 주세요.");
+      return;
+    }
+    setBusy(true);
+    setPermanentDeleteError(null);
+    try {
+      await api.extensions.permanentlyDelete(selected.id, adminPassword);
+      setPermanentDeleteConfirmId(null);
+      setAdminPassword("");
+      await refresh();
+    } catch (caught) {
+      setPermanentDeleteError(caught instanceof ApiError ? caught.message : "Skill을 영구 삭제하지 못했습니다.");
     } finally {
       setBusy(false);
     }
@@ -955,7 +987,7 @@ export function MarketplaceView({ projectId, onOpenNavigation, canManage }: Mark
             <div className="marketplace-package-summary">
               <div>{skillView === "trash" && <strong>{trashRetentionLabel(selected.purgesAt)}</strong>}<span>Owner {selected.ownerships.filter((item) => item.role === "owner").map((item) => item.displayName).join(", ") || "미지정"}</span>{editMode && selected.canEdit && <label className="marketplace-business-area-field"><span>업무 영역</span><SelectMenu size="small" width="auto" value={editableBusinessArea} options={skillBusinessAreaOptions} ariaLabel="Skill 업무 영역" onChange={(value) => setEditableBusinessArea(value as "공통" | "포스코")} /></label>}{editMode && <input className="marketplace-change-summary" aria-label="Skill 변경 요약" placeholder="이번 변경 요약" value={editableChangeSummary} maxLength={500} onChange={(event) => setEditableChangeSummary(event.currentTarget.value)} />}</div>
               <div className="marketplace-package-actions">
-                {skillView === "trash" ? <button className="lumina-primary-action" type="button" disabled={busy} onClick={() => void restoreSelectedSkill()}>{busy ? <LoaderCircle className="is-running" size={14} /> : <Undo2 size={14} />} 복원</button> : <>
+                {skillView === "trash" ? <><button className="lumina-primary-action" type="button" disabled={busy} onClick={() => void restoreSelectedSkill()}>{busy && permanentDeleteConfirmId !== selected.id ? <LoaderCircle className="is-running" size={14} /> : <Undo2 size={14} />} 복원</button>{canManage && <form className="marketplace-permanent-delete" onSubmit={(event) => { event.preventDefault(); void permanentlyDeleteSelectedSkill(); }}>{permanentDeleteConfirmId === selected.id && <input type="password" aria-label="관리자 비밀번호" autoComplete="current-password" placeholder="관리자 비밀번호" value={adminPassword} disabled={busy} onChange={(event) => { setAdminPassword(event.currentTarget.value); setPermanentDeleteError(null); }} autoFocus />}<button className={`text-danger ${permanentDeleteConfirmId === selected.id ? "is-delete-armed" : ""}`} type="submit" aria-label={permanentDeleteConfirmId === selected.id ? `${selected.name} 영구 삭제, 관리자 비밀번호 확인 필요` : `${selected.name} 바로 삭제`} disabled={busy}>{busy && permanentDeleteConfirmId === selected.id ? <LoaderCircle className="is-running" size={14} /> : permanentDeleteConfirmId === selected.id ? <AlertTriangle size={14} /> : <Trash2 size={14} />} {permanentDeleteConfirmId === selected.id ? "영구 삭제" : "바로 삭제"}</button>{permanentDeleteConfirmId === selected.id && permanentDeleteError && <small role="alert">{permanentDeleteError}</small>}</form>}</> : <>
                   {editMode ? <><button type="button" disabled={busy} onClick={() => { setEditMode(false); setRenamingPath(null); setCreatingFolder(null); setSkillTreeContextMenu(null); }}><X size={14} /> 취소</button><button className="lumina-primary-action" type="button" disabled={busy || (selected.canEdit && !editableName.trim())} onClick={() => void savePackageEdit()}><Save size={14} /> 초안 저장</button></> : selected.canCreateDraft && <button type="button" disabled={busy} onClick={() => void beginPackageEdit()}><Pencil size={14} /> {selected.canEdit ? "편집" : "내 버전으로 수정"}</button>}
                   {!editMode && selected.draft?.dirty && <button type="button" disabled={busy} onClick={() => void saveVersion()}><Check size={14} /> {nextSavedSkillDisplayVersion(selected)}로 저장</button>}
                   {!editMode && selected.versions.length > 0 && <button type="button" aria-pressed={versionHistoryOpen} disabled={busy} onClick={() => setVersionHistoryOpen((current) => !current)}><History size={14} /> {versionHistoryOpen ? "패키지 보기" : "버전 이력"}</button>}

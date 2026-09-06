@@ -31,6 +31,10 @@ class ExtensionBusinessAreaPatch(ApiModel):
     business_area: Literal["공통", "포스코"]
 
 
+class AdminPasswordConfirmation(ApiModel):
+    password: str = Field(min_length=1, max_length=1024)
+
+
 class DraftUpdate(ApiModel):
     expected_revision: int = Field(ge=1)
     expected_digest: str = Field(min_length=64, max_length=64)

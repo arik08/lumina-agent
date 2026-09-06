@@ -2,7 +2,7 @@
 
 - 작성일: 2026-07-14
 - 비교 대상: Lumina Agent 현재 구현과 `.examples/MyHarness` 참조 구현
-- 주력 운영 모델: 회사 P-GPT의 `gpt-5.4`, `gpt-5.4-mini`
+- 주력 운영 모델: 회사 P-GPT의 `gpt-5.6-sol`, `gpt-5.6-luna`
 - 검증 제약: 개발 환경에서는 회사 P-GPT에 접속할 수 없으므로, 저장소 코드·로컬 Run DB·백엔드 로그·P-GPT 모의 응답을 근거로 분석하고 회사에서는 최소 smoke test만 수행하도록 설계했다.
 
 ## 1. 결론
@@ -45,7 +45,7 @@ Lumina에서 체감된 “Agent가 돌다가 죽음”의 로컬 1순위 원인�
 |---|---|---|---|
 | Agent loop | `src/myharness/engine/query.py`의 자체 event loop | `apps/server/src/lumina/agent/executor.py`의 자체 Run executor | 프레임워크 선택이 차이를 설명하지 않는다. |
 | 실행 프로세스 | React launcher가 backend subprocess를 안정적으로 유지하고 명시적으로 재시작 | 개발 모드 Uvicorn `--reload`가 repo root를 감시 | Lumina P0 장애 원인이다. |
-| P-GPT 모델 | 기본 `gpt-5.4`, `gpt-5.4-mini` 허용 | 동일 모델 catalog 보유 | 모델 이름보다 transport 차이가 중요하다. |
+| P-GPT 모델 | 기본 `gpt-5.6-sol`, `gpt-5.6-luna` 허용 | 동일 모델 catalog 보유 | 모델 이름보다 transport 차이가 중요하다. |
 | P-GPT timeout | profile 180초 | profile 180초 | 시간 제한은 이미 정렬돼 있다. |
 | 기본 출력 상한 | interactive 42,000 token | P-GPT 42,000 token | 출력 상한은 이미 정렬돼 있다. |
 | 선택 필드 거부 | 필드별 disable 후 재시도 | HTTP 오류로 종료 | 회사 gateway 편차에 취약했다. |
@@ -114,14 +114,14 @@ OpenAI-compatible이라는 이름은 모든 gateway가 같은 선택 필드를 �
 
 조치: OpenAI-compatible parser가 표준 multiline SSE `data:` event와 일부 gateway가 보내는 raw JSON line을 모두 처리한다. 잘린/비정상 stream event는 재시도 가능한 stream 오류로 분류하고, error event의 408/409/425/429, 5xx, rate limit, overload, timeout, temporary unavailable 신호도 retryable로 전달한다. context overflow는 별도 `context` stage로 유지해 executor의 reactive compaction 경로를 탄다.
 
-## 4. `gpt-5.4`와 `gpt-5.4-mini` 운영 해석
+## 4. `gpt-5.6-sol`와 `gpt-5.6-luna` 운영 해석
 
 현재 Lumina catalog와 MyHarness 기준은 다음과 같이 정렬돼 있다.
 
 | 모델 | context 기준 | 용도 | 운영 주의 |
 |---|---:|---|---|
-| `gpt-5.4` | 1,050,000 token | 긴 조사, 복합 Tool loop, 큰 프로젝트 문맥 | 큰 창이 있어도 Tool output 누적으로 임계치에 닿으므로 microcompact는 필요하다. |
-| `gpt-5.4-mini` | 400,000 token | 빠른 일반 업무, 비용·지연 민감 작업 | 동일 대화가 더 빨리 압축되므로 구조 보존 순서가 특히 중요하다. |
+| `gpt-5.6-sol` | 1,050,000 token | 긴 조사, 복합 Tool loop, 큰 프로젝트 문맥 | 큰 창이 있어도 Tool output 누적으로 임계치에 닿으므로 microcompact는 필요하다. |
+| `gpt-5.6-luna` | 기본 272,000 / 최대 1,050,000 token | 빠른 일반 업무, 비용·지연 민감 작업 | 선택한 용량 모드에서도 구조 보존 순서는 동일하게 유지한다. |
 
 둘 모두 P-GPT timeout 180초, 기본 interactive output 42,000 token 정책을 유지한다. 모델 context 수치를 요청 payload에 그대로 가득 채우지 않고 기존 Lumina의 안전 padding/threshold를 유지한다. 이번 변경은 모델별 API 가정을 새로 추가하지 않고, gateway가 명시적으로 거부한 optional field만 협상한다.
 
@@ -177,10 +177,10 @@ OpenAI-compatible이라는 이름은 모든 gateway가 같은 선택 필드를 �
 회사에서는 아래 순서만 확인하면 된다. 실패 시 같은 Run을 여러 번 반복하기보다 첫 실패의 backend log와 Run event를 보존한다.
 
 1. 최신 코드로 launcher를 시작하고 frontend와 backend가 정상 표시되는지 확인한다.
-2. P-GPT `gpt-5.4-mini`로 “현재 프로젝트 파일 하나 읽고 한 문장으로 요약” 같은 read-only Tool Run을 실행한다.
+2. P-GPT `gpt-5.6-luna`로 “현재 프로젝트 파일 하나 읽고 한 문장으로 요약” 같은 read-only Tool Run을 실행한다.
 3. backend log에 optional field downgrade 경고가 있더라도 Run이 같은 요청에서 성공하는지 확인한다.
 4. 실행 중 다른 소스 파일을 저장해도 backend PID가 바뀌거나 `run_interrupted`가 생기지 않는지 확인한다.
-5. `gpt-5.4`로 여러 Tool 호출이 필요한 작업을 한 번 실행하고, Tool 실패를 하나 유도할 수 있다면 오류를 읽고 대안을 선택하는지 확인한다.
+5. `gpt-5.6-sol`로 여러 Tool 호출이 필요한 작업을 한 번 실행하고, Tool 실패를 하나 유도할 수 있다면 오류를 읽고 대안을 선택하는지 확인한다.
 6. 긴 대화 또는 큰 Tool 결과 후 다음 질문이 이전 목표·파일명·완료 상태를 유지하는지 확인한다.
 7. 종료 후 해당 Run의 `run_interrupted`, `run_recovery_scheduled`, `context_compaction_started/completed`, `run_failed/completed` event 순서를 기록한다.
 

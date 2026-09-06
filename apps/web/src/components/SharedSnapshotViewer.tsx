@@ -15,6 +15,7 @@ import { api, ApiError } from "../api";
 import type { SharedConversationSnapshot } from "../api-types";
 import { copyText } from "../clipboard";
 import { sanitizeAssistantResponse } from "../assistant-response";
+import { MarkdownResponse } from "./ConversationTurn";
 
 interface SharedSnapshotViewerProps {
   artifactId?: string | null;
@@ -265,7 +266,12 @@ export function SharedSnapshotViewer({
           {snapshot.messages.map((message) => message.role === "user" ? (
             <div className="shared-user-message" key={message.id}>{message.text}</div>
           ) : message.role === "assistant" ? (
-            <div className="shared-assistant-message" key={message.id}><Sparkles size={15} /><p>{sanitizeAssistantResponse(message.text, snapshot.artifacts.length > 0)}</p></div>
+            <div className="shared-assistant-message" key={message.id}>
+              <Sparkles size={15} />
+              <div className="shared-assistant-content conversation-response-typography">
+                <MarkdownResponse text={sanitizeAssistantResponse(message.text, snapshot.artifacts.length > 0)} />
+              </div>
+            </div>
           ) : null)}
         </section>
         {(snapshot.attachments.length > 0 || snapshot.artifacts.length > 0) && (

@@ -7,7 +7,7 @@
 
 ## 1. 경영 요약
 
-Lumina의 모델별 전체 컨텍스트 한도는 기준 구현과 일치한다. P-GPT `gpt-5.4`는 1,050,000 tokens, `gpt-5.4-mini`는 400,000 tokens이고, Codex 계열은 272,000 tokens와 85% 압축 임계값을 사용한다. 다만 2026-07-17 추가 실측으로 P-GPT 입력 상한은 전체 Context window보다 작다는 점이 확인되어 `gpt-5.4-mini` 270,000, `gpt-5.5` 911,900 tokens를 별도 capability로 적용했다. `gpt-5.4`는 같은 계열이라는 사용자 관측에 따라 911,900 tokens를 추정 상한으로 적용한다. 따라서 문제의 핵심은 전체 Context window 숫자뿐 아니라 입력 상한을 포함한 다음 실행 정책이다.
+Lumina의 GPT 계열은 Sol·Terra·Luna로 통일합니다. 세 모델 모두 기본 272K Context와 선택 가능한 1.05M 최대 모드를 사용하며, 실행 시 선택한 용량 모드와 입력 예산을 Run snapshot에 고정합니다. 따라서 문제의 핵심은 전체 Context window 숫자뿐 아니라 입력 상한을 포함한 실행 정책입니다.
 
 1. Provider가 텍스트를 일부 전송한 뒤 일시 오류를 내면 Lumina는 재개를 시도하지 않고 Run을 실패시켰다.
 2. HTTP `Retry-After`를 반영하지 않고 고정 1초·2초 지연으로 재시도했다.
@@ -141,10 +141,10 @@ flowchart TD
 
 | Provider/Model | 모델 전체 Context | Max output | 기본 요청 output | 자동 압축 시작 비율 |
 |---|---:|---:|---:|---:|
-| P-GPT `gpt-5.4` | 1,050,000 (입력 상한 911,900, 추정) | 128,000 | 42,000 | 75% |
-| P-GPT `gpt-5.4-mini` | 400,000 (입력 상한 270,000, 실측) | 128,000 | 42,000 | 75% |
-| P-GPT `gpt-5.5` | 1,050,000 (입력 상한 911,900, 실측) | 128,000 | 42,000 | 75% |
-| Codex `gpt-5.4/5.5/5.6` 계열 | 272,000 | 모델 계약값 | 설정값 | 85% |
+| P-GPT `gpt-5.6-sol` | 기본 272,000 / 최대 1,050,000 | 128,000 | 42,000 | 용량 모드별 정책 |
+| P-GPT `gpt-5.6-terra` | 기본 272,000 / 최대 1,050,000 | 128,000 | 42,000 | 용량 모드별 정책 |
+| P-GPT `gpt-5.6-luna` | 기본 272,000 / 최대 1,050,000 | 128,000 | 42,000 | 용량 모드별 정책 |
+| Codex GPT-5.6 계열 | 기본 272,000 / 최대 1,050,000 | 모델 계약값 | 설정값 | 용량 모드별 정책 |
 
 P-GPT 1.05M/400K는 MyHarness의 **모델 전체 Context window**와 일치하고, Codex 272K·85%는 Hermes 계열의 운용 방향과 일치한다. P-GPT 입력 상한 911.9K/270K는 별도 제약이며, 전체 window를 곧바로 입력 상한이나 자동 압축 시작점으로 해석하면 안 된다.
 
@@ -154,7 +154,7 @@ Lumina는 단순히 context window 전체를 입력으로 사용하지 않는다
 
 `effective input budget = context window - reserved output - tool schema tokens - safety margin`
 
-현재 P-GPT `gpt-5.4` 설정을 Tool schema 적용 전 기준으로 대입하면 다음과 같다.
+현재 P-GPT `gpt-5.6-sol` 설정을 Tool schema 적용 전 기준으로 대입하면 다음과 같다.
 
 - 모델 전체 Context: `1,050,000`
 - 운영 최대 출력: `42,000`

@@ -1529,8 +1529,41 @@ def test_skill_trash_requires_owner_or_admin_and_supports_restore_and_expiry(
             organization_id=organization.id,
             created_by_user_id=admin.id,
         )
+        foreign_organization = Organization(slug="other-org", name="Other Org")
+        db.add(foreign_organization)
+        db.flush()
+        foreign_owner = create_user(
+            db,
+            login_name="foreign-skill-owner",
+            password="pw",
+            organization_id=foreign_organization.id,
+        )
+        foreign_trashed_skill = Extension(
+            kind="skill",
+            slug="foreign-trashed-skill",
+            name="다른 조직 삭제 Skill",
+            owner_user_id=foreign_owner.id,
+            creator_user_id=foreign_owner.id,
+            organization_id=foreign_organization.id,
+            visibility="private",
+            archived_at=utc_now(),
+        )
+        same_org_trashed_mcp = Extension(
+            kind="mcp",
+            slug="same-org-trashed-mcp",
+            name="같은 조직 삭제 MCP",
+            owner_user_id=admin.id,
+            creator_user_id=admin.id,
+            organization_id=organization.id,
+            visibility="organization",
+            archived_at=utc_now(),
+        )
+        db.add_all([foreign_trashed_skill, same_org_trashed_mcp])
+        db.flush()
         owner_id = owner.id
         maintainer_id = maintainer.id
+        foreign_trashed_skill_id = foreign_trashed_skill.id
+        same_org_trashed_mcp_id = same_org_trashed_mcp.id
         db.commit()
 
     with TestClient(app) as client:
@@ -1578,6 +1611,19 @@ def test_skill_trash_requires_owner_or_admin_and_supports_restore_and_expiry(
         client.cookies.clear()
         admin_csrf = _login(client)
         admin_headers = {"X-CSRF-Token": admin_csrf}
+        admin_trash = client.get("/api/extensions/trash")
+        assert admin_trash.status_code == 200, admin_trash.text
+        visible_trash_ids = {item["id"] for item in admin_trash.json()}
+        assert foreign_trashed_skill_id not in visible_trash_ids
+        assert same_org_trashed_mcp_id not in visible_trash_ids
+        foreign_permanent_delete = client.request(
+            "DELETE",
+            f"/api/extensions/{foreign_trashed_skill_id}/permanent",
+            headers=admin_headers,
+            json={"password": "1111"},
+        )
+        assert foreign_permanent_delete.status_code == 404
+        assert foreign_permanent_delete.json()["code"] == "trashed_extension_not_found"
         ownership = client.post(
             f"/api/skills/{skill['id']}/ownerships",
             headers=admin_headers,
@@ -1659,14 +1705,60 @@ def test_skill_trash_requires_owner_or_admin_and_supports_restore_and_expiry(
             },
         )
         assert admin_deletable.status_code == 201, admin_deletable.text
+        permanent_skill_id = admin_deletable.json()["id"]
+        permanent_draft_id = admin_deletable.json()["draft"]["id"]
+        owner_trashed = client.delete(
+            f"/api/extensions/{permanent_skill_id}",
+            headers={"X-CSRF-Token": owner_csrf},
+        )
+        assert owner_trashed.status_code == 204, owner_trashed.text
+        owner_permanent = client.request(
+            "DELETE",
+            f"/api/extensions/{permanent_skill_id}/permanent",
+            headers={"X-CSRF-Token": owner_csrf},
+            json={"password": "pw"},
+        )
+        assert owner_permanent.status_code == 403, owner_permanent.text
+        assert owner_permanent.json()["code"] == "extension_permanent_delete_forbidden"
+
         client.cookies.clear()
         admin_csrf = _login(client)
-        admin_deleted = client.delete(
-            f"/api/extensions/{admin_deletable.json()['id']}",
+        wrong_password = client.request(
+            "DELETE",
+            f"/api/extensions/{permanent_skill_id}/permanent",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={"password": "wrong"},
+        )
+        assert wrong_password.status_code == 401, wrong_password.text
+        assert wrong_password.json()["code"] == "admin_password_invalid"
+        permanently_deleted = client.request(
+            "DELETE",
+            f"/api/extensions/{permanent_skill_id}/permanent",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={"password": "1111"},
+        )
+        assert permanently_deleted.status_code == 204, permanently_deleted.text
+
+        with SessionLocal() as db:
+            assert db.get(Extension, permanent_skill_id) is None
+            assert db.get(ExtensionDraft, permanent_draft_id) is None
+
+        expiring = client.post(
+            "/api/extensions",
+            headers={"X-CSRF-Token": admin_csrf},
+            json={
+                "name": "자동 만료 점검",
+                "slug": "automatic-expiry-check",
+                "package": {"files": {"SKILL.md": "# 자동 만료 점검"}},
+            },
+        )
+        assert expiring.status_code == 201, expiring.text
+        expired_skill_id = expiring.json()["id"]
+        expired_trashed = client.delete(
+            f"/api/extensions/{expired_skill_id}",
             headers={"X-CSRF-Token": admin_csrf},
         )
-        assert admin_deleted.status_code == 204, admin_deleted.text
-        expired_skill_id = admin_deletable.json()["id"]
+        assert expired_trashed.status_code == 204, expired_trashed.text
 
         with SessionLocal() as db:
             expired = db.get(Extension, expired_skill_id)
@@ -1682,7 +1774,11 @@ def test_skill_trash_requires_owner_or_admin_and_supports_restore_and_expiry(
         assert db.get(Extension, expired_skill_id) is None
         assert owner_id == extension.owner_user_id
         actions = set(db.scalars(select(AuditEvent.action)))
-        assert {"extension_trashed", "extension_restored"} <= actions
+        assert {
+            "extension_trashed",
+            "extension_restored",
+            "extension_permanently_deleted",
+        } <= actions
 
 
 def test_skill_version_history_compare_and_revert_style_rollback(

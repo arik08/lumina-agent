@@ -1959,6 +1959,18 @@ export async function updateExtensionBusinessArea(
   });
 }
 
+export async function permanentlyDeleteExtension(
+  extensionId: string,
+  password: string,
+  signal?: AbortSignal,
+) {
+  await request<void>(`/extensions/${encodeURIComponent(extensionId)}/permanent`, {
+    method: "DELETE",
+    body: { password },
+    signal,
+  });
+}
+
 export async function createSkill(
   payload: { name: string; description: string; projectId?: string; files: Record<string, string> },
   signal?: AbortSignal,

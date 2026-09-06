@@ -3299,16 +3299,16 @@ def test_cost_breakdown_separates_cache_tokens_and_no_cache_upper_bound(
             run = db.get(Run, run_id)
             assert run is not None
             run.provider_id = "codex"
-            run.model_key = "gpt-5.5"
-            run.model_display_name = "GPT-5.5"
+            run.model_key = "gpt-5.6-terra"
+            run.model_display_name = "GPT-5.6-Terra"
             run.usage_json = {
                 "input_tokens": 1_000,
                 "cached_input_tokens": 400,
                 "cache_write_tokens": 100,
                 "uncached_input_tokens": 500,
                 "output_tokens": 200,
-                "estimated_cost_breakdown_usd": {"total": 0.009},
-                "pricing_version": "public-list-2026-07-12",
+                    "estimated_cost_breakdown_usd": {"total": 0.00373},
+                    "pricing_version": "public-list-2026-08-06",
                 "cost_basis": "price_table_estimate",
             }
             db.commit()
@@ -3324,7 +3324,7 @@ def test_cost_breakdown_separates_cache_tokens_and_no_cache_upper_bound(
             "outputTokens": 200,
         }
         assert payload["cacheHitRatio"] == 400 / 900
-        assert payload["rows"][0]["pricingVersion"] == "public-list-2026-07-12"
+        assert payload["rows"][0]["pricingVersion"] == "public-list-2026-08-06"
         assert (
             payload["rows"][0]["noCacheCostMicrousd"]
             > payload["rows"][0]["actualCostMicrousd"]

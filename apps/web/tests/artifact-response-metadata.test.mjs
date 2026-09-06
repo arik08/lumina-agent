@@ -14,6 +14,15 @@ test("assistant responses hide internal artifact UUID metadata everywhere users 
   assert.match(sharedViewerSource, /sanitizeAssistantResponse\(message\.text, snapshot\.artifacts\.length > 0\)/);
 });
 
+test("shared assistant responses use the same Markdown renderer as Lumina conversations", () => {
+  assert.match(sharedViewerSource, /import \{ MarkdownResponse \} from "\.\/ConversationTurn"/);
+  assert.match(
+    sharedViewerSource,
+    /className="shared-assistant-content conversation-response-typography"[\s\S]*<MarkdownResponse text=\{sanitizeAssistantResponse\(message\.text, snapshot\.artifacts\.length > 0\)\} \/>/,
+  );
+  assert.doesNotMatch(sharedViewerSource, /<p>\{sanitizeAssistantResponse\(/);
+});
+
 test("artifact metadata matcher handles the response formats produced by providers", () => {
   const regexLiteral = sanitizerSource.match(/internalArtifactMetadataLine\s*=\s*\/(.+)\/gim;/s);
   assert.ok(regexLiteral);

@@ -18,6 +18,7 @@ from ...extensions.schemas import (
     DraftActivation,
     DraftSaveVersion,
     DraftUpdate,
+    AdminPasswordConfirmation,
     ExtensionCreate,
     ExtensionBusinessAreaPatch,
     ExtensionPatch,
@@ -55,6 +56,7 @@ from ...extensions.service import (
     list_trashed_extensions,
     move_folder,
     move_skill_to_folder,
+    permanently_delete_trashed_skill,
     purge_expired_trashed_skills,
     publish_version,
     require_extension,
@@ -369,6 +371,34 @@ def patch_extension_business_area(
                 target.rename(source)
         raise
     return extension_payload(db, extension, user=context.user)
+
+
+@router.delete("/extensions/{extension_id}/permanent", status_code=204)
+def delete_extension_permanently(
+    extension_id: str,
+    payload: AdminPasswordConfirmation,
+    request: Request,
+    context: AuthContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> Response:
+    kind = permanently_delete_trashed_skill(
+        db,
+        user=context.user,
+        extension_id=extension_id,
+        password=payload.password,
+    )
+    record_audit(
+        db,
+        action="extension_permanently_deleted",
+        target_type="extension",
+        target_id=extension_id,
+        result="success",
+        actor=context.user,
+        request_id=_request_id(request),
+        metadata={"kind": kind},
+    )
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.post("/extensions/{extension_id}/draft")

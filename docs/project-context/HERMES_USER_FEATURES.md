@@ -414,7 +414,7 @@ Hermes의 Memory를 파일이나 외부 Provider 형태로 그대로 복제하�
 - 자동 압축이 발생하면 무엇이 요약되었는지 상태 메시지를 남깁니다.
 - 사용자가 필요할 때 수동 압축을 요청할 수 있게 합니다.
 - 대화 중 system prompt와 Tool schema를 불필요하게 바꾸지 않아 Provider cache를 활용합니다.
-- Codex GPT-5.4·5.5·5.6 계열만 서비스 정책상 272K Context와 85% 자동 압축 임계값을 적용하여 36K 수준에서 원문 prefix와 cache lineage를 불필요하게 끊지 않습니다. P-GPT와 다른 표준 API Provider는 각 API model의 실제 Context window를 사용합니다.
+- GPT-5.6 Sol·Terra·Luna 계열은 기본 272K Context와 선택 가능한 1.05M 최대 모드를 사용하며 선택한 용량 모드는 Run snapshot에 고정합니다. P-GPT와 다른 표준 API Provider는 각 API model의 실제 Context window를 사용합니다.
 - Provider·Model 변경은 새 Run부터 적용하고 진행 중인 Run의 Context 계약을 바꾸지 않습니다.
 
 ### 사용자 가치

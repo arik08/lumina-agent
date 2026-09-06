@@ -251,6 +251,7 @@ Fork는 원본과 다른 새 `extension_id`와 Private WorkingDraft를 만들고
 - Marketplace의 `삭제됨` 탭에서 보관 항목과 자동 삭제 예정일을 확인하고 30일 안에는 원래 ID와 상태를 유지한 채 복원할 수 있습니다. ⓘ tooltip으로 이 보존 정책을 안내합니다.
 - 삭제 control은 같은 자리의 2단계 확인을 사용하며 표시 문구는 `삭제 → 경고`로 짧게 유지합니다.
 - 30일이 지나면 catalog·Draft·version·installation과 정리 metadata를 물리 삭제합니다. 완료된 Run에 이미 고정된 Skill snapshot과 Audit Log는 삭제하지 않습니다.
+- 관리자는 `삭제됨` 상세에서 관리자 계정의 현재 비밀번호를 다시 확인한 뒤 30일을 기다리지 않고 즉시 영구 삭제할 수 있습니다. 비밀번호는 저장하거나 Audit metadata에 남기지 않으며, 일반 사용자에게는 이 action을 노출하거나 허용하지 않습니다.
 - 보안 사고에는 Revoked 처리로 즉시 신규 실행을 막고, 영향을 받은 설치와 Run을 관리자에게 표시합니다.
 
 ## 작성과 검증 흐름

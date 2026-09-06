@@ -118,9 +118,7 @@ def get_knowledge_tags(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[dict[str, object]]:
-    return knowledge_tag_payloads(
-        db, list_knowledge_tags(db, user, space_id=space_id)
-    )
+    return knowledge_tag_payloads(db, list_knowledge_tags(db, user, space_id=space_id))
 
 
 @router.get("/tag-proposals")
@@ -278,9 +276,7 @@ def patch_knowledge_document_tags(
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    document = update_knowledge_document_tags(
-        db, context.user, document_id, payload
-    )
+    document = update_knowledge_document_tags(db, context.user, document_id, payload)
     record_audit(
         db,
         action="knowledge_document_tags_updated",

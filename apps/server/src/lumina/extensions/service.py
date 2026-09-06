@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, load_only
 from yaml import YAMLError, safe_load
 
 from ..api.errors import ApiProblem
+from ..auth import verify_password
 from ..authorization import require_conversation, require_project
 from ..models import (
     Extension,
@@ -540,15 +541,63 @@ def purge_expired_trashed_skills(db: Session, *, now: datetime | None = None) ->
     return len(expired_ids)
 
 
+def permanently_delete_trashed_skill(
+    db: Session, *, user: User, extension_id: str, password: str
+) -> str:
+    if user.role != "admin":
+        raise ApiProblem(
+            403,
+            "extension_permanent_delete_forbidden",
+            "관리자만 Skill을 영구 삭제할 수 있습니다.",
+        )
+    if not verify_password(password, user.password_hash):
+        raise ApiProblem(
+            401,
+            "admin_password_invalid",
+            "관리자 비밀번호가 올바르지 않습니다.",
+        )
+    extension = db.scalar(
+        select(Extension).where(
+            Extension.id == extension_id,
+            Extension.organization_id == user.organization_id,
+            Extension.kind == "skill",
+            Extension.archived_at.is_not(None),
+        )
+    )
+    if extension is None:
+        raise ApiProblem(
+            404,
+            "trashed_extension_not_found",
+            "영구 삭제할 Skill을 찾을 수 없습니다.",
+        )
+    kind = extension.kind
+    db.execute(
+        delete(ExtensionInstallation).where(
+            ExtensionInstallation.extension_id == extension.id
+        )
+    )
+    db.execute(delete(Extension).where(Extension.id == extension.id))
+    db.flush()
+    return kind
+
+
 def trashed_extension_access_query(user: User):
+    skill_scope = (
+        Extension.organization_id == user.organization_id,
+        Extension.kind == "skill",
+    )
     if user.role == "admin":
-        return select(Extension).where(Extension.archived_at.is_not(None))
+        return select(Extension).where(
+            *skill_scope,
+            Extension.archived_at.is_not(None),
+        )
     owned_skill_ids = select(SkillOwnership.skill_id).where(
         SkillOwnership.principal_type == "user",
         SkillOwnership.principal_id == user.id,
         SkillOwnership.role == "owner",
     )
     return select(Extension).where(
+        *skill_scope,
         Extension.archived_at.is_not(None),
         or_(
             Extension.owner_user_id == user.id,

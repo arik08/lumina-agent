@@ -11,3 +11,13 @@ test("trash tab keeps its retention tooltip without a separate info icon", async
   assert.match(trashTab, /<Trash2 size=\{14\} \/> 삭제됨 <span>\{counts\.trashed\}<\/span>/);
   assert.doesNotMatch(trashTab, /<Info\b/);
 });
+
+test("permanent deletion is admin-only and requires an inline password confirmation", async () => {
+  const view = await readFile(viewPath, "utf8");
+
+  assert.match(view, /skillView === "trash"[\s\S]*?canManage && <form className="marketplace-permanent-delete"/);
+  assert.match(view, /type="password" aria-label="관리자 비밀번호"/);
+  assert.match(view, /permanentDeleteConfirmId === selected\.id \? "영구 삭제" : "바로 삭제"/);
+  assert.match(view, /api\.extensions\.permanentlyDelete\(selected\.id, adminPassword\)/);
+  assert.doesNotMatch(view, /window\.confirm/);
+});

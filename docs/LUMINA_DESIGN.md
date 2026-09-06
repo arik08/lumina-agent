@@ -1355,6 +1355,7 @@ Fork는 원본과 다른 새 `extension_id`와 Private WorkingDraft를 만들고
 - Published version: 사용·부모·dependency 참조가 있으면 물리 삭제 금지
 - 보안 사고: `Revoked`로 신규 Run 즉시 차단, 과거 감사 snapshot 유지
 - 보존 기간이 지난 미사용 Draft: background lifecycle에서만 물리 삭제 가능
+- 관리자는 보관함의 Skill을 현재 관리자 비밀번호로 재인증한 뒤 즉시 물리 삭제할 수 있으며, 이 action과 결과를 Audit Log에 남깁니다. 비밀번호 원문은 저장하거나 기록하지 않습니다.
 
 ### 14.4 상태와 역할
 
