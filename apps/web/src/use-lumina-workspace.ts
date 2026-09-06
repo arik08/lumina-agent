@@ -1147,11 +1147,16 @@ export function useLuminaWorkspace() {
     const projectId = activeProjectIdRef.current;
     if (!projectId) return;
     try {
-      const catalog = await api.providers.getCatalog(projectId);
+      const [catalog, currentSettings] = await Promise.all([
+        api.providers.getCatalog(projectId),
+        api.settings.getCurrent(projectId),
+      ]);
+      setSettings(currentSettings);
       setProviders(catalog.providers);
       setProviderModels(catalog.modelsByProvider);
-      const selectedProviderId = settingsRef.current?.execution.providerId;
-      if (selectedProviderId) setModels(catalog.modelsByProvider[selectedProviderId] ?? []);
+      setModels(
+        catalog.modelsByProvider[currentSettings.execution.providerId] ?? [],
+      );
     } catch (error) {
       setNotice(apiMessage(error));
     }

@@ -1129,7 +1129,7 @@ Model Catalog item은 최소한 `provider_id`, 안정된 `model_key`, `display_n
 - Provider capability를 같은 Provider의 모든 Model에 일괄 적용하지 않습니다. Tool Call, image input·generation, structured output, effort, context window와 cache 지원 여부를 Model별로 병합·검증합니다.
 - GPT-5.6 Sol·Terra·Luna의 기본 Context는 272K이고 최대 모드는 1.05M입니다. 관리자 Context 화면은 공식 전체 Context와 검증된 입력 상한을 각각 저장·초기화하며, `min(전체 Context - 출력 예약, 입력 상한) - 안전 여유 - Tool schema`로 실제 입력 예산을 계산합니다. 입력 상한을 바꿔도 공식 전체 Context나 출력 한도 값은 변경하지 않습니다.
 - 실행 중인 Run은 `provider_id`, `model_key`, `runtime_model_id`, capability snapshot과 `catalog_revision`을 고정합니다. catalog 변경은 다음 Run부터 적용합니다.
-- 저장된 Model이 disabled·삭제·권한 회수되면 같은 Provider의 허용 기본 Model로 fallback하고 변경 사실을 알립니다. Provider 자체가 불가능할 때만 전체 app default로 이동합니다.
+- 저장된 Model이 disabled·삭제·권한 회수되면 같은 Provider의 허용 기본 Model로 fallback하고 변경 사실을 알립니다. Provider 설정에서 Model 또는 Provider를 비활성화하는 순간 개인·Project 실행 설정, Model 후보 목록과 예약 작업의 미래 참조도 함께 갱신하되, 실행 중·완료 Run의 snapshot은 재현성을 위해 변경하지 않습니다. 해당 Provider 자체가 불가능할 때만 전체 app default로 이동합니다.
 - 관리자가 명시적으로 추가하지 않는 한 새 출시 Model을 자동 활성화하지 않습니다. 자동 discovery는 후보 갱신일 뿐 권한 부여가 아닙니다.
 
 ### 12.4 P-GPT

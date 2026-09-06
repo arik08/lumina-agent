@@ -4,7 +4,10 @@ from pathlib import Path
 import pytest
 
 
-SCRIPT = Path(__file__).resolve().parents[2] / "extensions/skills/skill-evaluator/scripts/skill_lint.py"
+SCRIPT = (
+    Path(__file__).resolve().parents[2]
+    / "extensions/skills/General/skill-evaluator/scripts/skill_lint.py"
+)
 spec = importlib.util.spec_from_file_location("skill_lint", SCRIPT)
 assert spec and spec.loader
 lint = importlib.util.module_from_spec(spec)

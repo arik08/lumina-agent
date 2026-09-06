@@ -22,8 +22,11 @@ from ...providers.catalog import (
 )
 from ...providers.openai_compatible import OpenAICompatibleAdapter
 from ...providers.execution_defaults import (
+    application_default_model,
+    enabled_provider_model,
     initial_execution_selection,
     normalize_initial_execution,
+    rebind_disabled_model_references,
 )
 from ..dependencies import AuthContext, get_current_user, require_csrf
 from ..errors import ApiProblem
@@ -432,6 +435,7 @@ def patch_provider_availability(
     request: Request,
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     require_admin(context.user)
     models = list(
@@ -444,6 +448,7 @@ def patch_provider_availability(
     if not models:
         raise ApiProblem(404, "not_found", "Provider를 찾을 수 없습니다.")
 
+    rebound_references = 0
     if payload.enabled:
         enabled_models = [model for model in models if model.enabled]
         if not enabled_models:
@@ -467,6 +472,17 @@ def patch_provider_availability(
         for model in models:
             model.enabled = False
             model.is_default = False
+        db.flush()
+        fallback_model = application_default_model(
+            db, environment=settings.environment
+        )
+        for model in models:
+            rebound_references += rebind_disabled_model_references(
+                db,
+                provider_id=provider_id,
+                model_key=model.model_key,
+                fallback_model=fallback_model,
+            )
 
     record_audit(
         db,
@@ -476,7 +492,10 @@ def patch_provider_availability(
         result="success",
         actor=context.user,
         request_id=getattr(request.state, "request_id", None),
-        metadata={"enabled": payload.enabled},
+        metadata={
+            "enabled": payload.enabled,
+            "rebound_references": rebound_references,
+        },
     )
     db.commit()
     return _provider_payload(provider_id, models)
@@ -685,6 +704,7 @@ def patch_model(
     request: Request,
     context: AuthContext = Depends(require_csrf),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     require_admin(context.user)
     model = db.scalar(
@@ -768,6 +788,20 @@ def patch_model(
     model.source = "admin_manual"
     model.catalog_revision = f"admin-{datetime.now(UTC).date().isoformat()}"
     model.verified_at = datetime.now(UTC)
+    rebound_references = 0
+    if values.get("enabled") is False:
+        db.flush()
+        fallback_model = enabled_provider_model(db, provider_id)
+        if fallback_model is None:
+            fallback_model = application_default_model(
+                db, environment=settings.environment
+            )
+        rebound_references = rebind_disabled_model_references(
+            db,
+            provider_id=provider_id,
+            model_key=model_key,
+            fallback_model=fallback_model,
+        )
     record_audit(
         db,
         action="provider_model_updated",
@@ -776,7 +810,11 @@ def patch_model(
         result="success",
         actor=context.user,
         request_id=getattr(request.state, "request_id", None),
-        metadata={"changed_fields": sorted(values), "model_key": model.model_key},
+        metadata={
+            "changed_fields": sorted(values),
+            "model_key": model.model_key,
+            "rebound_references": rebound_references,
+        },
     )
     db.commit()
     return _payload(model)
