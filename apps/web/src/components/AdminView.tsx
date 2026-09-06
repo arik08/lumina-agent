@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   BarChart3,
   ChevronDown,
+  Database,
   Download,
   FileText,
   KeyRound,
@@ -38,6 +39,7 @@ type AdminTab = "users" | "usage" | "conversations" | "audit" | "policy";
 type UsageMetric = "activeUsers" | "loginCount" | "runCount";
 type AdminHistoryViewMode = "recent" | "user";
 type AdminListLimit = 50 | 120 | 250 | 500;
+type MonitoringView = "traffic" | "cache" | "audit";
 
 interface AdminViewProps {
   onOpenNavigation: () => void;
@@ -106,6 +108,7 @@ function UsageTrendChart({ statistics, metric }: { statistics: AdminUsageStatist
 
 export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminViewProps) {
   const [tab, setTab] = useState<AdminTab>("users");
+  const [monitoringView, setMonitoringView] = useState<MonitoringView>("traffic");
   const [query, setQuery] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -165,7 +168,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
   }, [conversations]);
 
   useEffect(() => {
-    if (tab === "policy" || tab === "usage") {
+    if (tab === "policy" || tab === "usage" || (tab === "audit" && monitoringView !== "audit")) {
       setLoading(false);
       setError(null);
       return;
@@ -198,12 +201,13 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [auditLimit, conversationLimit, feedbackOnly, query, refreshKey, tab]);
+  }, [auditLimit, conversationLimit, feedbackOnly, monitoringView, query, refreshKey, tab]);
 
   useEffect(() => {
-    if (tab !== "usage" && tab !== "audit") return;
+    const shouldLoadUsage = tab === "usage" || (tab === "audit" && monitoringView === "cache");
+    if (!shouldLoadUsage) return;
     const controller = new AbortController();
-    if (tab === "usage") setLoading(true);
+    setLoading(true);
     setError(null);
     void api.admin.getUsageStatistics(usagePeriod, controller.signal)
       .then(setUsageStatistics)
@@ -211,10 +215,10 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
         if (!controller.signal.aborted) setError(errorMessage(requestError));
       })
       .finally(() => {
-        if (!controller.signal.aborted && tab === "usage") setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [refreshKey, tab, usagePeriod]);
+  }, [monitoringView, refreshKey, tab, usagePeriod]);
 
   const chooseUser = (user: AdminUser) => {
     const next = selectedUser?.id === user.id ? null : user;
@@ -361,6 +365,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
   );
 
   const placeholder = tab === "users" || tab === "usage" ? "ID 또는 표시 이름 검색" : tab === "conversations" ? "대화 제목 검색" : "정확한 audit action 검색";
+  const showsAdminSearch = tab !== "policy" && (tab !== "audit" || monitoringView === "audit");
   const filteredUsageUsers = usageStatistics?.users.filter((user) => {
     const term = query.trim().toLocaleLowerCase();
     return !term || [user.loginId, user.displayName, user.affiliation].some((value) => value?.toLocaleLowerCase().includes(term));
@@ -380,7 +385,7 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
           <button type="button" role="tab" aria-selected={tab === "audit"} onClick={() => setTab("audit")}><ShieldCheck size={15} /> 모니터링</button>
           <button type="button" role="tab" aria-selected={tab === "policy"} onClick={() => setTab("policy")}><FileText size={15} /> 기본 지침</button>
         </div>
-        {tab !== "policy" && <label className="admin-search"><Search size={15} /><input value={query} placeholder={placeholder} onChange={(event) => setQuery(event.currentTarget.value)} /></label>}
+        {showsAdminSearch && <label className="admin-search"><Search size={15} /><input value={query} placeholder={placeholder} onChange={(event) => setQuery(event.currentTarget.value)} /></label>}
         {tab !== "policy" && <button className="tooltip-control" type="button" aria-label="새로 고침" data-tooltip="새로 고침" onClick={() => setRefreshKey((value) => value + 1)}>{loading ? <LoaderCircle className="is-running" size={16} /> : <RefreshCcw size={16} />}</button>}
         {tab === "conversations" && <label className="admin-feedback-filter"><input type="checkbox" checked={feedbackOnly} onChange={(event) => setFeedbackOnly(event.currentTarget.checked)} /> 의견 있는 대화만</label>}
         {tab === "users" && <button className="primary-compact lumina-primary-action" type="button" onClick={() => setCreateOpen((open) => !open)}><Plus size={15} /> 사용자</button>}
@@ -521,53 +526,66 @@ export function AdminView({ onOpenNavigation, onToast, onUserUpdated }: AdminVie
       )}
 
       {tab === "audit" && (
-        <section className="admin-section" aria-label="모니터링 로그">
-          {usageStatistics && (
-            <section className="admin-cache-monitoring" aria-label="Prefix cache 모니터링">
-              <div className="admin-cache-monitoring-heading">
-                <div><strong>Prefix cache</strong><small>Provider 모델 호출 기준 · 같은 Run의 첫 호출과 후속 호출을 분리합니다.</small></div>
-                <div className="admin-usage-period"><span>조회 기간</span><SelectMenu className="admin-usage-period-select" size="small" width="auto" align="end" value={String(usagePeriod)} options={usagePeriodOptions} ariaLabel="Cache 조회 기간" onChange={(value) => setUsagePeriod(Number(value) as 0 | 30 | 90)} /></div>
-              </div>
-              <div className="admin-cache-summary">
-                <div><span>Run 첫 호출</span><strong>{usageStatistics.cache.firstCall.cacheHitRatioPercent.toFixed(1)}%</strong><small>{usageStatistics.cache.firstCall.modelCalls.toLocaleString()}회 · Cached {usageStatistics.cache.firstCall.cachedInputTokens.toLocaleString()}</small></div>
-                <div><span>Run 내부 후속</span><strong>{usageStatistics.cache.subsequentCalls.cacheHitRatioPercent.toFixed(1)}%</strong><small>{usageStatistics.cache.subsequentCalls.modelCalls.toLocaleString()}회 · Cached {usageStatistics.cache.subsequentCalls.cachedInputTokens.toLocaleString()}</small></div>
-              </div>
-              <div className="admin-cache-digest-table" role="table" aria-label="Prompt cache static digest별 집계">
-                <div className="admin-cache-digest-row is-header" role="row"><span>Static digest</span><span>Provider / Model</span><span>호출</span><span>Cache write</span><span>첫 호출</span><span>후속 호출</span></div>
-                {usageStatistics.cache.byStaticDigest.map((item) => <div className="admin-cache-digest-row" role="row" key={`${item.providerId}:${item.modelKey}:${item.digest}`}><code className="tooltip-control" data-tooltip={item.digest}>{item.digest === "unknown" ? "unknown" : item.digest.slice(0, 12)}</code><span>{item.providerId} · {item.modelKey}</span><span>{item.modelCalls.toLocaleString()}</span><span>{item.cacheWriteTokens.toLocaleString()}</span><strong>{item.firstCall.cacheHitRatioPercent.toFixed(1)}%</strong><strong>{item.subsequentCalls.cacheHitRatioPercent.toFixed(1)}%</strong></div>)}
-                {usageStatistics.cache.byStaticDigest.length === 0 && <p>집계할 모델 호출이 없습니다.</p>}
-              </div>
-            </section>
-          )}
-          <AdminTrafficChart refreshKey={refreshKey} />
-          <div className="admin-audit-heading">
-            <div className="admin-count">최근 모니터링 이벤트 {auditEvents.length} / {auditTotal}건</div>
-            <div className="admin-audit-controls">
-              <div className="admin-control-label"><span>조회 한도</span><SelectMenu className="admin-limit-select" size="small" width="auto" align="end" value={String(auditLimit)} options={adminListLimitOptions} ariaLabel="모니터링 로그 조회 한도" onChange={(value) => setAuditLimit(Number(value) as AdminListLimit)} /></div>
-              <div className="admin-audit-view-toggle" role="group" aria-label="모니터링 로그 보기 방식">
-                <button className="tooltip-control" type="button" aria-label="이벤트순" data-tooltip="이벤트순" aria-pressed={auditViewMode === "recent"} onClick={() => setAuditViewMode("recent")}><List size={14} /></button>
-                <button className="tooltip-control" type="button" aria-label="사용자 ID별" data-tooltip="사용자 ID별" aria-pressed={auditViewMode === "user"} onClick={() => setAuditViewMode("user")}><Users size={14} /></button>
-              </div>
-            </div>
+        <section className="admin-section" aria-label="모니터링">
+          <div className="admin-monitoring-tabs" role="tablist" aria-label="모니터링 항목">
+            <button id="admin-monitoring-tab-traffic" type="button" role="tab" aria-selected={monitoringView === "traffic"} aria-controls="admin-monitoring-panel-traffic" onClick={() => setMonitoringView("traffic")}><BarChart3 size={14} /> 분당 트래픽</button>
+            <button id="admin-monitoring-tab-cache" type="button" role="tab" aria-selected={monitoringView === "cache"} aria-controls="admin-monitoring-panel-cache" onClick={() => setMonitoringView("cache")}><Database size={14} /> Prefix cache</button>
+            <button id="admin-monitoring-tab-audit" type="button" role="tab" aria-selected={monitoringView === "audit"} aria-controls="admin-monitoring-panel-audit" onClick={() => setMonitoringView("audit")}><ShieldCheck size={14} /> 모니터링 로그</button>
           </div>
-          <div className="admin-audit-list">
-            {auditViewMode === "recent" && auditEvents.map((event) => <article className={event.result === "success" ? undefined : "is-abnormal"} key={event.id}><time>{formatDate(event.createdAt)}</time><strong>{event.actorLoginId ?? event.actorUserId ?? "시스템"}</strong><strong>{event.action}</strong><span>{event.targetType}{event.targetId ? ` · ${event.targetId.slice(0, 8)}` : ""}</span><small>{event.result} · request {event.requestId?.slice(0, 8) ?? "-"}</small></article>)}
-            {auditViewMode === "user" && auditEventsByUser.map(([userId, events]) => {
-              const expanded = !collapsedAuditUsers.has(userId);
-              return (
-                <section className="admin-audit-user-group" key={userId} aria-label={`${userId} 모니터링 이벤트`}>
-                  <button className="admin-audit-user-trigger" type="button" aria-expanded={expanded} onClick={() => setCollapsedAuditUsers((current) => {
-                    const next = new Set(current);
-                    if (next.has(userId)) next.delete(userId);
-                    else next.add(userId);
-                    return next;
-                  })}>
-                    <strong>{userId}</strong><span>{events.length}건</span><ChevronDown size={14} />
-                  </button>
-                  {expanded && events.map((event) => <article className={event.result === "success" ? undefined : "is-abnormal"} key={event.id}><time>{formatDate(event.createdAt)}</time><strong>{event.action}</strong><span>{event.targetType}{event.targetId ? ` · ${event.targetId.slice(0, 8)}` : ""}</span><small>{event.result} · request {event.requestId?.slice(0, 8) ?? "-"}</small></article>)}
-                </section>
-              );
-            })}
+          <div id="admin-monitoring-panel-traffic" className="admin-monitoring-panel" role="tabpanel" aria-labelledby="admin-monitoring-tab-traffic" hidden={monitoringView !== "traffic"}>
+            {monitoringView === "traffic" && <AdminTrafficChart refreshKey={refreshKey} />}
+          </div>
+          <div id="admin-monitoring-panel-cache" className="admin-monitoring-panel" role="tabpanel" aria-labelledby="admin-monitoring-tab-cache" hidden={monitoringView !== "cache"}>
+            {monitoringView === "cache" && (usageStatistics ? (
+              <section className="admin-cache-monitoring" aria-label="Prefix cache 모니터링">
+                <div className="admin-cache-monitoring-heading">
+                  <div><strong>Prefix cache</strong><small>Provider 모델 호출 기준 · 같은 Run의 첫 호출과 후속 호출을 분리합니다.</small></div>
+                  <div className="admin-usage-period"><span>조회 기간</span><SelectMenu className="admin-usage-period-select" size="small" width="auto" align="end" value={String(usagePeriod)} options={usagePeriodOptions} ariaLabel="Cache 조회 기간" onChange={(value) => setUsagePeriod(Number(value) as 0 | 30 | 90)} /></div>
+                </div>
+                <div className="admin-cache-summary">
+                  <div><span>Run 첫 호출</span><strong>{usageStatistics.cache.firstCall.cacheHitRatioPercent.toFixed(1)}%</strong><small>{usageStatistics.cache.firstCall.modelCalls.toLocaleString()}회 · Cached {usageStatistics.cache.firstCall.cachedInputTokens.toLocaleString()}</small></div>
+                  <div><span>Run 내부 후속</span><strong>{usageStatistics.cache.subsequentCalls.cacheHitRatioPercent.toFixed(1)}%</strong><small>{usageStatistics.cache.subsequentCalls.modelCalls.toLocaleString()}회 · Cached {usageStatistics.cache.subsequentCalls.cachedInputTokens.toLocaleString()}</small></div>
+                </div>
+                <div className="admin-cache-digest-table" role="table" aria-label="Prompt cache static digest별 집계">
+                  <div className="admin-cache-digest-row is-header" role="row"><span>Static digest</span><span>Provider / Model</span><span>호출</span><span>Cache write</span><span>첫 호출</span><span>후속 호출</span></div>
+                  {usageStatistics.cache.byStaticDigest.map((item) => <div className="admin-cache-digest-row" role="row" key={`${item.providerId}:${item.modelKey}:${item.digest}`}><code className="tooltip-control" data-tooltip={item.digest}>{item.digest === "unknown" ? "unknown" : item.digest.slice(0, 12)}</code><span>{item.providerId} · {item.modelKey}</span><span>{item.modelCalls.toLocaleString()}</span><span>{item.cacheWriteTokens.toLocaleString()}</span><strong>{item.firstCall.cacheHitRatioPercent.toFixed(1)}%</strong><strong>{item.subsequentCalls.cacheHitRatioPercent.toFixed(1)}%</strong></div>)}
+                  {usageStatistics.cache.byStaticDigest.length === 0 && <p>집계할 모델 호출이 없습니다.</p>}
+                </div>
+              </section>
+            ) : <p className="workspace-empty">캐시 사용량을 불러오는 중입니다.</p>)}
+          </div>
+          <div id="admin-monitoring-panel-audit" className="admin-monitoring-panel" role="tabpanel" aria-labelledby="admin-monitoring-tab-audit" hidden={monitoringView !== "audit"}>
+            {monitoringView === "audit" && <>
+              <div className="admin-audit-heading">
+                <div className="admin-count">최근 모니터링 이벤트 {auditEvents.length} / {auditTotal}건</div>
+                <div className="admin-audit-controls">
+                  <div className="admin-control-label"><span>조회 한도</span><SelectMenu className="admin-limit-select" size="small" width="auto" align="end" value={String(auditLimit)} options={adminListLimitOptions} ariaLabel="모니터링 로그 조회 한도" onChange={(value) => setAuditLimit(Number(value) as AdminListLimit)} /></div>
+                  <div className="admin-audit-view-toggle" role="group" aria-label="모니터링 로그 보기 방식">
+                    <button className="tooltip-control" type="button" aria-label="이벤트순" data-tooltip="이벤트순" aria-pressed={auditViewMode === "recent"} onClick={() => setAuditViewMode("recent")}><List size={14} /></button>
+                    <button className="tooltip-control" type="button" aria-label="사용자 ID별" data-tooltip="사용자 ID별" aria-pressed={auditViewMode === "user"} onClick={() => setAuditViewMode("user")}><Users size={14} /></button>
+                  </div>
+                </div>
+              </div>
+              <div className="admin-audit-list">
+                {auditViewMode === "recent" && auditEvents.map((event) => <article className={event.result === "success" ? undefined : "is-abnormal"} key={event.id}><time>{formatDate(event.createdAt)}</time><strong>{event.actorLoginId ?? event.actorUserId ?? "시스템"}</strong><strong>{event.action}</strong><span>{event.targetType}{event.targetId ? ` · ${event.targetId.slice(0, 8)}` : ""}</span><small>{event.result} · request {event.requestId?.slice(0, 8) ?? "-"}</small></article>)}
+                {auditViewMode === "user" && auditEventsByUser.map(([userId, events]) => {
+                  const expanded = !collapsedAuditUsers.has(userId);
+                  return (
+                    <section className="admin-audit-user-group" key={userId} aria-label={`${userId} 모니터링 이벤트`}>
+                      <button className="admin-audit-user-trigger" type="button" aria-expanded={expanded} onClick={() => setCollapsedAuditUsers((current) => {
+                        const next = new Set(current);
+                        if (next.has(userId)) next.delete(userId);
+                        else next.add(userId);
+                        return next;
+                      })}>
+                        <strong>{userId}</strong><span>{events.length}건</span><ChevronDown size={14} />
+                      </button>
+                      {expanded && events.map((event) => <article className={event.result === "success" ? undefined : "is-abnormal"} key={event.id}><time>{formatDate(event.createdAt)}</time><strong>{event.action}</strong><span>{event.targetType}{event.targetId ? ` · ${event.targetId.slice(0, 8)}` : ""}</span><small>{event.result} · request {event.requestId?.slice(0, 8) ?? "-"}</small></article>)}
+                    </section>
+                  );
+                })}
+              </div>
+            </>}
           </div>
         </section>
       )}

@@ -69,7 +69,12 @@ from ..providers.catalog import (
     catalog_model,
     estimate_model_cost_parts,
 )
-from ..providers.execution_defaults import initial_execution_selection
+from ..providers.execution_defaults import (
+    application_default_model,
+    default_effort_for_model,
+    enabled_provider_model,
+    initial_execution_selection,
+)
 from .approvals import (
     approval_payload,
     pending_approval_payloads_batch,
@@ -192,13 +197,9 @@ def resolve_execution(
     )
     fallback_messages = list(preference_messages)
     if model is None:
-        model = db.scalar(
-            select(ProviderModel).where(
-                ProviderModel.provider_id == requested.provider_id,
-                ProviderModel.enabled.is_(True),
-                ProviderModel.is_default.is_(True),
-            )
-        )
+        model = enabled_provider_model(db, requested.provider_id)
+        if model is None:
+            model = application_default_model(db, environment=config.environment)
         if model:
             fallback_messages.append(
                 f"선택한 모델을 사용할 수 없어 {model.display_name}(으)로 변경했습니다."
@@ -207,12 +208,20 @@ def resolve_execution(
         raise ApiProblem(
             409, "provider_unavailable", "사용 가능한 Provider 모델이 없습니다."
         )
+    model_was_rebound = (
+        model.provider_id != requested.provider_id
+        or model.model_key != requested.model_key
+    )
     resolved = {
         "provider_id": model.provider_id,
         "model_key": model.model_key,
         "runtime_model_id": model.runtime_model_id,
         "model_display_name": model.display_name,
-        "effort": requested.effort_id,
+        "effort": (
+            default_effort_for_model(model, requested.effort_id)
+            if model_was_rebound
+            else requested.effort_id
+        ),
         "catalog_revision": model.catalog_revision,
         "capabilities": _model_capabilities_snapshot(
             model,

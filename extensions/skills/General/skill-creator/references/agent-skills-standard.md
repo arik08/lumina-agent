@@ -38,6 +38,11 @@ client-specific field as portable unless the open specification adopts it.
 
 ## Structural and behavioral proof
 
+Apply the validation levels in the parent `SKILL.md` proportionally to the change.
+The following list describes available evidence, not mandatory live execution for every
+wording edit. Keep official conformance, fallback checks, scenario review, and live client
+evidence distinct; preserve approvals for evaluation with additional permissions or cost.
+
 1. Run `skills-ref validate <skill-directory>`.
 2. Run changed scripts with representative success and failure inputs.
 3. Run realistic prompts through the real client activation path.

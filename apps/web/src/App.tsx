@@ -1471,9 +1471,14 @@ function App() {
     setAdminFooterBusyId(providerId);
     try {
       const provider = await api.adminProviders.updateAvailability(providerId, enabled);
-      const models = await api.adminProviders.listModels(providerId);
+      const [models, initialExecution] = await Promise.all([
+        api.adminProviders.listModels(providerId),
+        api.adminProviders.getInitialExecution(),
+      ]);
       setAdminFooterProviders((items) => items.map((item) => item.id === providerId ? provider : item));
       setAdminFooterModels((items) => ({ ...items, [providerId]: models }));
+      if (adminSettingsProviderId === providerId) setAdminSettingsModels(models);
+      setAdminInitialExecution(initialExecution.execution);
       await workspace.refreshProviderCatalog();
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Provider 설정을 변경하지 못했습니다.");
@@ -1487,12 +1492,15 @@ function App() {
     setAdminFooterBusyId(busyId);
     try {
       await api.adminProviders.updateModel(providerId, modelKey, { enabled });
-      const [providers, models] = await Promise.all([
+      const [providers, models, initialExecution] = await Promise.all([
         api.adminProviders.list(),
         api.adminProviders.listModels(providerId),
+        api.adminProviders.getInitialExecution(),
       ]);
       setAdminFooterProviders(providers);
       setAdminFooterModels((items) => ({ ...items, [providerId]: models }));
+      if (adminSettingsProviderId === providerId) setAdminSettingsModels(models);
+      setAdminInitialExecution(initialExecution.execution);
       await workspace.refreshProviderCatalog();
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Model 설정을 변경하지 못했습니다.");

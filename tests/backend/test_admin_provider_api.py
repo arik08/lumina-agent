@@ -442,6 +442,66 @@ def test_provider_availability_management_requires_admin(tmp_path: Path) -> None
         )
 
 
+def test_disabling_selected_model_rebinds_future_execution_settings(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{(tmp_path / 'lumina.db').as_posix()}",
+        data_dir=tmp_path,
+        files_dir=tmp_path / "files",
+        artifacts_dir=tmp_path / "artifacts",
+        cookie_secure=False,
+        pgpt_api_key="test-api-key",
+        pgpt_employee_no="test-employee",
+        pgpt_company_code="30",
+    )
+    with TestClient(create_app(settings)) as client:
+        csrf = _login_admin(client)
+        current = client.get("/api/settings/current")
+        assert current.status_code == 200
+
+        selected = client.patch(
+            "/api/settings/current",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "execution": {
+                    "providerId": "pgpt",
+                    "modelKey": "gpt-5.6-sol",
+                    "effortId": "auto",
+                },
+                "expectedRevision": current.json()["revision"],
+            },
+        )
+        assert selected.status_code == 200, selected.text
+
+        disabled = client.patch(
+            "/api/admin/providers/pgpt/models/gpt-5.6-sol",
+            headers={"X-CSRF-Token": csrf},
+            json={"enabled": False},
+        )
+        assert disabled.status_code == 200, disabled.text
+        assert disabled.json()["enabled"] is False
+
+        latest = client.get("/api/settings/current")
+        assert latest.status_code == 200
+        assert latest.json()["execution"] == {
+            "providerId": "pgpt",
+            "modelKey": "gpt-5.6-luna",
+            "effortId": "medium",
+        }
+
+        provider_disabled = client.patch(
+            "/api/admin/providers/pgpt",
+            headers={"X-CSRF-Token": csrf},
+            json={"enabled": False},
+        )
+        assert provider_disabled.status_code == 200, provider_disabled.text
+        after_provider_disable = client.get("/api/settings/current")
+        assert after_provider_disable.status_code == 200
+        assert after_provider_disable.json()["execution"]["providerId"] != "pgpt"
+
+
 def _login_admin(client: TestClient) -> str:
     response = client.post(
         "/api/auth/login",

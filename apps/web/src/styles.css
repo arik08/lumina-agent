@@ -1729,6 +1729,12 @@ button.schedule-run-row:disabled { cursor: wait; opacity: 1; }
 .admin-tabs { display: inline-flex; gap: 1px; }
 .admin-tabs button, .admin-toolbar > button { display: inline-flex; height: 30px; align-items: center; gap: 5px; padding: 0 8px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 11.5px; cursor: pointer; }
 .admin-tabs button[aria-selected="true"] { background: var(--cobalt-pale); color: var(--cobalt); font-weight: 650; }
+.admin-monitoring-tabs { display: flex; max-width: 100%; align-items: center; gap: 2px; margin: 14px 0 12px; padding: 2px; overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-soft); scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }
+.admin-monitoring-tabs button { display: inline-flex; height: 30px; flex: 0 0 auto; align-items: center; gap: 5px; padding: 0 10px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--muted); white-space: nowrap; cursor: pointer; }
+.admin-monitoring-tabs button:hover { background: var(--surface); color: var(--ink); }
+.admin-monitoring-tabs button[aria-selected="true"] { border-color: color-mix(in srgb, var(--cobalt) 34%, var(--line)); background: var(--cobalt-pale); color: var(--cobalt); font-weight: 650; }
+.admin-monitoring-tabs button:focus-visible { outline: 2px solid color-mix(in srgb, var(--cobalt) 56%, transparent); outline-offset: 1px; }
+.admin-monitoring-panel { min-width: 0; }
 .admin-search { display: flex; min-width: 150px; height: 30px; flex: 1; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); }
 .admin-search:focus-within { border-color: var(--cobalt); }
 .admin-search input { width: 100%; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 12px; }
