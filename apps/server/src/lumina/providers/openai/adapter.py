@@ -119,6 +119,9 @@ def _responses_tool(raw_tool: Mapping[str, Any]) -> dict[str, Any]:
     for key in ("name", "description", "parameters", "strict"):
         if key in function:
             result[key] = function[key]
+    if str(result.get("name", "")).startswith("mcp__"):
+        # Preserve negotiated optional filters and defaults in Responses requests.
+        result["strict"] = False
     return result
 
 

@@ -369,7 +369,7 @@ class McpRuntime:
         safe_result = _redact_value(raw_result, tuple(secrets.values()))
         if not isinstance(safe_result, dict):
             raise _runtime_error("mcp_response_invalid", "result")
-        if safe_result.get("isError") is True:
+        if _mcp_result_failed(safe_result):
             raise _runtime_error(
                 "mcp_tool_error",
                 "tool",
@@ -1495,6 +1495,24 @@ def _redact_value(value: Any, secrets: tuple[str, ...]) -> Any:
     if value is None or isinstance(value, (bool, int, float)):
         return value
     return redact_sensitive_text(str(value), secrets=secrets)
+
+
+def _mcp_result_failed(result: Mapping[str, Any]) -> bool:
+    if result.get("isError") is True:
+        return True
+    structured = result.get("structuredContent")
+    if isinstance(structured, dict) and structured.get("ok") is False:
+        return True
+    for block in result.get("content", []):
+        if not isinstance(block, dict) or block.get("type") != "text":
+            continue
+        try:
+            payload = json.loads(block.get("text", ""))
+        except (ValueError, TypeError):
+            continue
+        if isinstance(payload, dict) and payload.get("ok") is False:
+            return True
+    return False
 
 
 def _mcp_error_detail(value: Any, *, secrets: tuple[str, ...] = ()) -> str:

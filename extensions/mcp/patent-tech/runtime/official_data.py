@@ -247,11 +247,21 @@ def checked_health_envelope(
     try:
         probe()
     except Exception as exc:  # health tools must report failures instead of crashing
+        cause: BaseException = exc
+        seen: set[int] = {id(cause)}
+        while cause.__cause__ is not None and id(cause.__cause__) not in seen:
+            seen.add(id(cause.__cause__))
+            cause = cause.__cause__
+        failure = (
+            f"HTTP {cause.response.status_code}"
+            if isinstance(cause, httpx.HTTPStatusError)
+            else type(cause).__name__
+        )
         return health_envelope(
             source=source,
             ok=False,
             credential_env=credential_env,
-            detail=f"Official endpoint probe failed ({type(exc).__name__}).",
+            detail=f"Official endpoint probe failed ({failure}).",
         )
     return health_envelope(
         source=source,

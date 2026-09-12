@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+from pydantic import Field
+
 import json
 from functools import partial
 from typing import Any
@@ -29,6 +32,12 @@ SOURCES = {
     "epa_echo": "U.S. EPA ECHO",
     "usda_ers": "USDA Economic Research Service ARMS",
 }
+
+Source = Annotated[
+    str,
+    Field(description="Source served by environment-industry only", json_schema_extra={"enum": list(SOURCES)}),
+]
+
 
 server = FastMCP("environment-industry")
 
@@ -78,7 +87,7 @@ def _bounded_filters(filters: dict[str, Any], *, allowed: set[str]) -> dict[str,
 
 
 @server.tool()
-def search_catalog(source: str, query: str = "", limit: int = 50) -> str:
+def search_catalog(source: Source, query: str = "", limit: int = 50) -> str:
     """Search product/variable catalogs or return supported official dataset identifiers."""
     selected = _source(source)
     safe_limit = clean_limit(limit, maximum=500)
@@ -120,7 +129,7 @@ def search_catalog(source: str, query: str = "", limit: int = 50) -> str:
 
 @server.tool()
 def query_industry(
-    source: str,
+    source: Source,
     dataset: str = "DS-059358",
     filters_json: dict[str, Any] | str | None = None,
     limit: int = 100,
@@ -253,7 +262,7 @@ def search_facilities(
 
 
 @server.tool()
-def get_source_health(source: str) -> str:
+def get_source_health(source: Source) -> str:
     """Perform a lightweight official endpoint check and safely report credential needs."""
     selected = _source(source)
     if selected == "eurostat_prodcom":

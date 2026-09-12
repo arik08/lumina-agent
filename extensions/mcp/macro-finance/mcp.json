@@ -16,6 +16,15 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by macro-finance only",
+                "enum": [
+                  "fred",
+                  "ecb",
+                  "bis",
+                  "nyfed",
+                  "oecd",
+                  "estat_jp"
+                ],
                 "title": "Source",
                 "type": "string"
               },
@@ -43,6 +52,15 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by macro-finance only",
+                "enum": [
+                  "fred",
+                  "ecb",
+                  "bis",
+                  "nyfed",
+                  "oecd",
+                  "estat_jp"
+                ],
                 "title": "Source",
                 "type": "string"
               },
@@ -122,6 +140,15 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by macro-finance only",
+                "enum": [
+                  "fred",
+                  "ecb",
+                  "bis",
+                  "nyfed",
+                  "oecd",
+                  "estat_jp"
+                ],
                 "title": "Source",
                 "type": "string"
               }

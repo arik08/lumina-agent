@@ -16,6 +16,14 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by patent-tech only",
+                "enum": [
+                  "kipris",
+                  "epo_ops",
+                  "openalex",
+                  "crossref",
+                  "semantic_scholar"
+                ],
                 "title": "Source",
                 "type": "string"
               },
@@ -43,6 +51,14 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by patent-tech only",
+                "enum": [
+                  "kipris",
+                  "epo_ops",
+                  "openalex",
+                  "crossref",
+                  "semantic_scholar"
+                ],
                 "title": "Source",
                 "type": "string"
               },
@@ -94,6 +110,14 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by patent-tech only",
+                "enum": [
+                  "kipris",
+                  "epo_ops",
+                  "openalex",
+                  "crossref",
+                  "semantic_scholar"
+                ],
                 "title": "Source",
                 "type": "string"
               },
@@ -121,6 +145,14 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by patent-tech only",
+                "enum": [
+                  "kipris",
+                  "epo_ops",
+                  "openalex",
+                  "crossref",
+                  "semantic_scholar"
+                ],
                 "title": "Source",
                 "type": "string"
               }

@@ -16,6 +16,15 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by legislation-regulation only",
+                "enum": [
+                  "congress",
+                  "federal_register",
+                  "europarl",
+                  "eurlex",
+                  "uk_bills",
+                  "uk_legislation"
+                ],
                 "title": "Source",
                 "type": "string"
               },
@@ -43,6 +52,15 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by legislation-regulation only",
+                "enum": [
+                  "congress",
+                  "federal_register",
+                  "europarl",
+                  "eurlex",
+                  "uk_bills",
+                  "uk_legislation"
+                ],
                 "title": "Source",
                 "type": "string"
               },
@@ -118,6 +136,15 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by legislation-regulation only",
+                "enum": [
+                  "congress",
+                  "federal_register",
+                  "europarl",
+                  "eurlex",
+                  "uk_bills",
+                  "uk_legislation"
+                ],
                 "title": "Source",
                 "type": "string"
               },
@@ -145,6 +172,15 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by legislation-regulation only",
+                "enum": [
+                  "congress",
+                  "federal_register",
+                  "europarl",
+                  "eurlex",
+                  "uk_bills",
+                  "uk_legislation"
+                ],
                 "title": "Source",
                 "type": "string"
               },
@@ -167,6 +203,15 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by legislation-regulation only",
+                "enum": [
+                  "congress",
+                  "federal_register",
+                  "europarl",
+                  "eurlex",
+                  "uk_bills",
+                  "uk_legislation"
+                ],
                 "title": "Source",
                 "type": "string"
               }

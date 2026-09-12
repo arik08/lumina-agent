@@ -128,6 +128,30 @@ extensions/mcp/<mcp-slug>/
 - credential은 process argument, URL 또는 query에 넣지 않습니다. HTTP revision의 `headerTemplates`는 승인된 header 이름과 단일 Secret placeholder만 허용하며 CR/LF를 거부합니다. 현재 runtime resolver는 `env://`만 지원하고 `secret://`·`vault://`는 resolver 미구성 오류로 종료합니다.
 - MCP 응답 본문과 실제 argument, URL, header, stderr는 ToolExecution DB, Run event와 오류 메시지에 남기지 않으며 진행 UI에는 안전한 필드 metadata와 완료·오류 상태만 저장합니다.
 
+#### 2026-09-13 MyHarness MCP 수정 비교·적용
+
+MyHarness의 `45b41e1`(2026-09-12)과 검토 시점의 미커밋 MCP 변경을 Lumina의 현재 구현과 비교했습니다. 인증키·환경 설정은 이식 대상에서 제외했습니다.
+
+| 문제 | Lumina 반영 |
+|---|---|
+| 공통 Tool 이름 때문에 다른 서버의 source를 전달 | 공식 데이터 MCP 7개에 서버별 source enum을 선언하고 실제 tools/list와 고정 manifest schema를 함께 갱신 |
+| Responses가 선택 필터를 필수 입력으로 정규화할 여지 | MCP 함수만 strict=false로 전달하고 원본 enum·default·required·중첩 schema 유지 |
+| health 결과가 ok=false여도 성공 처리 | 텍스트 JSON과 structuredContent의 최상위 ok=false를 mcp_tool_error로 전달; 기존 Secret redaction 유지 |
+| 감싼 HTTP 오류가 ValueError로만 표시 | package별 health helper에서 원인 HTTP 상태 코드만 표시; URL·본문·인증값 제외, 순환 원인도 종료 |
+| ADB 구형 endpoint·dataflow | [공식 v5 API](https://kidb.adb.org/api) 경로와 DF_NA·DF_PPSI 사용, 구형 이름 호환 및 기간 제한 유지 |
+| Semantic Scholar 키 없는 조회 차단 | [공식 공개 조회 계약](https://www.semanticscholar.org/product/api)에 맞춰 키가 있을 때만 인증 header 추가; 실제 호출 제한은 오류로 보고 |
+
+중복·비호환 변경은 다음과 같이 제외했습니다.
+
+- Windows UTF-8 subprocess 설정과 POSCO dummy package 제거는 Lumina에 이미 구현되어 있습니다.
+- MyHarness의 readOnlyHint 기반 승인 생략은 복사하지 않았습니다. Lumina는 서버의 힌트 대신 기존 Tool risk 분류·승인 정책을 유지합니다.
+- MyHarness 한국법 MCP는 4.9.7, Lumina는 4.0.6이며 공개 Tool 구성이 다릅니다. 4.9.7 전용 bootstrap patch는 현재 패키지에 적용할 수 없어 제외했습니다. 이 항목은 dependency·Tool manifest·wrapper 전체를 함께 마이그레이션하는 별도 변경입니다.
+- MyHarness의 credential 배포, UI, 작업관리·프로세스 구조 변경은 이번 MCP 호환성 수정 범위에서 제외했습니다.
+
+검증은 7개 실제 stdio 서버의 initialize/tools/list와 고정 schema 일치, 모의 HTTP 응답의 ADB·Semantic Scholar 동작, MCP 실패·Secret redaction, Responses/Codex provider 및 catalog·scope 회귀 검사를 포함합니다. 외부 서비스와 회사망의 전체 연결 성공을 뜻하지 않습니다.
+
+공개 API 실측(2026-09-13): ADB catalog 조회와 v5 국민계정 조회에서 실제 1행을 받았습니다. Semantic Scholar 익명 조회는 최초 성공 후 재조회에서 HTTP 429를 반환했으며, 수정된 health helper가 이를 실패와 상태 코드로 정확히 표시했습니다. 회사망·키가 필요한 나머지 서비스는 실측하지 않았습니다.
+
 ### Plugin
 
 Plugin은 Skill, MCP binding, Tool, UI와 기타 자원을 묶을 수 있는 versioned package입니다.

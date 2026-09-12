@@ -16,6 +16,12 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by company-disclosure only",
+                "enum": [
+                  "opendart",
+                  "sec",
+                  "companies_house"
+                ],
                 "title": "Source",
                 "type": "string"
               },
@@ -43,6 +49,12 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by company-disclosure only",
+                "enum": [
+                  "opendart",
+                  "sec",
+                  "companies_house"
+                ],
                 "title": "Source",
                 "type": "string"
               },
@@ -106,6 +118,12 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by company-disclosure only",
+                "enum": [
+                  "opendart",
+                  "sec",
+                  "companies_house"
+                ],
                 "title": "Source",
                 "type": "string"
               },
@@ -160,6 +178,12 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by company-disclosure only",
+                "enum": [
+                  "opendart",
+                  "sec",
+                  "companies_house"
+                ],
                 "title": "Source",
                 "type": "string"
               },
@@ -194,6 +218,12 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by company-disclosure only",
+                "enum": [
+                  "opendart",
+                  "sec",
+                  "companies_house"
+                ],
                 "title": "Source",
                 "type": "string"
               }

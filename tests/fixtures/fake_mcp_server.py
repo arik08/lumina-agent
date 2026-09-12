@@ -89,6 +89,20 @@ for line in sys.stdin:
                 },
             )
             continue
+        if MODE in {"health_error_text", "health_error_structured"}:
+            payload = {
+                "ok": False,
+                "detail": "HTTP 429",
+                "secret": os.environ.get("MCP_TEST_TOKEN", ""),
+            }
+            result = {
+                "content": [{"type": "text", "text": json.dumps(payload)}],
+                "isError": False,
+            }
+            if MODE == "health_error_structured":
+                result = {"content": [], "structuredContent": payload, "isError": False}
+            respond(message["id"], result)
+            continue
         respond(
             message["id"],
             {

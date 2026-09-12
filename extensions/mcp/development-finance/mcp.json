@@ -16,6 +16,10 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by development-finance only",
+                "enum": [
+                  "adb_kidb"
+                ],
                 "title": "Source",
                 "type": "string"
               },
@@ -48,6 +52,10 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by development-finance only",
+                "enum": [
+                  "adb_kidb"
+                ],
                 "title": "Source",
                 "type": "string"
               },
@@ -109,6 +117,10 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by development-finance only",
+                "enum": [
+                  "adb_kidb"
+                ],
                 "title": "Source",
                 "type": "string"
               }

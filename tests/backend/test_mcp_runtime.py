@@ -22,6 +22,7 @@ from lumina.mcp.runtime import (
     _CachedMcpConnection,
     _PinnedNetworkBackend,
     _environment_value,
+    _mcp_result_failed,
     _resolve_stdio_command,
 )
 
@@ -31,6 +32,16 @@ SCHEMA = {
     "properties": {"value": {"type": "string"}},
     "required": ["value"],
 }
+
+
+@pytest.mark.parametrize("payload", [
+    {"content": [{"type": "text", "text": "plain text"}]},
+    {"content": [{"type": "text", "text": '{"ok": true}'}]},
+    {"content": [{"type": "text", "text": '{"ok": 0}'}]},
+    {"structuredContent": {"data": {"ok": False}}},
+])
+def test_mcp_success_is_not_confused_with_nested_or_non_boolean_status(payload) -> None:
+    assert not _mcp_result_failed(payload)
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -406,6 +417,8 @@ async def test_mcp_runtime_discards_connection_initialized_across_close(
     (
         ("rpc_error", "mcp_jsonrpc_error", "Invalid parameter value"),
         ("tool_error", "mcp_tool_error", "echo=hello"),
+        ("health_error_text", "mcp_tool_error", "HTTP 429"),
+        ("health_error_structured", "mcp_tool_error", "HTTP 429"),
     ),
 )
 async def test_stdio_tool_failures_preserve_safe_server_detail(

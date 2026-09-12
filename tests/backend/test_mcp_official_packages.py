@@ -9,6 +9,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+import httpx
 
 from lumina.config import Settings
 from lumina.mcp.runtime import McpRuntime, McpServerConfig
@@ -49,10 +50,86 @@ EXPECTED_TOOLS = {
 }
 
 
+@pytest.mark.parametrize("package_name", sorted(EXPECTED_TOOLS))
+def test_health_failure_reports_http_status_without_secret(
+    package_name: str,
+) -> None:
+    module = _load_server(package_name)
+
+    def probe() -> None:
+        response = httpx.Response(
+            429,
+            request=httpx.Request("GET", "https://example.com/?api_key=fixture-secret"),
+        )
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise ValueError("wrapped fixture-secret") from exc
+
+    result = json.loads(
+        module.checked_health_envelope(
+            source="fixture", probe=probe, success_detail="ok"
+        )
+    )
+    assert result["ok"] is False
+    assert result["detail"] == "Official endpoint probe failed (HTTP 429)."
+    assert "fixture-secret" not in json.dumps(result)
+
+
+def test_adb_legacy_dataflows_use_v5_and_keep_bounded_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_server("development-finance")
+    requests = []
+
+    def request(source, url, **kwargs):
+        requests.append((url, kwargs))
+        return httpx.Response(200, content=b"TIME_PERIOD,OBS_VALUE\n2024,123\n")
+
+    monkeypatch.setattr(module, "request", request)
+    monkeypatch.setattr(
+        module,
+        "request_json",
+        lambda source, url, **kwargs: requests.append((url, kwargs)) or [],
+    )
+    module.search_catalog("adb_kidb", "PPL_POP")
+    assert requests[-1][0].endswith("/dataflow/indicators/DF_PPSI")
+    result = json.loads(
+        module.query_series("adb_kidb", "EO_NA", "NGDP_XDC", "PHI", 2024, 2024)
+    )
+    assert requests[-1][0].endswith("/v5/sdmx/data/ADB,DF_NA/A.NGDP_XDC.PHI")
+    assert requests[-1][1]["params"]["startPeriod"] == 2024
+    assert result["data"][0]["OBS_VALUE"] == "123"
+    with pytest.raises(ValueError, match="50 years"):
+        module.query_series("adb_kidb", "DF_NA", "NGDP_XDC", "PHI", 1950, 2024)
+
+
+def test_semantic_scholar_anonymous_and_keyed_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_server("patent-tech")
+    monkeypatch.delenv("SEMANTIC_SCHOLAR_API_KEY", raising=False)
+    requests = []
+    monkeypatch.setattr(
+        module,
+        "request_json",
+        lambda *args, **kwargs: requests.append(kwargs) or {"data": []},
+    )
+    result = json.loads(module.get_source_health("semantic_scholar"))
+    assert result["ok"] is True
+    assert requests[-1]["headers"] == {}
+    monkeypatch.setenv("SEMANTIC_SCHOLAR_API_KEY", "fixture-secret")
+    result = module.get_source_health("semantic_scholar")
+    assert requests[-1]["headers"] == {"x-api-key": "fixture-secret"}
+    assert "fixture-secret" not in result
+
+
 def _load_server(package_name: str) -> ModuleType:
     runtime_dir = MCP_ROOT / package_name / "runtime"
     module_name = f"lumina_mcp_{package_name.replace('-', '_')}"
-    spec = importlib.util.spec_from_file_location(module_name, runtime_dir / "server.py")
+    spec = importlib.util.spec_from_file_location(
+        module_name, runtime_dir / "server.py"
+    )
     assert spec is not None and spec.loader is not None
     sys.path.insert(0, str(runtime_dir))
     try:
@@ -84,6 +161,12 @@ def test_official_data_package_runtime_tools_match_pinned_manifests(
 
     assert runtime_tool_names == EXPECTED_TOOLS[package_name]
     assert manifest_tool_names == runtime_tool_names
+    by_name = {tool.name: tool for tool in runtime_tools}
+    for declared in server_config["tools"]:
+        assert declared["inputSchema"] == by_name[declared["name"]].inputSchema
+        source_schema = declared["inputSchema"].get("properties", {}).get("source")
+        if source_schema:
+            assert source_schema["enum"] == list(module.SOURCES)
 
 
 @pytest.mark.asyncio

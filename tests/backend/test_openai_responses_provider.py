@@ -28,6 +28,42 @@ def _sse(*events: dict[str, object]) -> bytes:
     ).encode("utf-8")
 
 
+def test_responses_preserves_optional_mcp_filters_and_nested_schema() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "bill_type": {
+                "type": "string",
+                "enum": ["alternative"],
+                "default": "alternative",
+            },
+            "filters": {"type": "array", "items": {"$ref": "#/$defs/filter"}},
+        },
+        "required": ["query"],
+        "$defs": {"filter": {"type": "string"}},
+    }
+    payload = build_responses_payload(
+        ProviderRequest(
+            model="gpt-test",
+            messages=(ProviderMessage(role="user", content="Search"),),
+            tools=(
+                {
+                    "type": "function",
+                    "function": {"name": "mcp__assembly__search", "parameters": schema},
+                },
+                {
+                    "type": "function",
+                    "function": {"name": "builtin", "parameters": {"type": "object"}},
+                },
+            ),
+        )
+    )
+    assert payload["tools"][0]["strict"] is False
+    assert payload["tools"][0]["parameters"] == schema
+    assert "strict" not in payload["tools"][1]
+
+
 def test_responses_payload_includes_attached_image() -> None:
     payload = build_responses_payload(
         ProviderRequest(

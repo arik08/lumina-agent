@@ -16,6 +16,12 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by environment-industry only",
+                "enum": [
+                  "eurostat_prodcom",
+                  "epa_echo",
+                  "usda_ers"
+                ],
                 "title": "Source",
                 "type": "string"
               },
@@ -43,6 +49,12 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by environment-industry only",
+                "enum": [
+                  "eurostat_prodcom",
+                  "epa_echo",
+                  "usda_ers"
+                ],
                 "title": "Source",
                 "type": "string"
               },
@@ -132,6 +144,12 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by environment-industry only",
+                "enum": [
+                  "eurostat_prodcom",
+                  "epa_echo",
+                  "usda_ers"
+                ],
                 "title": "Source",
                 "type": "string"
               }

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+from pydantic import Field
+
 import json
 import re
 import time
@@ -39,6 +42,12 @@ SOURCES = {
     "crossref": "Crossref REST API",
     "semantic_scholar": "Semantic Scholar Academic Graph API",
 }
+
+Source = Annotated[
+    str,
+    Field(description="Source served by patent-tech only", json_schema_extra={"enum": list(SOURCES)}),
+]
+
 
 server = FastMCP("patent-tech")
 _EPO_TOKEN: tuple[str, float] | None = None
@@ -151,11 +160,8 @@ def _crossref_params() -> dict[str, str]:
 
 
 def _semantic_headers() -> dict[str, str]:
-    key = _required_env(
-        "SEMANTIC_SCHOLAR_API_KEY is required for reliable Semantic Scholar access.",
-        "SEMANTIC_SCHOLAR_API_KEY",
-    )
-    return {"x-api-key": key}
+    key = first_env("SEMANTIC_SCHOLAR_API_KEY")
+    return {"x-api-key": key} if key else {}
 
 
 def _year_range(start_year: int | None, end_year: int | None) -> tuple[int | None, int | None]:
@@ -170,7 +176,7 @@ def _year_range(start_year: int | None, end_year: int | None) -> tuple[int | Non
 
 
 @server.tool()
-def search_catalog(source: str, query: str = "", limit: int = 20) -> str:
+def search_catalog(source: Source, query: str = "", limit: int = 20) -> str:
     """Search source catalogs or return supported patent/research record types."""
     selected = _source(source)
     safe_limit = clean_limit(limit, maximum=100)
@@ -203,7 +209,7 @@ def search_catalog(source: str, query: str = "", limit: int = 20) -> str:
 
 @server.tool()
 def search_records(
-    source: str,
+    source: Source,
     query: str,
     limit: int = 20,
     start_year: int | None = None,
@@ -313,7 +319,7 @@ def search_records(
 
 
 @server.tool()
-def get_record(source: str, record_id: str, record_type: str = "detail") -> str:
+def get_record(source: Source, record_id: str, record_type: str = "detail") -> str:
     """Get one patent bibliography/family or scholarly-work metadata record."""
     selected = _source(source)
     kind = record_type.strip().lower()
@@ -402,7 +408,7 @@ def get_record(source: str, record_id: str, record_type: str = "detail") -> str:
 
 
 @server.tool()
-def get_source_health(source: str) -> str:
+def get_source_health(source: Source) -> str:
     """Perform a lightweight official endpoint check and safely report credential needs."""
     selected = _source(source)
     if selected == "kipris":
@@ -434,8 +440,8 @@ def get_source_health(source: str) -> str:
             params={"rows": 1, **_crossref_params()},
         )
     else:
-        credential = ("SEMANTIC_SCHOLAR_API_KEY",)
-        detail = "Semantic Scholar API is reachable with the configured API key."
+        credential = ()
+        detail = "Semantic Scholar public API is reachable; an API key is recommended for independent rate limits."
 
         def probe() -> object:
             return request_json(
@@ -445,18 +451,11 @@ def get_source_health(source: str) -> str:
                 headers=_semantic_headers(),
             )
 
-    missing_detail = (
-        "Adapter is installed, but anonymous requests from the shared/corporate egress are "
-        "rate-limited; configure an API key for reliable use."
-        if selected == "semantic_scholar"
-        else "Official API adapter is installed but its credential is not configured."
-    )
     return checked_health_envelope(
         source=SOURCES[selected],
         credential_env=credential,
         probe=probe,
         success_detail=detail,
-        missing_detail=missing_detail,
     )
 
 
@@ -471,7 +470,7 @@ def overview() -> str:
                 "epo_ops": ["EPO_OPS_CLIENT_ID", "EPO_OPS_CLIENT_SECRET"],
                 "openalex": ["OPENALEX_API_KEY"],
                 "crossref": ["CROSSREF_MAILTO (recommended)"],
-                "semantic_scholar": ["SEMANTIC_SCHOLAR_API_KEY (required in this environment)"],
+                "semantic_scholar": ["SEMANTIC_SCHOLAR_API_KEY (optional; recommended for independent rate limits)"],
             },
             "document_policy": "Bibliographic JSON/XML only; no patent PDF/full-text download or OCR.",
         },

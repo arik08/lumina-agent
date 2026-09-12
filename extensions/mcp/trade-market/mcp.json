@@ -16,6 +16,13 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by trade-market only",
+                "enum": [
+                  "customs_kr",
+                  "census",
+                  "wto",
+                  "eurostat_comext"
+                ],
                 "title": "Source",
                 "type": "string"
               },
@@ -43,6 +50,13 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by trade-market only",
+                "enum": [
+                  "customs_kr",
+                  "census",
+                  "wto",
+                  "eurostat_comext"
+                ],
                 "title": "Source",
                 "type": "string"
               },
@@ -133,6 +147,13 @@
           "inputSchema": {
             "properties": {
               "source": {
+                "description": "Source served by trade-market only",
+                "enum": [
+                  "customs_kr",
+                  "census",
+                  "wto",
+                  "eurostat_comext"
+                ],
                 "title": "Source",
                 "type": "string"
               }

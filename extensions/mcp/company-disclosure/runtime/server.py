@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+from pydantic import Field
+
 import base64
 import io
 import json
@@ -38,6 +41,12 @@ SOURCES = {
     "sec": "U.S. SEC EDGAR",
     "companies_house": "UK Companies House",
 }
+
+Source = Annotated[
+    str,
+    Field(description="Source served by company-disclosure only", json_schema_extra={"enum": list(SOURCES)}),
+]
+
 
 server = FastMCP("company-disclosure")
 
@@ -335,7 +344,7 @@ def _companies_house_json(path: str, params: dict[str, Any] | None = None) -> ob
 
 
 @server.tool()
-def search_catalog(source: str, query: str, limit: int = 20) -> str:
+def search_catalog(source: Source, query: str, limit: int = 20) -> str:
     """Search company identifiers before requesting filings or financial data."""
     selected = _source(source)
     safe_limit = clean_limit(limit, maximum=100)
@@ -366,7 +375,7 @@ def search_catalog(source: str, query: str, limit: int = 20) -> str:
 
 @server.tool()
 def search_records(
-    source: str,
+    source: Source,
     query: str = "",
     identifier: str | None = None,
     start_date: str | None = None,
@@ -468,7 +477,7 @@ def search_records(
 
 @server.tool()
 def get_record(
-    source: str,
+    source: Source,
     record_id: str,
     record_type: str = "company",
     business_year: int | None = None,
@@ -590,7 +599,7 @@ def get_record(
 
 
 @server.tool()
-def get_document_link(source: str, record_id: str, auxiliary_id: str | None = None) -> str:
+def get_document_link(source: Source, record_id: str, auxiliary_id: str | None = None) -> str:
     """Return an official viewer or registry link without downloading PDF documents."""
     selected = _source(source)
     if selected == "opendart":
@@ -620,7 +629,7 @@ def get_document_link(source: str, record_id: str, auxiliary_id: str | None = No
 
 
 @server.tool()
-def get_source_health(source: str) -> str:
+def get_source_health(source: Source) -> str:
     """Perform a lightweight official endpoint check and report credential presence safely."""
     selected = _source(source)
     if selected == "opendart":
