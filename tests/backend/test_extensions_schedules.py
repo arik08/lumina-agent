@@ -651,6 +651,8 @@ def test_selected_mcp_wrapper_guidance_enters_the_run_context(tmp_path: Path) ->
     )
     assert "Selected MCP guidance: Internal Search" in messages[0].content
     assert "MCP source selection contract" in messages[0].content
+    assert "기업용 API KEY 신청이 필요합니다" in messages[0].content
+    assert "does not block keyless sources" in messages[0].content
     assert "authorized in this Run" in messages[0].content
     assert "승인된 MCP 검색 결과만 근거로 사용합니다." in messages[0].content
 

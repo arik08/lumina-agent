@@ -12,10 +12,10 @@ metadata:
 - 한국 특허·실용신안 키워드 검색과 출원번호별 서지는 `source="kipris"`를 사용합니다.
 - 유럽·국제 특허 서지와 패밀리는 `source="epo_ops"`를 사용합니다. 검색어는 EPO OPS CQL이며, 패밀리는 `record_type="family"`입니다.
 - 연구 주제·기관·저자·인용 관계는 `source="openalex"`, DOI 등록 메타데이터 확인은 `source="crossref"`, 초록·인용·참고문헌 탐색은 `source="semantic_scholar"`를 사용합니다.
-- OpenAlex는 2026년부터 무료 API 키가 필요하므로 `OPENALEX_API_KEY`가 없으면 검색하지 않습니다. Crossref는 키가 없지만 연락용 `CROSSREF_MAILTO` 설정을 권장합니다.
+- OpenAlex는 `OPENALEX_API_KEY`가 없으면 검색하지 않고 “기업용 API KEY 신청이 필요합니다”라고 안내합니다. Crossref는 키 없이 사용할 수 있으며 연락용 `CROSSREF_MAILTO` 설정을 권장합니다.
 - 동일 기술은 특허와 논문을 분리 검색한 뒤 공개일·출원일·우선일을 구분합니다. 검색 건수만으로 기술우위를 단정하지 않습니다.
 - 먼저 `search_catalog` 또는 `search_records`로 ID를 확보하고 `get_record`로 상세 메타데이터를 확인합니다.
-- Semantic Scholar는 `SEMANTIC_SCHOLAR_API_KEY` 없이도 공개 조회를 시도합니다. 키는 독립적인 호출 제한을 위해 권장하며, HTTP 429는 인증 누락이 아닌 호출 제한으로 보고 반복 호출을 피합니다.
+- Semantic Scholar는 기업용으로 승인된 `SEMANTIC_SCHOLAR_API_KEY` 등록 후 조회합니다. 키가 없으면 “기업용 API KEY 신청이 필요합니다”라고 안내하고 무인증 호출하지 않습니다. 키가 등록된 상태의 HTTP 429는 키 누락이 아닌 호출량 제한으로 구분합니다.
 - PDF·도면·전문을 내려받거나 OCR하지 않습니다. 이 MCP는 구조화된 서지·초록·패밀리 메타데이터만 반환합니다.
 - WIPO PATENTSCOPE 웹서비스는 일반 공개 API가 아니라 구독·사용조건·호출제한이 있는 별도 상품이므로 이 MCP에 포함하지 않습니다. 국제 특허는 EPO OPS 패밀리로 대체합니다.
 - USPTO ODP는 2026년 계정·키 정책 전환과 구형 Developer Hub 종료가 진행 중이므로 안정 계약이 확인되기 전에는 연결하지 않습니다.

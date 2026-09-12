@@ -160,8 +160,11 @@ def _crossref_params() -> dict[str, str]:
 
 
 def _semantic_headers() -> dict[str, str]:
-    key = first_env("SEMANTIC_SCHOLAR_API_KEY")
-    return {"x-api-key": key} if key else {}
+    key = _required_env(
+        "SEMANTIC_SCHOLAR_API_KEY is required. 기업용 API KEY 신청이 필요합니다.",
+        "SEMANTIC_SCHOLAR_API_KEY",
+    )
+    return {"x-api-key": key}
 
 
 def _year_range(start_year: int | None, end_year: int | None) -> tuple[int | None, int | None]:
@@ -440,8 +443,8 @@ def get_source_health(source: Source) -> str:
             params={"rows": 1, **_crossref_params()},
         )
     else:
-        credential = ()
-        detail = "Semantic Scholar public API is reachable; an API key is recommended for independent rate limits."
+        credential = ("SEMANTIC_SCHOLAR_API_KEY",)
+        detail = "Semantic Scholar API is reachable with the configured key."
 
         def probe() -> object:
             return request_json(
@@ -470,7 +473,7 @@ def overview() -> str:
                 "epo_ops": ["EPO_OPS_CLIENT_ID", "EPO_OPS_CLIENT_SECRET"],
                 "openalex": ["OPENALEX_API_KEY"],
                 "crossref": ["CROSSREF_MAILTO (recommended)"],
-                "semantic_scholar": ["SEMANTIC_SCHOLAR_API_KEY (optional; recommended for independent rate limits)"],
+                "semantic_scholar": ["SEMANTIC_SCHOLAR_API_KEY (required in this environment)"],
             },
             "document_policy": "Bibliographic JSON/XML only; no patent PDF/full-text download or OCR.",
         },

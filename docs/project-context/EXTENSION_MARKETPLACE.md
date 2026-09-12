@@ -139,7 +139,7 @@ MyHarness의 `45b41e1`(2026-09-12)과 검토 시점의 미커밋 MCP 변경을 L
 | health 결과가 ok=false여도 성공 처리 | 텍스트 JSON과 structuredContent의 최상위 ok=false를 mcp_tool_error로 전달; 기존 Secret redaction 유지 |
 | 감싼 HTTP 오류가 ValueError로만 표시 | package별 health helper에서 원인 HTTP 상태 코드만 표시; URL·본문·인증값 제외, 순환 원인도 종료 |
 | ADB 구형 endpoint·dataflow | [공식 v5 API](https://kidb.adb.org/api) 경로와 DF_NA·DF_PPSI 사용, 구형 이름 호환 및 기간 제한 유지 |
-| Semantic Scholar 키 없는 조회 차단 | [공식 공개 조회 계약](https://www.semanticscholar.org/product/api)에 맞춰 키가 있을 때만 인증 header 추가; 실제 호출 제한은 오류로 보고 |
+| Semantic Scholar 키 없는 조회 차단 | 초기 익명 조회 허용은 아래 기업용 credential 정책으로 대체 |
 
 중복·비호환 변경은 다음과 같이 제외했습니다.
 
@@ -147,6 +147,12 @@ MyHarness의 `45b41e1`(2026-09-12)과 검토 시점의 미커밋 MCP 변경을 L
 - MyHarness의 readOnlyHint 기반 승인 생략은 복사하지 않았습니다. Lumina는 서버의 힌트 대신 기존 Tool risk 분류·승인 정책을 유지합니다.
 - 한국법 4.9.7 마이그레이션은 아래 후속 변경에서 완료했습니다.
 - MyHarness의 credential 배포, UI, 작업관리·프로세스 구조 변경은 이번 MCP 호환성 수정 범위에서 제외했습니다.
+
+#### 2026-09-13 기업용 MCP credential 정책
+
+MyHarness의 추가 변경을 반영하여 필수 API key 또는 OAuth credential이 없다고 확인되면 서비스명과 함께 “기업용 API KEY 신청이 필요합니다”라고 안내합니다. 개인·무료·데모 키, 채팅으로 비밀값 요청, 대리 신청, 무인증 호출·스크래핑 우회는 제안하지 않습니다. 키가 필요 없는 source는 계속 사용할 수 있으며 HTTP 429·네트워크·인증 오류를 키 미등록으로 단정하지 않습니다.
+
+Semantic Scholar는 이 환경에서 `SEMANTIC_SCHOLAR_API_KEY`를 필수로 합니다. 검색·상세·health 모두 키가 없으면 네트워크 호출 전에 차단합니다. 이는 Lumina 운영 정책이며 서비스 전체가 무인증 API를 제공하지 않는다는 주장은 아닙니다. Crossref의 무인증 조회는 유지합니다.
 
 #### 2026-09-13 후속 MCP 실행·이식성 개선
 

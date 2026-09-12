@@ -104,7 +104,7 @@ def test_adb_legacy_dataflows_use_v5_and_keep_bounded_query(
         module.query_series("adb_kidb", "DF_NA", "NGDP_XDC", "PHI", 1950, 2024)
 
 
-def test_semantic_scholar_anonymous_and_keyed_requests(
+def test_semantic_scholar_requires_key_before_network(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _load_server("patent-tech")
@@ -116,12 +116,40 @@ def test_semantic_scholar_anonymous_and_keyed_requests(
         lambda *args, **kwargs: requests.append(kwargs) or {"data": []},
     )
     result = json.loads(module.get_source_health("semantic_scholar"))
-    assert result["ok"] is True
-    assert requests[-1]["headers"] == {}
+    assert result["ok"] is False
+    assert requests == []
+    with pytest.raises(ValueError, match="기업용 API KEY 신청이 필요합니다"):
+        module.search_records("semantic_scholar", "steel")
+    with pytest.raises(ValueError, match="기업용 API KEY 신청이 필요합니다"):
+        module.get_record("semantic_scholar", "P1")
+    assert requests == []
     monkeypatch.setenv("SEMANTIC_SCHOLAR_API_KEY", "fixture-secret")
     result = module.get_source_health("semantic_scholar")
     assert requests[-1]["headers"] == {"x-api-key": "fixture-secret"}
     assert "fixture-secret" not in result
+
+
+
+def test_semantic_scholar_rate_limit_is_not_missing_key(monkeypatch):
+    module = _load_server("patent-tech")
+    monkeypatch.setenv("SEMANTIC_SCHOLAR_API_KEY", "fixture-secret")
+    def limited(*args, **kwargs):
+        response = httpx.Response(429, request=httpx.Request("GET", "https://example.com"))
+        response.raise_for_status()
+    monkeypatch.setattr(module, "request_json", limited)
+    result = module.get_source_health("semantic_scholar")
+    assert json.loads(result)["ok"] is False
+    assert "429" in result
+    assert "기업용 API KEY" not in result
+    assert "fixture-secret" not in result
+
+
+def test_crossref_remains_keyless(monkeypatch):
+    module = _load_server("patent-tech")
+    monkeypatch.delenv("SEMANTIC_SCHOLAR_API_KEY", raising=False)
+    monkeypatch.delenv("CROSSREF_MAILTO", raising=False)
+    monkeypatch.setattr(module, "request_json", lambda *args, **kwargs: {"message": {"items": []}})
+    assert json.loads(module.get_source_health("crossref"))["ok"] is True
 
 
 def _load_server(package_name: str) -> ModuleType:

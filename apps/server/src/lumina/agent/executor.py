@@ -5772,7 +5772,15 @@ class LocalRunExecutor:
                 "are deferred, use tool_search and tool_describe to discover their exact schemas. "
                 "Use web research for uncovered information or after an actual MCP failure, "
                 "and explain the fallback without claiming MCP retrieval succeeded. Only use "
-                "the integrations and tools authorized in this Run."
+                "the integrations and tools authorized in this Run. "
+                "If a required API key or OAuth client credential is confirmed missing, "
+                "tell the user '기업용 API KEY 신청이 필요합니다' and name the affected service. "
+                "Stop using that source until approved enterprise credentials are registered; "
+                "do not suggest personal/free/demo keys, apply on the user's behalf, request "
+                "secrets in chat, or bypass the requirement via anonymous calls or web scraping. "
+                "This missing-credential policy overrides fallback guidance; it does not block "
+                "keyless sources or classify network/rate-limit/authentication failures as "
+                "missing credentials."
             )
         for mcp_server in run.snapshot_json.get("mcp_servers", []):
             wrapper = mcp_server.get("skill_wrapper", {})
