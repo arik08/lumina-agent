@@ -1,6 +1,6 @@
 ---
 name: macro-finance
-description: FRED, ECB, BIS, NY Fed, OECD, 일본 e-Stat과 기존 ECOS·KOSIS의 금리·물가·환율·고용·산업생산·유동성·신용 시계열을 조회하는 MCP 라우팅입니다. 철강 수요 선행지표와 국가별 금융여건 비교에 사용합니다.
+description: 해외 금리·물가·고용·환율·산업생산·경기선행·신용 지표로 수요와 금융여건을 분석할 때 FRED·ECB·BIS·NY Fed·OECD·일본 e-Stat을 조회합니다. 한국은 ecos/kosis, 기업 재무는 company-disclosure를 사용합니다.
 metadata:
   lumina-source: skill-mcp:macro-finance
 ---

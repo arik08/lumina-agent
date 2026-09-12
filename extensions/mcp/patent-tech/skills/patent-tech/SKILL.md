@@ -1,6 +1,6 @@
 ---
 name: patent-tech
-description: KIPRISPlus와 EPO OPS의 특허 서지·패밀리, OpenAlex·Crossref·Semantic Scholar의 논문·연구 메타데이터를 공식 구조화 API로 조회하는 MCP 라우팅입니다.
+description: 기술동향·선행기술·경쟁사 특허·연구기관·논문 근거가 필요할 때 KIPRISPlus·EPO OPS 특허와 OpenAlex·Crossref·Semantic Scholar 논문·초록·인용 메타데이터를 조회합니다. 전문·PDF 추출은 지원하지 않습니다.
 metadata:
   lumina-source: skill-mcp:patent-tech
 ---

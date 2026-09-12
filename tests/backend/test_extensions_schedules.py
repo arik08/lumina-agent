@@ -650,6 +650,8 @@ def test_selected_mcp_wrapper_guidance_enters_the_run_context(tmp_path: Path) ->
         run_id, "사내 규정을 찾아주세요."
     )
     assert "Selected MCP guidance: Internal Search" in messages[0].content
+    assert "MCP source selection contract" in messages[0].content
+    assert "authorized in this Run" in messages[0].content
     assert "승인된 MCP 검색 결과만 근거로 사용합니다." in messages[0].content
 
 

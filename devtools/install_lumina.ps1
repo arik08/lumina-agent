@@ -453,6 +453,16 @@ if (-not $SkipDependencyInstall) {
         -WebRoot $WebRoot `
         -NoNetwork:$NoNetwork `
         -Processes $frontendProcessSnapshot
+    Write-Host "[Lumina] Preparing Korean Law MCP dependencies..."
+    $mcpArguments = @("run")
+    if ($NoNetwork) { $mcpArguments += "--offline" }
+    $mcpArguments += @(
+        "--project", $ServerRoot, "python",
+        (Join-Path $RepositoryRoot "extensions/mcp/korean-law/runtime/bootstrap.py"),
+        "--prepare"
+    )
+    if ($NoNetwork) { $mcpArguments += "--offline" }
+    Invoke-Checked -Command "uv" -Arguments $mcpArguments
 }
 
 Write-Host "[Lumina] Applying database migrations..."

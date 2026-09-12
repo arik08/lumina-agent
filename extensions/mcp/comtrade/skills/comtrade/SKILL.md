@@ -1,6 +1,6 @@
 ---
 name: comtrade
-description: UN Comtrade 국가별 수출입·품목·교역 상대국 데이터를 조회하는 MCP 라우팅입니다.
+description: 여러 국가의 품목별 수출입·교역상대국·시장점유율·공급망을 같은 기간으로 비교할 때 UN Comtrade를 조회합니다. 세계 교역 비교에 우선하며, 특정국 통관 상세·관세율은 trade-market을 사용합니다.
 metadata:
   lumina-source: skill-mcp:comtrade
 ---

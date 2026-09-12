@@ -1,6 +1,6 @@
 ---
 name: ecos
-description: 한국은행 ECOS의 환율·경제통계 시계열을 조회하는 MCP 라우팅입니다.
+description: 원화 환율·국내 금리·통화·한국 경제지표의 최신 수치나 추이를 확인하고 환율·금리 영향을 분석할 때 한국은행 ECOS를 조회합니다. 국내 인구·산업 통계표는 kosis, 해외 거시지표는 macro-finance를 사용합니다.
 metadata:
   lumina-source: skill-mcp:ecos
 ---

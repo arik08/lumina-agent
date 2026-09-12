@@ -2,10 +2,9 @@
   "mcpServers": {
     "korean-law": {
       "type": "stdio",
-      "command": "npx",
+      "command": "python",
       "args": [
-        "-y",
-        "korean-law-mcp@4.0.6"
+        "runtime/bootstrap.py"
       ],
       "env": {
         "NODE_OPTIONS": "--tls-cipher-list=DEFAULT@SECLEVEL=0",
@@ -14,7 +13,7 @@
       "tools": [
         {
           "name": "search_law",
-          "description": "[법령검색] 법령명 키워드검색 → lawId, mst 획득. 약칭 자동변환. 법령 조회 전 식별자 확보용.",
+          "description": "Korean-law-mcp — [법령검색] 법령명·조례명·행정규칙명 키워드검색 → lawId, mst 획득. 지자체 조례·규칙(자치법규), 훈령·예규·고시(행정규칙)도 검색 — 0건 시 자치법규/행정규칙으로 자동 폴백(예: '광진구 복무조례', '외국환거래규정'). 약칭 자동변환. 제명변경·시행예정 개정 자동 병기. 법령·조례·행정규칙 조회 전 식별자 확보용.",
           "inputSchema": {
             "type": "object",
             "properties": {
@@ -26,22 +25,17 @@
                 "default": 50,
                 "description": "최대 결과 개수 (기본 50 — 짧은 법령명 정확매칭 누락 방지)",
                 "type": "number"
-              },
-              "apiKey": {
-                "description": "법제처 Open API 인증키(OC). 사용자가 제공한 경우 전달",
-                "type": "string"
               }
             },
             "required": [
-              "query",
-              "display"
+              "query"
             ],
             "additionalProperties": false
           }
         },
         {
           "name": "get_law_text",
-          "description": "[법령조회] 조문 전문 조회. mst/lawId 필수, jo로 특정 조문만 가능.",
+          "description": "Korean-law-mcp — [법령조회] 조문 전문 조회. mst/lawId 필수, jo로 특정 조문만 가능.",
           "inputSchema": {
             "type": "object",
             "properties": {
@@ -53,6 +47,10 @@
                 "description": "법령ID (search_law에서 획득)",
                 "type": "string"
               },
+              "search": {
+                "description": "조문 제목 검색어. 공백으로 구분한 검색어 중 하나와 일치하는 조문 본문을 반환",
+                "type": "string"
+              },
               "jo": {
                 "description": "조문 번호 (예: '제38조' 또는 '003800')",
                 "type": "string"
@@ -60,9 +58,32 @@
               "efYd": {
                 "description": "시행일자 (YYYYMMDD 형식)",
                 "type": "string"
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          }
+        },
+        {
+          "name": "ordinance_radar",
+          "description": "Korean-law-mcp — [자치법규] 조례 정비 레이더 — 조례가 인용한 근거 상위법령(법률/시행령/시행규칙)을 본문에서 추출하고, 각 상위법의 현행 시행일과 조례 시행일을 대조해 '상위법이 조례 시행 이후 개정됨 → 정비 검토 대상'을 자동 플래그. 조례 담당 공무원의 상위법 개정 추적·조례 정비 판단용. ordinSeq(또는 id)나 ordinanceName 중 하나 지정.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "ordinSeq": {
+                "description": "자치법규 일련번호 (search_ordinance 결과의 [번호])",
+                "type": "string"
               },
-              "apiKey": {
-                "description": "법제처 Open API 인증키(OC). 사용자가 제공한 경우 전달",
+              "id": {
+                "description": "ordinSeq 별칭 — 힌트가 id=로 안내하는 경우 대응",
+                "type": "string"
+              },
+              "ordinanceName": {
+                "description": "자치법규명 — 지정 시 검색 후 첫 결과 사용 (예: '서울특별시 광진구 주차장 설치 및 관리 조례')",
+                "type": "string"
+              },
+              "query": {
+                "description": "ordinanceName 별칭 — 자연어 조례명으로 검색 (search_law 등 다른 도구와 규약 통일)",
                 "type": "string"
               }
             },
@@ -72,13 +93,13 @@
         },
         {
           "name": "get_annexes",
-          "description": "[별표] 별표/서식 조회. lawName+'별표N'으로 내용 추출. 금액/기준은 별표에 있는 경우 많음.",
+          "description": "Korean-law-mcp — [별표] 별표/서식 조회. lawName+'별표N'으로 내용 추출. 금액/기준은 별표에 있는 경우 많음.",
           "inputSchema": {
             "type": "object",
             "properties": {
               "lawName": {
                 "type": "string",
-                "description": "법령명 (예: '관세법'). 별표를 바로 지정하려면 '... 별표4'처럼 함께 입력 가능"
+                "description": "법령명 (예: '관세법'). 별표를 바로 지정하려면 '... 별표4' 또는 '... 별표1의2'처럼 함께 입력 가능"
               },
               "knd": {
                 "description": "1=별표, 2=서식, 3=부칙별표, 4=부칙서식, 5=전체",
@@ -98,10 +119,6 @@
               "annexNo": {
                 "description": "별표 번호 (예: '4', '별표4', '제4호'). bylSeq 대체 입력",
                 "type": "string"
-              },
-              "apiKey": {
-                "description": "법제처 Open API 인증키(OC). 사용자가 제공한 경우 전달",
-                "type": "string"
               }
             },
             "required": [
@@ -111,79 +128,47 @@
           }
         },
         {
-          "name": "chain_law_system",
-          "description": "[⛓체인] 법령 전체 구조 종합. 1개 법령의 법률·시행령·시행규칙 3단 + 위임조문 + 하위법령 + 별표까지 한 번에. 예: '관세법 체계 알려줘', '이 법 하위법령 뭐 있어?', '위임관계 보여줘'. scenario=delegation: 위임은 있는데 미제정된 하위법령 감시(감사원용). scenario=impact: 법령 개정 시 연쇄 영향받는 하위법령/조례 탐지(입법영향평가용). 단순 법령명 검색만 필요하면 search_law 쓸 것.",
+          "name": "legal_research",
+          "description": "Korean-law-mcp — [⛓리서치] 다단계 법령 리서치 통합 — 여러 API를 병렬로 엮는 복합 질문 전용. task: full_research=도메인·법령명 불명확한 자연어 질문 폴백(기본값, 예 '음주운전 처벌 기준') | law_system=법률·시행령·시행규칙 3단+위임+별표(예 '관세법 체계') | action_basis=처분·허가의 법적 근거+해석례+판례+행심(예 '영업정지 근거') | dispute_prep=불복·소송 준비, 판례+심판례+도메인 결정례(예 '과세처분 불복') | amendment_track=개정 이력+신구대조+연혁(예 '2023년 개정 뭐 바뀜') | ordinance_compare=조례 전국 비교+상위법 적합성(예 '서울시 주차 조례') | procedure_detail=절차·수수료·별표서식(예 '건축허가 절차') | document_review=계약서·약관 조항 리스크+근거법령(text 필수). 단일 조회로 답이 되면 search_law/get_law_text 쓸 것.",
           "inputSchema": {
             "type": "object",
             "properties": {
               "query": {
-                "type": "string",
-                "description": "법령명 또는 키워드 (예: '관세법', '건축법 허가')"
+                "description": "자연어 질문/법령명/키워드 (예: '음주운전 처벌 기준', '관세법 체계'). document_review 외 모든 task에서 필수",
+                "type": "string"
               },
-              "articles": {
-                "description": "조회할 조문 번호 (예: ['제38조', '제39조'])",
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
+              "task": {
+                "default": "full_research",
+                "description": "리서치 유형 (도구 설명의 task 표 참조). 미지정 시 full_research",
+                "type": "string",
+                "enum": [
+                  "full_research",
+                  "law_system",
+                  "action_basis",
+                  "dispute_prep",
+                  "amendment_track",
+                  "ordinance_compare",
+                  "procedure_detail",
+                  "document_review"
+                ]
               },
               "scenario": {
-                "description": "확장 시나리오. delegation=위임입법 미이행 감시, impact=개정 영향도 분석. 미지정 시 쿼리에서 자동 감지.",
+                "description": "확장 시나리오. 미지정 시 쿼리에서 자동 감지. task별 호환: law_system=delegation·impact | action_basis=penalty | amendment_track=timeline·time_travel | ordinance_compare=compliance | full_research=customs·action_plan | procedure_detail=manual",
                 "type": "string",
                 "enum": [
                   "delegation",
-                  "impact"
+                  "impact",
+                  "penalty",
+                  "timeline",
+                  "time_travel",
+                  "compliance",
+                  "customs",
+                  "action_plan",
+                  "manual"
                 ]
-              },
-              "apiKey": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "query"
-            ],
-            "additionalProperties": false
-          }
-        },
-        {
-          "name": "chain_action_basis",
-          "description": "[⛓체인] 행정처분·허가·인가의 법적 근거 종합. 3단비교+해석례+판례+행심 병렬 조회. 예: '음식점 영업정지 근거', '건축허가 요건', '과징금 부과 기준 + 감경 판례'. scenario=penalty: 과태료/과징금/영업정지 금액·기간 별표 + 1·2·3차 위반 기준 + 감경 판례 + 행심 인용률까지. 공무원 처분 담당자/피처분자 모두 타겟. 단순 판례 검색이면 search_precedents 쓸 것.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "query": {
-                "type": "string",
-                "description": "처분 유형 + 키워드 (예: '건축허가 거부 근거', '보조금 환수')"
-              },
-              "scenario": {
-                "description": "확장 시나리오. penalty=처분·벌칙 기준 종합 (별표 처분기준표 + 감경 판례 + 개정이력). 미지정 시 쿼리에서 자동 감지.",
-                "type": "string",
-                "enum": [
-                  "penalty"
-                ]
-              },
-              "apiKey": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "query"
-            ],
-            "additionalProperties": false
-          }
-        },
-        {
-          "name": "chain_dispute_prep",
-          "description": "[⛓체인] 불복·소송·심판 준비. 대법원 판례 + 행정심판례 + 해당 도메인 결정례(조세심판·공정위·노동위 등) 병렬 수집. 예: '과세처분 불복 방법', '해고 부당노동 구제', '공정위 과징금 취소소송'. 소송/심판 전략 준비용. 단일 도메인만 보면 search_decisions 쓸 것.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "query": {
-                "type": "string",
-                "description": "분쟁 키워드 (예: '건축허가 취소 행정심판', '징계처분 감경')"
               },
               "domain": {
-                "description": "전문 분야 (tax=조세심판, labor=노동위, privacy=개인정보위, competition=공정위). 미지정 시 쿼리에서 자동 감지",
+                "description": "[dispute_prep] 전문 분야 (tax=조세심판, labor=노동위, privacy=개인정보위, competition=공정위). 미지정 시 자동 감지",
                 "type": "string",
                 "enum": [
                   "tax",
@@ -193,247 +178,120 @@
                   "general"
                 ]
               },
-              "apiKey": {
+              "articles": {
+                "description": "[law_system] 함께 조회할 조문 번호 (예: ['제38조'])",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "parentLaw": {
+                "description": "[ordinance_compare] 상위 법령명. 미지정 시 자동 검색",
                 "type": "string"
-              }
-            },
-            "required": [
-              "query"
-            ],
-            "additionalProperties": false
-          }
-        },
-        {
-          "name": "chain_amendment_track",
-          "description": "[⛓체인] 법령·조문 개정 이력 종합. 신구대조표 + 조문별 개정이력 + 연혁법령. 예: '개인정보보호법 2023년 개정 뭐 바뀌었어', '이 조문 언제부터 적용'. scenario=timeline: 제정~현재 구간별로 판례/해석례 시계열 매핑(소급적용 쟁점용). 단순 최신 법령 조회는 get_law_text 쓸 것.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "query": {
-                "type": "string",
-                "description": "법령명 (예: '관세법', '지방세특례제한법')"
               },
               "mst": {
-                "description": "법령일련번호 (알고 있으면)",
+                "description": "[amendment_track] 법령일련번호 (알고 있으면)",
                 "type": "string"
               },
               "lawId": {
-                "description": "법령ID (알고 있으면)",
+                "description": "[amendment_track] 법령ID (알고 있으면)",
                 "type": "string"
               },
-              "scenario": {
-                "description": "확장 시나리오. timeline=시계열 타임라인(판례·해석례 매핑) | time_travel=두 시점 본문 자동 diff(v4.0, fromDate/toDate 필요). 미지정 시 쿼리에서 자동 감지.",
-                "type": "string",
-                "enum": [
-                  "timeline",
-                  "time_travel"
-                ]
-              },
               "fromDate": {
-                "description": "[time_travel 전용] 비교 시작 시점 YYYYMMDD (예: '20240101')",
+                "description": "[time_travel] 비교 시작 시점 YYYYMMDD",
                 "type": "string",
                 "pattern": "^\\d{8}$"
               },
               "toDate": {
-                "description": "[time_travel 전용] 비교 종료 시점 YYYYMMDD (예: '20251101')",
+                "description": "[time_travel] 비교 종료 시점 YYYYMMDD",
                 "type": "string",
                 "pattern": "^\\d{8}$"
               },
-              "apiKey": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "query"
-            ],
-            "additionalProperties": false
-          }
-        },
-        {
-          "name": "chain_ordinance_compare",
-          "description": "[⛓체인] 자치법규(조례·규칙) 종합 분석. 상위법령 + 위임체계 + 전국 동일유형 조례 비교. 예: '서울시 주차 조례 전국 비교', '광진구 조례가 상위법 위임 범위 안인가'. scenario=compliance: 상위법 적합성 검증(지자체 법제심사용) — 위헌/위법 판결 선례 + 권익위 심판례까지. 특정 조례 단건 조회는 get_ordinance 쓸 것.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "query": {
-                "type": "string",
-                "description": "조례 관련 키워드 (예: '주민자치회', '개발행위 허가 기준')"
-              },
-              "parentLaw": {
-                "description": "상위 법령명 (예: '지방자치법'). 미지정 시 자동 검색.",
-                "type": "string"
-              },
-              "scenario": {
-                "description": "확장 시나리오. compliance=조례 상위법 적합성 검증 (헌재·행심 위법 판결 + 상위법 근거 분석). 미지정 시 쿼리에서 자동 감지.",
-                "type": "string",
-                "enum": [
-                  "compliance"
-                ]
-              },
-              "apiKey": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "query"
-            ],
-            "additionalProperties": false
-          }
-        },
-        {
-          "name": "chain_full_research",
-          "description": "[⛓체인] 도메인·법령명이 불명확한 복합 질문 전용. AI검색 + 법령검색 + 판례 + 해석례 병렬. 예: '음주운전 처벌 기준', '퇴직금 중간정산', '상가 권리금 받는 법'. 일반인 자연어 질문용 폴백 체인. scenario=customs: 관세 3법(관세/FTA특례/대외무역) + 관세청 해석 + FTA 조약 + 조세심판 관세건. 법령명을 알면 search_law → get_law_text가 더 정확.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "query": {
-                "type": "string",
-                "description": "자연어 질문 (예: '기간제 근로자 2년 초과 사용', '음주운전 처벌 기준', '전세금 못 받았어')"
-              },
-              "scenario": {
-                "description": "확장 시나리오. customs=관세·통관 종합 | action_plan=이럴 땐 이렇게, 5단계 안내(v4.0, 진단→권리→기관/기한→서류→함정). 미지정 시 쿼리에서 자동 감지.",
-                "type": "string",
-                "enum": [
-                  "customs",
-                  "action_plan"
-                ]
-              },
-              "apiKey": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "query"
-            ],
-            "additionalProperties": false
-          }
-        },
-        {
-          "name": "chain_procedure_detail",
-          "description": "[⛓체인] 행정 절차·비용·서식 종합. 법적 근거(법률·시행령·시행규칙) + 처리기한 + 별표/별지서식 + 수수료. 예: '건축허가 처리 절차', '법인설립 신고서', '영업허가 수수료'. scenario=manual: 일선 공무원용 처리 매뉴얼 — 훈령/예규/고시(내부지침) + 우리 지자체 조례 특칙 + FAQ 성격 해석례까지 포함. 단일 별표 조회는 get_annexes 쓸 것.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "query": {
-                "type": "string",
-                "description": "절차/비용 관련 질문 (예: '여권발급 절차 수수료', '건축허가 신청 방법')"
-              },
-              "scenario": {
-                "description": "확장 시나리오. manual=공무원 처리 매뉴얼 (행정규칙 + 자치법규 특칙 + 해석례 추가). 미지정 시 쿼리에서 자동 감지.",
-                "type": "string",
-                "enum": [
-                  "manual"
-                ]
-              },
-              "apiKey": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "query"
-            ],
-            "additionalProperties": false
-          }
-        },
-        {
-          "name": "chain_document_review",
-          "description": "[⛓체인] 계약서·약관·협정서 조항별 리스크 검토. analyze_document + 근거법령 자동검색 + 관련 판례. 예: '이 임대차계약서 위험한 조항 있어?', '비밀유지약정 독소조항 체크'. 문서 본문을 text로 넘기면 조항 파싱 → 리스크 탐지 → 관련 법령/판례 매핑. 단순 리스크 분석만이면 analyze_document 쓸 것.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
               "text": {
-                "type": "string",
-                "description": "분석할 계약서/약관 전문 텍스트"
+                "description": "[document_review 전용·필수] 검토할 계약서/약관 전문 텍스트",
+                "type": "string"
               },
               "maxClauses": {
-                "default": 15,
-                "description": "분석할 최대 조항 수 (기본:15)",
+                "description": "[document_review] 최대 분석 조항 수 (기본 15)",
                 "type": "number",
                 "minimum": 1,
                 "maximum": 30
-              },
-              "apiKey": {
-                "type": "string"
               }
             },
-            "required": [
-              "text",
-              "maxClauses"
-            ],
+            "required": [],
             "additionalProperties": false
           }
         },
         {
-          "name": "verify_citations",
-          "description": "[인용검증] LLM 환각 방지 — 사용자/AI가 쓴 텍스트에서 '민법 제750조', '상법 제401조의2 제2항' 등 조문 인용을 추출하고 법제처 DB에 실제로 존재하는지 교차검증. 법률 답변 신뢰도 체크, 계약서 인용 검증, 법률 문서 교정용. text만 넘기면 자동 파싱 + 병렬 조회.",
+          "name": "legal_analysis",
+          "description": "Korean-law-mcp — [정밀분석] 검증·분석 4종 통합. mode: verify_citations=텍스트 속 조문 인용('민법 제750조' 등)이 실존하는지 법제처 DB 교차검증, LLM 환각 방지(text 필수) | cite_check=판례 생사 확인 — 사건번호로 후속 인용 역추적+변경·폐기 감지, 한국형 Citator(caseNumber 필수) | applicable_law=사건 시점에 시행되던 법령 버전+그 시점 조문+부칙 경과조치, 행위시법 판단(lawName+date 필수, jo 선택) | impact_map=한 조문을 인용한 판례·헌재·해석례·행심·조례 역방향 그래프+mermaid(lawName+jo 필수)",
           "inputSchema": {
             "type": "object",
             "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "verify_citations",
+                  "cite_check",
+                  "applicable_law",
+                  "impact_map"
+                ],
+                "description": "분석 유형 (도구 설명의 mode 표 참조)"
+              },
               "text": {
-                "type": "string",
-                "minLength": 1,
-                "description": "검증할 법률 텍스트 (LLM 답변/계약서/판결문 등). 조문 인용이 포함된 문자열"
-              },
-              "maxCitations": {
-                "default": 15,
-                "description": "검증할 최대 인용 개수 (기본 15, 많을수록 느림)",
-                "type": "number",
-                "minimum": 1,
-                "maximum": 30
-              },
-              "apiKey": {
-                "description": "법제처 Open API 인증키(OC). 사용자가 제공한 경우 전달",
+                "description": "[verify_citations 필수] 검증할 법률 텍스트 (LLM 답변/계약서 등 조문 인용 포함 문자열)",
                 "type": "string"
-              }
-            },
-            "required": [
-              "text",
-              "maxCitations"
-            ],
-            "additionalProperties": false
-          }
-        },
-        {
-          "name": "impact_map",
-          "description": "[영향그래프] 조문 한 줄의 파급효과 그래프. 특정 조문(예: 민법 제103조)을 인용한 모든 판례·헌재·해석례·행심·자치법규를 역방향 탐색 + 그 조문이 인용한 다른 법령(정방향) + mermaid 시각화. lawName + jo 필수. 다른 chain은 query 단방향이지만 이 도구는 '한 조문 → 영향받는 모든 곳' 역방향.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
+              },
+              "caseNumber": {
+                "description": "[cite_check 필수] 사건번호 (예: '2013다61381', 문장 포함 가능)",
+                "type": "string"
+              },
               "lawName": {
-                "type": "string",
-                "description": "법령명 (예: '민법', '근로기준법')"
+                "description": "[applicable_law·impact_map 필수] 법령명 (예: '민법', '도로교통법')",
+                "type": "string"
               },
               "jo": {
-                "type": "string",
-                "description": "조문 번호 (예: '제103조', '제750조', '제10조의2')"
+                "description": "[impact_map 필수, applicable_law 선택] 조문 번호 (예: '제103조', '제10조의2')",
+                "type": "string"
+              },
+              "date": {
+                "description": "[applicable_law 필수] 기준일 — 행위·계약·처분 시점 (예: '2023-05-10', '20230510')",
+                "type": "string"
+              },
+              "maxCitations": {
+                "description": "[verify_citations] 검증할 최대 인용 개수 (기본 15, 많을수록 느림)",
+                "type": "number",
+                "minimum": 1,
+                "maximum": 30
+              },
+              "display": {
+                "description": "[cite_check] 후속 인용 판례 최대 표시 수 (기본 20)",
+                "type": "number",
+                "minimum": 1,
+                "maximum": 50
+              },
+              "deepScan": {
+                "description": "[cite_check] 후속 인용 상위 판례 본문 정밀 스캔 (기본 true, false면 빠르지만 변경·폐기 감지 생략)",
+                "type": "boolean"
               },
               "includeOrdinances": {
-                "default": true,
-                "description": "자치법규 인용 검색 포함 (기본 true)",
+                "description": "[impact_map] 자치법규 인용 검색 포함 (기본 true, false면 전국 조례 팬아웃 생략)",
                 "type": "boolean"
               },
               "includeMermaid": {
-                "default": true,
-                "description": "mermaid 그래프 코드 출력 (기본 true)",
+                "description": "[impact_map] mermaid 그래프 코드 출력 (기본 true)",
                 "type": "boolean"
-              },
-              "apiKey": {
-                "description": "법제처 Open API 인증키(OC). 사용자가 제공한 경우 전달",
-                "type": "string"
               }
             },
             "required": [
-              "lawName",
-              "jo",
-              "includeOrdinances",
-              "includeMermaid"
+              "mode"
             ],
             "additionalProperties": false
           }
         },
         {
           "name": "discover_tools",
-          "description": "[메타] 위 체인/직접 도구로 안 되는 경우. 73개 전문도구(조세심판·관세·헌재·행심·공정위·개인정보위·노동위·학칙·조약·영문법령·용어 등) 카테고리 검색",
+          "description": "Korean-law-mcp — [메타] 위 도구로 안 되는 경우. 전문도구(조세심판·관세·헌재·행심·공정위·개인정보위·노동위·학칙·조약·영문법령·용어 등 80+개) 카테고리 검색",
           "inputSchema": {
             "type": "object",
             "properties": {
@@ -450,7 +308,7 @@
         },
         {
           "name": "execute_tool",
-          "description": "[메타] discover_tools 결과 도구를 프록시 실행. tool_name + params",
+          "description": "Korean-law-mcp — [메타] discover_tools 결과 도구를 프록시 실행. tool_name + params",
           "inputSchema": {
             "type": "object",
             "properties": {
@@ -476,7 +334,7 @@
         },
         {
           "name": "search_decisions",
-          "description": "[통합검색] 18개 도메인(판례·해석례·헌재·행심·조세심판·관세·국세청·공정위·개인정보위·노동위·권익위·소청심사·학칙·공사공단·공공기관·조약·영문법령) 통합 검색. domain으로 선택. 세무 관련 국세청 직접 회신 해석은 domain='nts'.",
+          "description": "Korean-law-mcp — [통합검색] 18개 도메인(판례·해석례·헌재·행심·조세심판·관세·국세청·공정위·개인정보위·노동위·권익위·소청심사·학칙·공사공단·공공기관·조약·영문법령) 통합 검색. domain으로 선택. 판례 본문까지 필요하면 domain='precedent', options.includeText=true, options.detailLimit=N. 세무 관련 국세청 직접 회신 해석은 domain='nts'.",
           "inputSchema": {
             "type": "object",
             "properties": {
@@ -532,9 +390,6 @@
                   "type": "string"
                 },
                 "additionalProperties": {}
-              },
-              "apiKey": {
-                "type": "string"
               }
             },
             "required": [
@@ -545,7 +400,7 @@
         },
         {
           "name": "get_decision_text",
-          "description": "[통합조회] 18개 도메인 전문 조회. domain+id. full=false(기본) 시 본문 계단식 축약",
+          "description": "Korean-law-mcp — [통합조회] 18개 도메인 전문 조회. domain+id. full=false(기본) 시 본문 계단식 축약",
           "inputSchema": {
             "type": "object",
             "properties": {
@@ -588,9 +443,6 @@
                   "type": "string"
                 },
                 "additionalProperties": {}
-              },
-              "apiKey": {
-                "type": "string"
               }
             },
             "required": [

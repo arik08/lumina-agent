@@ -5762,6 +5762,18 @@ class LocalRunExecutor:
                     f"{_bounded_text(instructions, 40_000)}"
                     f"{_skill_resources_prompt(skill)}"
                 )
+        if run.snapshot_json.get("mcp_servers"):
+            system += (
+                "\n\nMCP source selection contract: For each information need, use a matching "
+                "MCP allowed in this Run before generic web research. Infer the match from the "
+                "evidence needed, not literal keywords; the user need not name the integration. "
+                "Use complementary sources for compound tasks and reassess as new needs arise. "
+                "An output-format Skill does not replace a data-source integration. If tools "
+                "are deferred, use tool_search and tool_describe to discover their exact schemas. "
+                "Use web research for uncovered information or after an actual MCP failure, "
+                "and explain the fallback without claiming MCP retrieval succeeded. Only use "
+                "the integrations and tools authorized in this Run."
+            )
         for mcp_server in run.snapshot_json.get("mcp_servers", []):
             wrapper = mcp_server.get("skill_wrapper", {})
             instructions = str(wrapper.get("instructions", "")).strip()

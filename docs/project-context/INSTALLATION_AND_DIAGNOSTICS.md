@@ -59,6 +59,8 @@ P-GPT 연결 검사는 명시적 opt-in입니다.
 installer.bat -ConfigurePgpt -PgptNetworkCheck
 ```
 
+한국법 MCP dependency와 호환성 patch는 Installer의 dependency 단계에서 준비합니다. 일반 실행 중에는 설치하지 않습니다. Linux 또는 수동 준비는 `python extensions/mcp/korean-law/runtime/bootstrap.py --prepare`를 사용하고, offline cache 전용 실행에는 `--offline`을 추가합니다.
+
 ## Office/PDF Artifact 렌더 검증 도구
 
 DOCX, XLSX와 PPTX의 실제 페이지 검증에는 **LibreOffice**와 **Poppler**가 모두 필요하고, PDF의 실제 페이지 검증에는 **Poppler**가 필요합니다.

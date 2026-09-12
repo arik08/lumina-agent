@@ -1,6 +1,6 @@
 ---
 name: eia
-description: 미국 EIA의 원유·가스·석유제품 가격 시계열을 조회하는 MCP 라우팅입니다.
+description: 유가·천연가스·연료비 추이와 에너지 원가 영향을 분석할 때 미국 EIA의 WTI·Brent·Henry Hub·휘발유·경유 가격 시계열 또는 지정된 EIA series ID를 조회합니다.
 metadata:
   lumina-source: skill-mcp:eia
 ---

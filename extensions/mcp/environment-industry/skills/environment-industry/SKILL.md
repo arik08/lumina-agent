@@ -1,6 +1,6 @@
 ---
 name: environment-industry
-description: Eurostat PRODCOM 산업생산, 미국 EPA ECHO 사업장 환경준수·집행, USDA ERS 농업경영 데이터를 공식 구조화 API로 조회하는 MCP 라우팅입니다. 기존 EIA·KOSIS와 함께 산업·원자재·환경 모니터링에 사용합니다.
+description: EU 제품별 산업생산·판매, 미국 사업장 환경위반·검사·집행, 미국 농가 재무·소득·부채 근거가 필요할 때 PRODCOM·EPA ECHO·USDA ERS를 조회합니다. 한국 산업통계는 kosis, 에너지 가격은 eia를 사용합니다.
 metadata:
   lumina-source: skill-mcp:environment-industry
 ---

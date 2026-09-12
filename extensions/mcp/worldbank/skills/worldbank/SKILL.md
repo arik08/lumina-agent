@@ -1,6 +1,6 @@
 ---
 name: worldbank
-description: World Bank 국가·경제지표 메타데이터와 시계열을 조회하는 MCP 라우팅입니다.
+description: 국가별 GDP·인구·빈곤·개발·부채·인프라 지표의 장기 추이와 국가 비교에 World Bank 시계열·정의·단위를 조회합니다. 아시아 ADB 지표는 development-finance, 단기 금융지표는 macro-finance를 사용합니다.
 metadata:
   lumina-source: skill-mcp:worldbank
 ---

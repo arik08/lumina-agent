@@ -1,6 +1,6 @@
 ---
 name: legislation-regulation
-description: Congress.gov, Federal Register, 유럽의회 Open Data, EUR-Lex CELLAR, UK Parliament Bills, legislation.gov.uk의 법안·입법절차·행정규정·법령을 공식 구조화 데이터로 조회하는 MCP 라우팅입니다.
+description: 미국·EU·영국의 법안 진행·행정명령·관세·제재·CBAM·ETS 등 규제 변화를 확인할 때 Congress·Federal Register·유럽의회·EUR-Lex·영국 의회/법령 데이터를 조회합니다. 한국 법령·국회는 해당 전용 MCP를 사용합니다.
 metadata:
   lumina-source: skill-mcp:legislation-regulation
 ---

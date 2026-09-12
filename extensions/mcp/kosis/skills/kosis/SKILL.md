@@ -1,6 +1,6 @@
 ---
 name: kosis
-description: KOSIS 국가통계포털의 통계표·수치·메타데이터를 조회하는 MCP 라우팅입니다.
+description: 국내 인구·고용·물가·산업생산·지역별 통계의 수치·추이·비교 근거가 필요할 때 KOSIS 통계표와 메타데이터를 조회합니다. 원화 환율·금리·통화 지표는 ecos를 우선합니다.
 metadata:
   lumina-source: skill-mcp:kosis
 ---

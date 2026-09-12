@@ -1,6 +1,6 @@
 ---
 name: development-finance
-description: ADB KIDB 공식 SDMX 지표와 기존 World Bank MCP를 개발금융·국가·인프라 분석에 라우팅하고, PDF 중심 프로젝트 포털의 자동화 결격사유를 적용하는 MCP 스킬입니다.
+description: 아시아 국가의 성장·인구·사회·인프라 여건 비교에 ADB KIDB 공식 지표를 조회합니다. 전 세계 개발·부채 지표는 worldbank로 연결합니다. 개별 개발사업 투자·고객사·환경심사 문서 추출은 지원하지 않습니다.
 metadata:
   lumina-source: skill-mcp:development-finance
 ---

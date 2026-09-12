@@ -76,6 +76,8 @@ def test_mcp_manifests_use_package_relative_runtime_paths() -> None:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         for server_name, server in manifest["mcpServers"].items():
             assert server.get("cwd") == ".", f"{manifest_path}:{server_name}"
+            assert not PureWindowsPath(server.get("command", "")).is_absolute()
+            assert not PurePosixPath(server.get("command", "")).is_absolute()
             assert server.get("tools"), (
                 f"{manifest_path}:{server_name} must pin runtime Tool schemas"
             )
@@ -86,7 +88,7 @@ def test_mcp_manifests_use_package_relative_runtime_paths() -> None:
                 if argument.startswith("runtime/"):
                     target = (manifest_path.parent / argument).resolve()
                     target.relative_to(manifest_path.parent.resolve())
-                    if argument.endswith(".py"):
+                    if argument.endswith((".py", ".js", ".mjs")):
                         assert target.is_file(), (
                             f"{manifest_path}:{server_name} references a missing script"
                         )

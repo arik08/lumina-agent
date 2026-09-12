@@ -1,6 +1,6 @@
 ---
 name: trade-market
-description: 한국 관세청, U.S. Census, WTO, Eurostat COMEXT와 기존 UN Comtrade를 이용해 HS·CN 품목, 국가, 기간, 수출입, 관세·시장접근 데이터를 조회하는 MCP 라우팅입니다. 철강·원료·가스의 국가별 교역과 공급망 비교에 사용합니다.
+description: 한국·미국·EU의 품목/상대국별 수출입·무역수지·관세·시장접근을 분석할 때 관세청·Census·COMEXT·WTO를 조회합니다. 여러 국가의 공통 기간 교역 비교는 comtrade, 관세 법령 원문은 legislation-regulation을 사용합니다.
 metadata:
   lumina-source: skill-mcp:trade-market
 ---

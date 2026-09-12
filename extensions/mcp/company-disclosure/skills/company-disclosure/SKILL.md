@@ -1,6 +1,6 @@
 ---
 name: company-disclosure
-description: OpenDART, SEC EDGAR, Companies House의 기업 식별·공시·XBRL 재무·주요 제출 내역을 조회하는 MCP 라우팅입니다. 한국·미국·영국 기업의 공식 공시, 경쟁사 재무, 사업보고서, 제출 이력, 법인번호를 찾을 때 사용합니다.
+description: 기업 실적·경쟁사 재무·사업·투자·리스크 분석에 공식 공시 근거가 필요할 때 사용합니다. 한국 DART/OpenDART, 미국 SEC EDGAR, 영국 Companies House의 기업 식별·분기/사업보고서·XBRL 재무·제출 이력을 조회합니다.
 metadata:
   lumina-source: skill-mcp:company-disclosure
 ---

@@ -145,8 +145,17 @@ MyHarness의 `45b41e1`(2026-09-12)과 검토 시점의 미커밋 MCP 변경을 L
 
 - Windows UTF-8 subprocess 설정과 POSCO dummy package 제거는 Lumina에 이미 구현되어 있습니다.
 - MyHarness의 readOnlyHint 기반 승인 생략은 복사하지 않았습니다. Lumina는 서버의 힌트 대신 기존 Tool risk 분류·승인 정책을 유지합니다.
-- MyHarness 한국법 MCP는 4.9.7, Lumina는 4.0.6이며 공개 Tool 구성이 다릅니다. 4.9.7 전용 bootstrap patch는 현재 패키지에 적용할 수 없어 제외했습니다. 이 항목은 dependency·Tool manifest·wrapper 전체를 함께 마이그레이션하는 별도 변경입니다.
+- 한국법 4.9.7 마이그레이션은 아래 후속 변경에서 완료했습니다.
 - MyHarness의 credential 배포, UI, 작업관리·프로세스 구조 변경은 이번 MCP 호환성 수정 범위에서 제외했습니다.
+
+#### 2026-09-13 후속 MCP 실행·이식성 개선
+
+- 한국법 MCP를 4.9.7로 고정하고 실제 `tools/list`의 10개 Tool schema와 wrapper를 함께 갱신했습니다. 법령 검색의 최소 검색 범위, 별표의 정확한 관련법령명 필터, MST 조회 endpoint, 벌칙·과태료·과징금 조문 본문과 cache 분리를 MyHarness에서 이식했습니다.
+- `installer.bat`가 package-lock 기준 `npm ci`와 호환성 patch를 실행합니다. `-NoNetwork`는 npm까지 offline으로 전달하며 `-SkipDependencyInstall`과 `-ValidateOnly`에서는 설치하지 않습니다. 일반 MCP 시작은 설치·patch를 실행하지 않고 누락·stale dependency를 거부합니다.
+- Windows와 Linux의 직접 준비 명령은 `python extensions/mcp/korean-law/runtime/bootstrap.py --prepare`이며 offline cache만 사용할 때는 `--offline`을 추가합니다. 개발자 절대경로와 installed dependency는 배포하지 않습니다.
+- Run에 허용된 MCP의 데이터 범위가 질문에 맞으면 일반 웹 조사보다 먼저 사용하도록 source 선택 지침과 wrapper 설명을 보완했습니다. 미설치·권한 밖 MCP를 자동 허용하지 않고 실제 실패 후 fallback은 명시합니다.
+- package 상대경로 검증은 command와 Python·JavaScript entrypoint까지 확인합니다. POSCO dummy와 UTF-8 처리는 기존 구현을 유지하며, Lumina에 별도 구현된 vector-db와 Tool 승인 정책은 유지합니다.
+
 
 검증은 7개 실제 stdio 서버의 initialize/tools/list와 고정 schema 일치, 모의 HTTP 응답의 ADB·Semantic Scholar 동작, MCP 실패·Secret redaction, Responses/Codex provider 및 catalog·scope 회귀 검사를 포함합니다. 외부 서비스와 회사망의 전체 연결 성공을 뜻하지 않습니다.
 
